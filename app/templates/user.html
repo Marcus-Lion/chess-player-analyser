@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>{{ username }} - Marcus Lion Chess Analyser</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 1rem; }
+    .metric { border: 1px solid #ddd; border-radius: 12px; padding: 1rem; }
+    .metric b { display: block; font-size: 1.7rem; }
+    .chart { margin: 2rem 0; }
+    table { border-collapse: collapse; margin-top: 1rem; }
+    td, th { border: 1px solid #ddd; padding: .55rem .75rem; }
+  </style>
+</head>
+<body>
+  <p><a href="/">← New analysis</a></p>
+  <h1>{{ username }}</h1>
+  <p>Timezone: {{ timezone }}</p>
+
+  <div class="grid">
+    <div class="metric">Games <b>{{ summary.games }}</b></div>
+    <div class="metric">Score <b>{{ "%.1f"|format(summary.score_pct * 100) }}%</b></div>
+    <div class="metric">Avg opponent <b>{{ "%.0f"|format(summary.avg_opponent) }}</b></div>
+    <div class="metric">Performance <b>{{ "%.0f"|format(summary.performance_rating) }}</b></div>
+  </div>
+
+  <h2>Before/after breakpoint</h2>
+  <table>
+    <tr><th>Period</th><th>Games</th><th>Score</th><th>Avg opponent</th><th>Performance</th></tr>
+    {% for row in prepost_rows %}
+      <tr>
+        <td>{{ row.period }}</td>
+        <td>{{ row.games }}</td>
+        <td>{{ "%.1f"|format(row.score_pct * 100) }}%</td>
+        <td>{{ "%.0f"|format(row.avg_opponent) }}</td>
+        <td>{{ "%.0f"|format(row.performance_rating) }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+
+  {% for name, chart in charts.items() %}
+    <div class="chart">{{ chart | safe }}</div>
+  {% endfor %}
+</body>
+</html>

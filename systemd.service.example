@@ -1,0 +1,13 @@
+[Unit]
+Description=Marcus Lion Chess Analyser
+After=network.target
+
+[Service]
+User=YOUR_LINUX_USER
+WorkingDirectory=/home/YOUR_LINUX_USER/marcus-lion-chess-analyser
+Environment="PATH=/home/YOUR_LINUX_USER/marcus-lion-chess-analyser/.venv/bin"
+ExecStart=/home/YOUR_LINUX_USER/marcus-lion-chess-analyser/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

@@ -23,7 +23,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = BASE_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="Marcus Lion Chess Analyser")
+app = FastAPI(title="Marcus Lion Chess Player Analyser")
 templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
 
 
@@ -79,7 +79,7 @@ def analyse(
     request: Request,
     username: str = Form(...),
     timezone: str = Form("America/New_York"),
-    breakpoint_iso: str = Form("2026-05-18T00:00:00-04:00"),
+    breakpoint_iso: str | None = Form(None),
     force_refresh: str | None = Form(None),
 ):
     username = username.strip()

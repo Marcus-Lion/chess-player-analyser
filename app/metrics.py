@@ -115,8 +115,14 @@ def time_day_matrix(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def prepost_breakpoint(df: pd.DataFrame, breakpoint_iso: str, label: str = "breakpoint") -> pd.DataFrame:
-    breakpoint = datetime.fromisoformat(breakpoint_iso)
+def prepost_breakpoint(df: pd.DataFrame, breakpoint_iso: str | None, label: str = "breakpoint") -> pd.DataFrame:
+    if not breakpoint_iso:
+        return pd.DataFrame()
+    try:
+        breakpoint = datetime.fromisoformat(breakpoint_iso)
+    except (ValueError, TypeError):
+        return pd.DataFrame()
+
     tmp = df.copy()
     tmp["local_dt_obj"] = pd.to_datetime(tmp["local_datetime"])
     tmp["period"] = tmp["local_dt_obj"].apply(lambda x: f"Before {label}" if x < breakpoint else f"After {label}")

@@ -1,4 +1,4 @@
-# Marcus Lion Chess Analyser
+# Marcus Lion Chess Player Analyser
 
 A Python/FastAPI web app that fetches public Chess.com games for any username and generates chess analytics.
 

@@ -15,33 +15,32 @@ A Python/FastAPI web app that fetches public Chess.com games for any username an
 
 ## Quick start
 
+Using [uv](https://docs.astral.sh/uv/):
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+uv sync
+uv run python -m uvicorn app.main:app --port 8134
 ```
 
 Open:
 
 ```text
-http://127.0.0.1:8000
+http://127.0.0.1:8134
 ```
 
 ## Hostinger VPS deployment
 
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install python3 python3-pip python3-venv nginx git -y
+# Install uv
+curl -LsSf https://astral-sh.io/uv/install.sh | sh
+source $HOME/.cargo/env
 
 git clone https://github.com/marcus-lion/chess-player-analyser.git
 cd chess-player-analyser
 
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-uvicorn app.main:app --host 127.0.0.1 --port 8000
+uv sync
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8134
 ```
 
 For production, run with `systemd` and put Nginx in front as a reverse proxy.

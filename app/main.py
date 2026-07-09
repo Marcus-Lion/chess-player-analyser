@@ -41,29 +41,40 @@ def _make_charts(df: pd.DataFrame) -> dict[str, str]:
 
     monthly = monthly_performance(df)
     if not monthly.empty:
-        fig = px.line(monthly, x="month", y=["performance_rating", "avg_opponent", "avg_user_rating"], markers=True, title="Monthly performance rating")
+        fig = px.line(monthly, x="month", y=["performance_rating", "avg_opponent", "avg_user_rating"],
+                      markers=True, title="Monthly performance rating", hover_data=["games"])
         charts["monthly"] = _fig_html(fig)
 
     rolling = rolling_performance(df)
     if not rolling.empty:
-        fig = px.line(rolling, x="mid_game", y=["performance_rating", "avg_opponent", "avg_user_rating"], title="Rolling 100-game performance rating")
+        fig = px.line(rolling, x="mid_game", y=["performance_rating", "avg_opponent", "avg_user_rating"],
+                      title="Rolling 100-game performance rating", hover_data=["games"])
         charts["rolling"] = _fig_html(fig)
 
     hourly = hourly_performance(df)
     if not hourly.empty:
-        fig = px.line(hourly, x="local_hour", y="performance_rating", markers=True, title="Performance by local start hour")
+        fig = px.line(hourly, x="local_hour", y="performance_rating", markers=True,
+                      title="Performance by local start hour", hover_data=["games"])
         charts["hourly"] = _fig_html(fig)
 
     day = day_performance(df)
     if not day.empty:
-        fig = px.bar(day, x="local_day", y="performance_rating", title="Performance by day of week")
+        fig = px.bar(day, x="local_day", y="performance_rating", title="Performance by day of week",
+                     hover_data=["games"], text="games")
+        fig.update_traces(textposition="outside")
         charts["day"] = _fig_html(fig)
 
     matrix = time_day_matrix(df)
     if not matrix.empty:
         pivot = matrix.pivot(index="time_bucket", columns="day_group", values="performance_rating")
         pivot = pivot.reindex(["6–8 PM", "8–10 PM", "10 PM–Midnight", "After Midnight"])
+        pivot_games = matrix.pivot(index="time_bucket", columns="day_group", values="games")
+        pivot_games = pivot_games.reindex(pivot.index)
         fig = px.imshow(pivot, text_auto=".0f", aspect="auto", title="Time × day performance heatmap")
+        fig.update_traces(
+            customdata=pivot_games.values,
+            hovertemplate="Time: %{y}<br>Day: %{x}<br>Rating: %{z:.0f}<br>Games: %{customdata}<extra></extra>"
+        )
         charts["time_day"] = _fig_html(fig)
 
     return charts

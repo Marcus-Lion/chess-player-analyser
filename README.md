@@ -30,11 +30,27 @@ http://127.0.0.1:8134
 
 ## Hostinger VPS deployment
 
+### Automated (recommended)
+
+SSH into your VPS as root and run the bundled `deploy.sh`. It installs
+system packages and `uv`, clones the repo, syncs dependencies, and sets up
+`systemd` + Nginx (and optionally HTTPS via Let's Encrypt):
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/marcus-lion/chess-player-analyser/main/deploy.sh -o deploy.sh
+chmod +x deploy.sh
+sudo DOMAIN=yourdomain.com EMAIL=you@yourdomain.com ./deploy.sh
+```
+
+Omit `DOMAIN`/`EMAIL` to deploy over plain HTTP on the server IP.
+
+### Manual
+
 ```bash
 sudo apt update && sudo apt upgrade -y
 # Install uv
-curl -LsSf https://astral-sh.io/uv/install.sh | sh
-source $HOME/.cargo/env
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
 
 git clone https://github.com/marcus-lion/chess-player-analyser.git
 cd chess-player-analyser

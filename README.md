@@ -34,8 +34,8 @@ http://127.0.0.1:8000
 sudo apt update && sudo apt upgrade -y
 sudo apt install python3 python3-pip python3-venv nginx git -y
 
-git clone https://github.com/YOUR_USERNAME/marcus-lion-chess-analyser.git
-cd marcus-lion-chess-analyser
+git clone https://github.com/marcus-lion/chess-player-analyser.git
+cd chess-player-analyser
 
 python3 -m venv .venv
 source .venv/bin/activate

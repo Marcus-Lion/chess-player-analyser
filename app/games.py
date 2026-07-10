@@ -128,12 +128,55 @@ def _style_arrows(svg: str) -> str:
 
     def line_repl(match: re.Match[str]) -> str:
         tag = match.group(0)
+
+        # Scale down the arrowhead
+        scale = 0.5
+
+        # We need to adjust x2, y2 so the line stops at the base of the smaller arrowhead.
+        # And we want the tip to point to the middle of the square.
+        # python-chess arrows have the tip offset by 0.1 * square_size (4.5 units)
+        # from the center. Since stroke-width is 0.2 * square_size, the offset is
+        # exactly 0.5 * stroke_width.
+
         width_match = re.search(r'stroke-width="([\d.]+)"', tag)
         if not width_match:
             return tag
-        original = float(width_match.group(1))
-        thin = round(original * 0.45, 2)
-        border = max(1.4, round(thin * 0.4, 2))
+        original_width = float(width_match.group(1))
+
+        # Re-calculate the tip position based on the line end (x2, y2) and width.
+        # python-chess: tip = (x2, y2) + unit_vector * (width * 3.75)
+        # Wait, the example: line x1=217.5, y1=307.5, x2=217.5, y2=255.75.
+        # Vector is (0, -51.75). Unit vector is (0, -1).
+        # tip_y = 222.0. y2 = 255.75. tip_y - y2 = -33.75.
+        # -33.75 / -1 = 33.75. 33.75 / 9.0 = 3.75. Correct.
+
+        x1 = float(re.search(r'x1="([\d.-]+)"', tag).group(1))
+        y1 = float(re.search(r'y1="([\d.-]+)"', tag).group(1))
+        x2 = float(re.search(r'x2="([\d.-]+)"', tag).group(1))
+        y2 = float(re.search(r'y2="([\d.-]+)"', tag).group(1))
+
+        dx = x2 - x1
+        dy = y2 - y1
+        length = (dx**2 + dy**2)**0.5
+        if length > 0:
+            ux = dx / length
+            uy = dy / length
+            tip_x = x2 + ux * original_width * 3.75
+            tip_y = y2 + uy * original_width * 3.75
+
+            # Move tip to the center of the square
+            new_tip_x = tip_x + ux * original_width * 0.5
+            new_tip_y = tip_y + uy * original_width * 0.5
+
+            # New x2, y2 is scaled towards new_tip
+            new_x2 = round(new_tip_x + (x2 - tip_x) * scale, 2)
+            new_y2 = round(new_tip_y + (y2 - tip_y) * scale, 2)
+
+            tag = re.sub(r'x2="[\d.-]+"', f'x2="{new_x2}"', tag)
+            tag = re.sub(r'y2="[\d.-]+"', f'y2="{new_y2}"', tag)
+
+        thin = round(original_width * 0.15, 2)
+        border = max(0.8, round(thin * 0.4, 2))
         thin_tag = re.sub(r'stroke-width="[\d.]+"', f'stroke-width="{thin}"', tag)
         under_tag = re.sub(r'stroke-width="[\d.]+"',
                            f'stroke-width="{round(thin + 2 * border, 2)}"', tag)
@@ -145,10 +188,55 @@ def _style_arrows(svg: str) -> str:
 
     def poly_repl(match: re.Match[str]) -> str:
         tag = match.group(0)
+
+        # Scale down the arrowhead
+        points_match = re.search(r'points="([\d.,\s]+)"', tag)
+        if points_match:
+            points_str = points_match.group(1)
+            try:
+                # points="x1,y1 x2,y2 x3,y3"
+                pts = [p.split(',') for p in points_str.split()]
+                pts = [(float(p[0]), float(p[1])) for p in pts]
+
+                # Scale factor: 0.5 means 50% of original size
+                scale = 0.5
+                # The first point is the tip of the arrow
+                tip = pts[0]
+                # The other points form the base
+                m_x = (pts[1][0] + pts[2][0]) / 2
+                m_y = (pts[1][1] + pts[2][1]) / 2
+                
+                # Calculate unit vector from base midpoint to tip
+                d_x = tip[0] - m_x
+                d_y = tip[1] - m_y
+                dist = (d_x**2 + d_y**2)**0.5
+                if dist > 0:
+                    ux = d_x / dist
+                    uy = d_y / dist
+                    # python-chess offset is 0.5 * stroke-width. 
+                    # stroke-width = dist / 3.75.
+                    # so offset = dist / 7.5
+                    offset = dist / 7.5
+                    new_tip_x = tip[0] + ux * offset
+                    new_tip_y = tip[1] + uy * offset
+                else:
+                    new_tip_x, new_tip_y = tip[0], tip[1]
+
+                new_pts = []
+                for p in pts:
+                    new_x = round(new_tip_x + (p[0] - tip[0]) * scale, 2)
+                    new_y = round(new_tip_y + (p[1] - tip[1]) * scale, 2)
+                    new_pts.append(f"{new_x},{new_y}")
+
+                new_points_str = " ".join(new_pts)
+                tag = re.sub(r'points="[^"]*"', f'points="{new_points_str}"', tag)
+            except (ValueError, IndexError):
+                pass
+
         if "stroke=" in tag:
             return tag
         return (tag[:-2].rstrip()
-                + f' stroke="{_ARROW_BORDER_COLOR}" stroke-width="1.4"'
+                + f' stroke="{_ARROW_BORDER_COLOR}" stroke-width="0.8"'
                   ' stroke-linejoin="round"/>')
 
     svg = re.sub(r'<line\b[^>]*class="arrow"[^>]*/>', line_repl, svg)

@@ -67,14 +67,18 @@ For production, run with `systemd` and put Nginx in front as a reverse proxy.
 Beyond the analytics dashboard you can inspect individual games move by move:
 
 - `GET /games?username=<user>` lists every game in the player's archive
-  (white/black, result, your win/loss/draw, date, time control, ECO) and lets
-  you select one.
+  (white/black, result, your win/loss/draw, date, time control, and the
+  opening decoded from its ECO code into plain text) and lets you select one.
 - `GET /games/<username>/<index>` opens an interactive viewer that renders
   every position of that game as a chess board (server-side SVG, no external
   assets). Step through positions with the ⏮ ◀ ▶ ⏭ buttons, the slider, the
   left/right arrow keys, or by clicking any move in the "position graph".
   Tick **Show all valid moves** to overlay arrows for every legal move in the
-  current position and list them in SAN notation.
+  current position and list them in SAN notation. The arrows are drawn thin
+  with a dark border so they stay readable even when many overlap.
+  A **Position sub-graph** is shown on the right, next to the board: it draws
+  the current position as a central node linked to the previous position and to
+  every legal move (the move actually played is highlighted and clickable).
 
 The results page also links straight to the browser via
 "Browse all games and step through positions".

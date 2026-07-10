@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import pandas as pd
 import plotly.express as px
@@ -8,6 +9,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from app.chesscom import ChessComClient
+from app.games import load_game_summaries, load_game_detail
 from app.parser import parse_pgn_to_dataframe
 from app.metrics import (
     summarize,
@@ -30,6 +32,24 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
 def _cached_paths(username: str) -> tuple[Path, Path]:
     safe = "".join(c for c in username.lower() if c.isalnum() or c in "_-")
     return CACHE_DIR / f"{safe}.pgn", CACHE_DIR / f"{safe}.games.csv"
+
+
+def _maybe_save_to_neo4j(username: str, df: pd.DataFrame) -> None:
+    """Export parsed games to Neo4j when NEO4J_ENABLED is truthy.
+
+    This is fully optional: any failure is swallowed so the analytics
+    engine keeps working when Neo4j is not configured or reachable.
+    """
+    if os.getenv("NEO4J_ENABLED", "").lower() not in ("1", "true", "yes", "on"):
+        return
+    try:
+        from app.neo4j_store import Neo4jStore
+
+        with Neo4jStore() as store:
+            store.save_games(username, df)
+    except Exception:
+        # Neo4j is an optional sink; never break the request because of it.
+        pass
 
 
 def _fig_html(fig) -> str:
@@ -80,9 +100,48 @@ def _make_charts(df: pd.DataFrame) -> dict[str, str]:
     return charts
 
 
+def _ensure_pgn(username: str, force_refresh: bool = False) -> str:
+    """Return the cached PGN for ``username``, fetching it if needed."""
+    pgn_path, _ = _cached_paths(username)
+    if force_refresh or not pgn_path.exists():
+        client = ChessComClient()
+        pgn_text = client.fetch_all_pgn(username)
+        pgn_path.write_text(pgn_text, encoding="utf-8")
+        return pgn_text
+    return pgn_path.read_text(encoding="utf-8")
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
+
+
+@app.get("/games", response_class=HTMLResponse)
+def list_games(request: Request, username: str, force_refresh: str | None = None):
+    username = username.strip()
+    pgn_text = _ensure_pgn(username, bool(force_refresh))
+    games = load_game_summaries(pgn_text, username=username)
+    return templates.TemplateResponse("games.html", {
+        "request": request,
+        "username": username,
+        "games": games,
+    })
+
+
+@app.get("/games/{username}/{index}", response_class=HTMLResponse)
+def view_game(request: Request, username: str, index: int):
+    username = username.strip()
+    pgn_text = _ensure_pgn(username)
+    detail = load_game_detail(pgn_text, index)
+    summaries = load_game_summaries(pgn_text, username=username)
+    total = len(summaries)
+    return templates.TemplateResponse("game.html", {
+        "request": request,
+        "username": username,
+        "index": index,
+        "total": total,
+        "detail": detail,
+    })
 
 
 @app.post("/analyse", response_class=HTMLResponse)
@@ -108,6 +167,8 @@ def analyse(
         df.to_csv(csv_path, index=False)
     else:
         df = pd.read_csv(csv_path)
+
+    _maybe_save_to_neo4j(username, df)
 
     summary = summarize(df)
     charts = _make_charts(df)

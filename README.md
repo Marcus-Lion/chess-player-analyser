@@ -12,6 +12,7 @@ A Python/FastAPI web app that fetches public Chess.com games for any username an
 - Time × day matrix
 - Before/after breakpoint analysis
 - Basic clock/time-management stats when `%clk` annotations are present
+- Game browser: list every game for a player, select one, and step through each position on a board
 
 ## Quick start
 
@@ -61,6 +62,23 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8134
 
 For production, run with `systemd` and put Nginx in front as a reverse proxy.
 
+## Game browser
+
+Beyond the analytics dashboard you can inspect individual games move by move:
+
+- `GET /games?username=<user>` lists every game in the player's archive
+  (white/black, result, your win/loss/draw, date, time control, ECO) and lets
+  you select one.
+- `GET /games/<username>/<index>` opens an interactive viewer that renders
+  every position of that game as a chess board (server-side SVG, no external
+  assets). Step through positions with the ⏮ ◀ ▶ ⏭ buttons, the slider, the
+  left/right arrow keys, or by clicking any move in the "position graph".
+  Tick **Show all valid moves** to overlay arrows for every legal move in the
+  current position and list them in SAN notation.
+
+The results page also links straight to the browser via
+"Browse all games and step through positions".
+
 ## Firebase option
 
 Firebase is useful for:
@@ -71,3 +89,22 @@ Firebase is useful for:
 - hosting a separate frontend
 
 For this MVP, local cache files are simpler. Firebase can be added later without changing the analytics engine.
+
+## Neo4j option
+
+Neo4j lets you explore games as a graph (players, games, opponents) for
+queries like shared opponents, head-to-head paths, and rating neighbourhoods.
+
+Export is opt-in and does not change the analytics engine. Enable it with
+environment variables:
+
+```bash
+export NEO4J_ENABLED=true
+export NEO4J_URI=bolt://localhost:7687
+export NEO4J_USER=neo4j
+export NEO4J_PASSWORD=password
+```
+
+When enabled, each `/analyse` request upserts the parsed games into Neo4j.
+See [`neo4j_notes.md`](neo4j_notes.md) for the graph model and example
+Cypher queries.

@@ -36,6 +36,7 @@ class GamePosition:
     svg_moves: str
     legal_moves: list[str]
     move_tree: dict[str, list[str]]  # move_san -> list of response_sans
+    move_scores: dict[str, int]  # move_san -> strength score of resulting position
     control_1: dict[str, int]  # {"White": count, "Black": count}
     control_2: dict[str, int]
     strength: int  # Simple metric: (W_c1 + W_c2) - (B_c1 + B_c2)
@@ -267,52 +268,33 @@ def _style_arrows(svg: str) -> str:
 
 
 def _calculate_control(board: chess.Board) -> tuple[dict[str, int], dict[str, int]]:
-    """Calculate 1st and 2nd order board control.
-    1st order: Number of squares attacked by each side.
-    2nd order: Sum of 1st order control after every possible legal move for that side.
-    """
-    def get_c1(b: chess.Board):
-        white_c1 = 0
-        black_c1 = 0
-        for sq in chess.SQUARES:
-            if b.is_attacked_by(chess.WHITE, sq):
-                white_c1 += 1
-            if b.is_attacked_by(chess.BLACK, sq):
-                black_c1 += 1
-        return {"White": white_c1, "Black": black_c1}
-
-    c1 = get_c1(board)
-    
-    # For 2nd order, we look at the average or sum of control after each legal move.
-    # Let's use the sum of squares controlled after one move by the side whose turn it is,
-    # and for the other side, we'll have to assume it's their turn to get a fair comparison
-    # or just use the current board state's 2nd order (squares attacked by pieces that are defended).
-    # A simpler 2nd order: squares reachable in 2 moves.
+    """Calculate 1st and 2nd order board control."""
+    c1 = get_board_control(board)
     
     c2 = {"White": 0, "Black": 0}
-    
-    # Calculate White's 2nd order control
     original_turn = board.turn
     
+    # White 2nd order
     board.turn = chess.WHITE
     w_moves = list(board.legal_moves)
     if w_moves:
         total_w_c1 = 0
         for m in w_moves:
             board.push(m)
-            total_w_c1 += get_c1(board)["White"]
+            total_w_c1 += get_board_control(board)["White"]
             board.pop()
         c2["White"] = int(total_w_c1 / len(w_moves))
     else:
         c2["White"] = c1["White"]
 
+    # Black 2nd order
     board.turn = chess.BLACK
     b_moves = list(board.legal_moves)
     if b_moves:
         total_b_c1 = 0
         for m in b_moves:
             board.push(m)
-            total_b_c1 += get_c1(board)["Black"]
+            total_b_c1 += get_board_control(board)["Black"]
             board.pop()
         c2["Black"] = int(total_b_c1 / len(b_moves))
     else:
@@ -322,27 +304,57 @@ def _calculate_control(board: chess.Board) -> tuple[dict[str, int], dict[str, in
     return c1, c2
 
 
-def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None) -> tuple[str, list[str], dict[str, list[str]], dict[str, int], dict[str, int]]:
-    """Render board with legal moves arrows, and return SAN list, 2-ply move tree, and control metrics."""
+def get_board_control(board: chess.Board) -> dict[str, int]:
+    """Calculate 1st order board control using bitboards."""
+    white_attacks_bb = 0
+    for piece_type in chess.PIECE_TYPES:
+        for sq in board.pieces(piece_type, chess.WHITE):
+            white_attacks_bb |= int(board.attacks(sq))
+    
+    black_attacks_bb = 0
+    for piece_type in chess.PIECE_TYPES:
+        for sq in board.pieces(piece_type, chess.BLACK):
+            black_attacks_bb |= int(board.attacks(sq))
+    
+    return {
+        "White": bin(white_attacks_bb).count('1'),
+        "Black": bin(black_attacks_bb).count('1')
+    }
+
+
+def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None) -> tuple[str, list[str], dict[str, list[str]], dict[str, int], dict[str, int], int, dict[str, int]]:
+    """Render board with legal moves arrows, and return SAN list, 2-ply move tree, control metrics, strength and move scores."""
     arrows = []
     tree = {}
+    move_scores = {}
     legal_moves = list(board.legal_moves)
+    
+    # Pre-calculate current control and strength
+    c1, c2 = _calculate_control(board)
+    strength = (c1["White"] + c2["White"]) - (c1["Black"] + c2["Black"])
+
     for move in legal_moves:
         san = board.san(move)
         piece = board.piece_at(move.from_square)
         color_hex = PIECE_COLORS.get(piece.piece_type, "#15781B") if piece else "#15781B"
         arrows.append(chess.svg.Arrow(move.from_square, move.to_square, color=color_hex))
         
-        # 1-ply deep lookahead for the tree
+        # 1-ply deep lookahead for the tree and scores
         board.push(move)
         tree[san] = [board.san(m) for m in board.legal_moves]
+        
+        # Optimization: for move suggestions, use 1st order control ONLY to save time
+        # 2nd order control is expensive to calculate for every legal move (O(N^2))
+        sc1 = get_board_control(board)
+        
+        # Move score is simplified to 1st order difference after the move
+        move_scores[san] = sc1["White"] - sc1["Black"]
+        
         board.pop()
 
-    c1, c2 = _calculate_control(board)
-    strength = (c1["White"] + c2["White"]) - (c1["Black"] + c2["Black"])
     sans = [board.san(move) for move in legal_moves]
     svg = chess.svg.board(board, size=420, lastmove=lastmove, arrows=arrows)
-    return _style_arrows(svg), sans, tree, c1, c2, strength
+    return _style_arrows(svg), sans, tree, c1, c2, strength, move_scores
 
 
 def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
@@ -354,18 +366,19 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
     headers = game.headers
     board = game.board()
 
-    start_moves_svg, start_legal, start_tree, start_c1, start_c2, start_strength = _legal_moves_and_tree(board)
+    start_moves_svg, start_legal, start_tree, start_c1, start_c2, start_strength, start_scores = _legal_moves_and_tree(board)
     positions: list[GamePosition] = [
         GamePosition(
             ply=0,
             move_number=0,
-            san="Start",
+            san="",
             side="",
             fen=board.fen(),
             svg=chess.svg.board(board, size=420),
             svg_moves=start_moves_svg,
             legal_moves=start_legal,
             move_tree=start_tree,
+            move_scores=start_scores,
             control_1=start_c1,
             control_2=start_c2,
             strength=start_strength,
@@ -379,7 +392,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
         move_number = board.fullmove_number
         san = board.san(move)
         board.push(move)
-        moves_svg, legal, tree, c1, c2, strength = _legal_moves_and_tree(board, lastmove=move)
+        moves_svg, legal, tree, c1, c2, strength, scores = _legal_moves_and_tree(board, lastmove=move)
         positions.append(
             GamePosition(
                 ply=ply,
@@ -391,6 +404,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
                 svg_moves=moves_svg,
                 legal_moves=legal,
                 move_tree=tree,
+                move_scores=scores,
                 control_1=c1,
                 control_2=c2,
                 strength=strength,

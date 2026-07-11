@@ -79,6 +79,8 @@ Beyond the analytics dashboard you can inspect individual games move by move:
   The viewer also displays **Board Control (1st and 2nd order)** metrics and
   a **Position Strength** score (a simple metric derived from board control),
   tracking how many squares each side attacks directly and via future moves.
+  Based on this score, the viewer also **suggests the best 3 moves** for the
+  current player (the legal moves leading to the best 1st order control balance).
   A **Position sub-graph** is shown on the right, next to the board: it draws
   the current position as a central node linked to the previous position and to
   every legal move (the move actually played is highlighted and clickable).

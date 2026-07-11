@@ -35,6 +35,7 @@ class GamePosition:
     svg: str
     svg_moves: str
     legal_moves: list[str]
+    move_tree: dict[str, list[str]]  # move_san -> list of response_sans
 
 
 @dataclass
@@ -262,24 +263,25 @@ def _style_arrows(svg: str) -> str:
     return svg
 
 
-def _legal_moves_svg(board: chess.Board, lastmove: chess.Move | None = None) -> tuple[str, list[str]]:
-    """Render a board that overlays arrows for every legal move.
-
-    Returns the SVG string and the list of legal moves in SAN notation.
-    """
+def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None) -> tuple[str, list[str], dict[str, list[str]]]:
+    """Render board with legal moves arrows, and return SAN list + 2-ply move tree."""
     arrows = []
-    for move in board.legal_moves:
+    tree = {}
+    legal_moves = list(board.legal_moves)
+    for move in legal_moves:
+        san = board.san(move)
         piece = board.piece_at(move.from_square)
         color_hex = PIECE_COLORS.get(piece.piece_type, "#15781B") if piece else "#15781B"
-        # Use 70% opacity for both shaft and head to maintain some transparency
-        # but apply it as a separate attribute to avoid the darkening effect of the black underlay
-        # where they overlap. Actually, 70% is still enough for the black to show through.
-        # Let's try 100% opacity first as it's the most robust way to match colors.
         arrows.append(chess.svg.Arrow(move.from_square, move.to_square, color=color_hex))
+        
+        # 1-ply deep lookahead for the tree
+        board.push(move)
+        tree[san] = [board.san(m) for m in board.legal_moves]
+        board.pop()
 
-    sans = [board.san(move) for move in board.legal_moves]
+    sans = [board.san(move) for move in legal_moves]
     svg = chess.svg.board(board, size=420, lastmove=lastmove, arrows=arrows)
-    return _style_arrows(svg), sans
+    return _style_arrows(svg), sans, tree
 
 
 def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
@@ -291,7 +293,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
     headers = game.headers
     board = game.board()
 
-    start_moves_svg, start_legal = _legal_moves_svg(board)
+    start_moves_svg, start_legal, start_tree = _legal_moves_and_tree(board)
     positions: list[GamePosition] = [
         GamePosition(
             ply=0,
@@ -302,6 +304,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
             svg=chess.svg.board(board, size=420),
             svg_moves=start_moves_svg,
             legal_moves=start_legal,
+            move_tree=start_tree,
         )
     ]
 
@@ -312,7 +315,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
         move_number = board.fullmove_number
         san = board.san(move)
         board.push(move)
-        moves_svg, legal = _legal_moves_svg(board, lastmove=move)
+        moves_svg, legal, tree = _legal_moves_and_tree(board, lastmove=move)
         positions.append(
             GamePosition(
                 ply=ply,
@@ -323,6 +326,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
                 svg=chess.svg.board(board, size=420, lastmove=move),
                 svg_moves=moves_svg,
                 legal_moves=legal,
+                move_tree=tree,
             )
         )
 

@@ -72,7 +72,7 @@ Beyond the analytics dashboard you can inspect individual games move by move:
 - `GET /games/<username>/<index>` opens an interactive viewer that renders
   every position of that game as a chess board (server-side SVG, no external
   assets). Step through positions with the ⏮ ◀ ▶ ⏭ buttons, the slider, the
-  left/right arrow keys, or by clicking any move in the "position graph".
+  left/right arrow keys, or by clicking any move in the "Positions" list.
   Tick **Show all valid moves** to overlay arrows for every legal move in the
   current position and list them in SAN notation. The arrows are drawn thin
   with a dark border so they stay readable even when many overlap.

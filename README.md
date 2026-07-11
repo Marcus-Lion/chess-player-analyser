@@ -76,6 +76,9 @@ Beyond the analytics dashboard you can inspect individual games move by move:
   Tick **Show all valid moves** to overlay arrows for every legal move in the
   current position and list them in SAN notation. The arrows are drawn thin
   with a dark border so they stay readable even when many overlap.
+  The viewer also displays **Board Control (1st and 2nd order)** metrics and
+  a **Position Strength** score (a simple metric derived from board control),
+  tracking how many squares each side attacks directly and via future moves.
   A **Position sub-graph** is shown on the right, next to the board: it draws
   the current position as a central node linked to the previous position and to
   every legal move (the move actually played is highlighted and clickable).

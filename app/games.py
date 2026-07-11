@@ -114,7 +114,16 @@ def _read_game_at(pgn_text: str, index: int) -> chess.pgn.Game | None:
             return game
 
 
-_ARROW_BORDER_COLOR = "#0a3d0a"
+_ARROW_BORDER_COLOR = "#000000"
+
+PIECE_COLORS = {
+    chess.PAWN: "#2ecc71",    # Bright Green
+    chess.KNIGHT: "#3498db",  # Bright Blue
+    chess.BISHOP: "#9b59b6",  # Amethyst Purple
+    chess.ROOK: "#e74c3c",    # Alizarin Red
+    chess.QUEEN: "#f1c40f",   # Sunflower Yellow
+    chess.KING: "#1abc9c",    # Turquoise
+}
 
 
 def _style_arrows(svg: str) -> str:
@@ -130,7 +139,7 @@ def _style_arrows(svg: str) -> str:
         tag = match.group(0)
 
         # Scale down the arrowhead
-        scale = 0.5
+        scale = 0.35
 
         # We need to adjust x2, y2 so the line stops at the base of the smaller arrowhead.
         # And we want the tip to point to the middle of the square.
@@ -175,14 +184,20 @@ def _style_arrows(svg: str) -> str:
             tag = re.sub(r'x2="[\d.-]+"', f'x2="{new_x2}"', tag)
             tag = re.sub(r'y2="[\d.-]+"', f'y2="{new_y2}"', tag)
 
-        thin = round(original_width * 0.15, 2)
-        border = max(0.8, round(thin * 0.4, 2))
+        thin = round(original_width * 0.1, 2)
+        border = max(0.5, round(thin * 0.4, 2))
         thin_tag = re.sub(r'stroke-width="[\d.]+"', f'stroke-width="{thin}"', tag)
         under_tag = re.sub(r'stroke-width="[\d.]+"',
                            f'stroke-width="{round(thin + 2 * border, 2)}"', tag)
         under_tag = re.sub(r'stroke="[^"]*"',
                            f'stroke="{_ARROW_BORDER_COLOR}"', under_tag)
         under_tag = re.sub(r'opacity="[^"]*"\s*', "", under_tag)
+        
+        # Ensure the thin line (shaft) is fully opaque so it doesn't blend with the black border underneath
+        thin_tag = re.sub(r'opacity="[^"]*"\s*', "", thin_tag)
+        # If it was an 8-digit hex, we should probably strip the alpha if we want 100% opacity
+        thin_tag = re.sub(r'stroke="#([0-9a-fA-F]{6})[0-9a-fA-F]{2}"', r'stroke="#\1"', thin_tag)
+
         # Border underlay first so the coloured shaft is drawn on top of it.
         return under_tag + thin_tag
 
@@ -193,13 +208,16 @@ def _style_arrows(svg: str) -> str:
         points_match = re.search(r'points="([\d.,\s]+)"', tag)
         if points_match:
             points_str = points_match.group(1)
+            # Ensure the arrowhead is fully opaque
+            tag = re.sub(r'opacity="[^"]*"\s*', "", tag)
+            tag = re.sub(r'fill="#([0-9a-fA-F]{6})[0-9a-fA-F]{2}"', r'fill="#\1"', tag)
             try:
                 # points="x1,y1 x2,y2 x3,y3"
                 pts = [p.split(',') for p in points_str.split()]
                 pts = [(float(p[0]), float(p[1])) for p in pts]
 
-                # Scale factor: 0.5 means 50% of original size
-                scale = 0.5
+                # Scale factor: 0.35 means 35% of original size
+                scale = 0.35
                 # The first point is the tip of the arrow
                 tip = pts[0]
                 # The other points form the base
@@ -236,7 +254,7 @@ def _style_arrows(svg: str) -> str:
         if "stroke=" in tag:
             return tag
         return (tag[:-2].rstrip()
-                + f' stroke="{_ARROW_BORDER_COLOR}" stroke-width="0.8"'
+                + f' stroke="{_ARROW_BORDER_COLOR}" stroke-width="0.5"'
                   ' stroke-linejoin="round"/>')
 
     svg = re.sub(r'<line\b[^>]*class="arrow"[^>]*/>', line_repl, svg)
@@ -249,10 +267,16 @@ def _legal_moves_svg(board: chess.Board, lastmove: chess.Move | None = None) -> 
 
     Returns the SVG string and the list of legal moves in SAN notation.
     """
-    arrows = [
-        chess.svg.Arrow(move.from_square, move.to_square, color="#15781B80")
-        for move in board.legal_moves
-    ]
+    arrows = []
+    for move in board.legal_moves:
+        piece = board.piece_at(move.from_square)
+        color_hex = PIECE_COLORS.get(piece.piece_type, "#15781B") if piece else "#15781B"
+        # Use 70% opacity for both shaft and head to maintain some transparency
+        # but apply it as a separate attribute to avoid the darkening effect of the black underlay
+        # where they overlap. Actually, 70% is still enough for the black to show through.
+        # Let's try 100% opacity first as it's the most robust way to match colors.
+        arrows.append(chess.svg.Arrow(move.from_square, move.to_square, color=color_hex))
+
     sans = [board.san(move) for move in board.legal_moves]
     svg = chess.svg.board(board, size=420, lastmove=lastmove, arrows=arrows)
     return _style_arrows(svg), sans

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="com.obiscr.chatgpt.settings.EasyCodeState">
+    <option name="projectFiles" value="$PROJECT_DIR$/app/templates/game.html;P:/MarcusLion/chess-player-analyser/app/templates/games.html;P:/MarcusLion/chess-player-analyser/app/templates/index.html;P:/MarcusLion/chess-player-analyser/app/templates/user.html;P:/MarcusLion/chess-player-analyser/app/__init__.py;P:/MarcusLion/chess-player-analyser/app/chesscom.py;P:/MarcusLion/chess-player-analyser/app/eco.py;P:/MarcusLion/chess-player-analyser/app/games.py;P:/MarcusLion/chess-player-analyser/app/main.py;P:/MarcusLion/chess-player-analyser/app/metrics.py;P:/MarcusLion/chess-player-analyser/app/neo4j_store.py;P:/MarcusLion/chess-player-analyser/app/parser.py;P:/MarcusLion/chess-player-analyser/firebase_notes.md;P:/MarcusLion/chess-player-analyser/neo4j_notes.md;P:/MarcusLion/chess-player-analyser/README.md" />
+  </component>
+</project>

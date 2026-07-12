@@ -175,9 +175,9 @@ PIECE_POINTS = {
     chess.KING: 0,
 }
 
-LEGAL_MOVES_WEIGHT = 0.1
-MATERIAL_SCORE_WEIGHT = 4
-FORWARD_SCORE_WEIGHT = 3
+LEGAL_MOVES_WEIGHT:float = 0.3
+MATERIAL_SCORE_WEIGHT:float = 4.0
+FORWARD_SCORE_WEIGHT:float = 3.0
 
 
 def _style_arrows(svg: str) -> str:
@@ -387,7 +387,14 @@ def _calculate_material(board: chess.Board) -> dict[str, int]:
     return {"White": white, "Black": black}
 
 
-def _move_utility(board: chess.Board, move: chess.Move) -> tuple[int, float]:
+def _move_utility(
+    board: chess.Board,
+    move: chess.Move,
+    *,
+    legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
+    material_score_weight: float = MATERIAL_SCORE_WEIGHT,
+    forward_score_weight: float = FORWARD_SCORE_WEIGHT,
+) -> tuple[int, float]:
     mover = board.turn
     board.push(move)
     try:
@@ -398,18 +405,39 @@ def _move_utility(board: chess.Board, move: chess.Move) -> tuple[int, float]:
         material = _calculate_material(board)
         forward_score = (f1["White"] + f2["White"]) - (f1["Black"] + f2["Black"])
         material_score = material["White"] - material["Black"]
-        total_score = _calculate_total_score(legal_moves, material_score, forward_score)
+        total_score = _calculate_total_score(
+            legal_moves,
+            material_score,
+            forward_score,
+            legal_moves_weight=legal_moves_weight,
+            material_score_weight=material_score_weight,
+            forward_score_weight=forward_score_weight,
+        )
         utility = total_score if mover == chess.WHITE else -total_score
         return utility, total_score
     finally:
         board.pop()
 
 
-def choose_engine_move(board: chess.Board, rng: random.Random | None = None, top_k: int = 3) -> tuple[chess.Move, float]:
+def choose_engine_move(
+    board: chess.Board,
+    rng: random.Random | None = None,
+    top_k: int = 3,
+    *,
+    legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
+    material_score_weight: float = MATERIAL_SCORE_WEIGHT,
+    forward_score_weight: float = FORWARD_SCORE_WEIGHT,
+) -> tuple[chess.Move, float]:
     rng = rng or random.Random()
     scored_moves: list[tuple[int, float, chess.Move]] = []
     for move in board.legal_moves:
-        utility, score = _move_utility(board, move)
+        utility, score = _move_utility(
+            board,
+            move,
+            legal_moves_weight=legal_moves_weight,
+            material_score_weight=material_score_weight,
+            forward_score_weight=forward_score_weight,
+        )
         scored_moves.append((utility, score, move))
 
     if not scored_moves:
@@ -426,9 +454,9 @@ def _calculate_total_score(
     material_score: int,
     forward_score: int,
     *,
-    legal_moves_weight: int = LEGAL_MOVES_WEIGHT,
-    material_score_weight: int = MATERIAL_SCORE_WEIGHT,
-    forward_score_weight: int = FORWARD_SCORE_WEIGHT,
+    legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
+    material_score_weight: float = MATERIAL_SCORE_WEIGHT,
+    forward_score_weight: float = FORWARD_SCORE_WEIGHT,
 ) -> float:
     """Blend mobility, material, and forward into one position score.
 

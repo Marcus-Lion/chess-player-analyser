@@ -9,7 +9,7 @@ import pandas as pd
 import chess
 import plotly.express as px
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from app.chesscom import ChessComClient
@@ -25,10 +25,12 @@ from app.games import (
 from app.parser import parse_pgn_to_dataframe
 from app.self_play import (
     SelfPlayConfig,
+    load_self_play_job,
     load_self_play_result,
     load_self_play_results,
     run_self_play,
     save_self_play_results,
+    start_self_play_job,
 )
 from app.metrics import (
     summarize,
@@ -341,7 +343,7 @@ def self_play_page(request: Request):
 def self_play_run(
     request: Request,
     games: int = Form(1),
-    max_plies: int = Form(200),
+    max_plies: int = Form(55),
     top_k: int = Form(3),
     seed: str | None = Form(None),
     fen: str | None = Form(None),
@@ -367,6 +369,40 @@ def self_play_run(
         "recent_games": recent_games,
         "config": config,
     })
+
+
+@app.post("/self-play/start")
+def self_play_start(
+    games: int = Form(1),
+    max_plies: int = Form(55),
+    top_k: int = Form(3),
+    seed: str | None = Form(None),
+    fen: str | None = Form(None),
+):
+    fen = fen.strip() if fen and fen.strip() else None
+    try:
+        seed_value = int(seed) if seed and seed.strip() else None
+    except ValueError:
+        seed_value = None
+    config = SelfPlayConfig(
+        games=max(1, games),
+        max_plies=max(1, max_plies),
+        top_k=max(1, top_k),
+        seed=seed_value,
+        fen=fen,
+    )
+    return JSONResponse(start_self_play_job(config))
+
+
+@app.get("/self-play/status/{job_id}")
+def self_play_status(job_id: str):
+    headers = {"Cache-Control": "no-store"}
+    job = load_self_play_job(job_id)
+    if job is None:
+        return JSONResponse(
+            {"job_id": job_id, "state": "missing"}, status_code=404, headers=headers
+        )
+    return JSONResponse(job, headers=headers)
 
 
 @app.get("/games", response_class=HTMLResponse)
@@ -425,6 +461,8 @@ def view_self_play_game(request: Request, run_id: str, index: int):
         "status": row.get("outcome") or "",
         "winner": row.get("winner") or "",
         "loser": row.get("loser") or "",
+        "white_weights": row.get("white_weights"),
+        "black_weights": row.get("black_weights"),
     }
     return templates.TemplateResponse("game.html", {
         "request": request,

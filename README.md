@@ -35,7 +35,7 @@ The repo also includes a headless harness that plays the current scoring
 engine against itself from the starting position, or from a supplied FEN.
 
 ```bash
-uv run python -m app.self_play --games 10 --max-plies 200 --top-k 3 --seed 1
+uv run python -m app.self_play --games 10 --max-plies 55 --top-k 3 --seed 1
 ```
 
 You can also write PGN output to a file:
@@ -43,6 +43,19 @@ You can also write PGN output to a file:
 ```bash
 uv run python -m app.self_play --games 20 --output selfplay.pgn
 ```
+
+To search for better score weights from recent self-play games:
+
+```bash
+uv run python -m app.self_play --tune-weights --tune-iterations 200 --tune-corpus-size 50
+```
+
+That prints the best weights found, then runs self-play with them. Use
+`--tune-output weights.json` if you want the search result saved as JSON.
+
+Multi-game self-play now runs in a detached worker process and the browser
+remembers the active job id, so if the dev server reloads while a job is
+running, reopening the page resumes the progress bar from the saved job id.
 
 ## Hostinger VPS deployment
 

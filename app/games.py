@@ -43,7 +43,7 @@ class GamePosition:
     control_score: int  # (W_c1 + W_c2) - (B_c1 + B_c2)
     material_score: int  # White material - Black material
     score: int  # Legal move count for the side to move
-    total_score: int  # Weighted blend of legal moves, material, and forward control
+    total_score: int  # Weighted blend of legal moves, material, and forward
 
 
 @dataclass
@@ -395,7 +395,7 @@ def _calculate_total_score(
     material_score_weight: int = MATERIAL_SCORE_WEIGHT,
     control_score_weight: int = CONTROL_SCORE_WEIGHT,
 ) -> int:
-    """Blend mobility, material, and forward control into one position score.
+    """Blend mobility, material, and forward into one position score.
 
     Formula:
         total_score = legal_moves_weight * legal_moves
@@ -403,7 +403,7 @@ def _calculate_total_score(
                     + control_score_weight * control_score
 
     The weights keep material as the strongest signal, while still letting
-    mobility and forward control move the score in a visible way.
+    mobility and forward move the score in a visible way.
     """
     return (
         legal_moves_weight * legal_moves

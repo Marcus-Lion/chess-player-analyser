@@ -91,13 +91,13 @@ Beyond the analytics dashboard you can inspect individual games move by move:
   Tick **Show all valid moves** to overlay arrows for every legal move in the
   current position and list them in SAN notation. The arrows are drawn thin
   with a dark border so they stay readable even when many overlap.
-  The viewer also displays **Forward Control (1st and 2nd order)** metrics,
+  The viewer also displays **Forward (1st and 2nd order)** metrics,
   a **Material** score that counts each side’s piece points
   (pawn=1, knight/bishop=3, rook=5, queen=9), and a **Legal-move Score** that
-  counts how many legal moves are available to the side to move. The control
+  counts how many legal moves are available to the side to move. The forward
   score tracks how many squares each side attacks on its forward two ranks; the
   material score tracks who is ahead on raw piece value.
-  Based on the control score, the viewer also **suggests the best 3 moves** for
+  Based on the forward score, the viewer also **suggests the best 3 moves** for
   the current player (the legal moves leading to the best 1st order control
   balance).
   A **Position sub-graph** is shown on the right, next to the board: it draws

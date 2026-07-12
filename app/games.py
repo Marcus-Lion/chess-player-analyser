@@ -37,10 +37,10 @@ class GamePosition:
     legal_moves: list[str]
     move_tree: dict[str, list[str]]  # move_san -> list of response_sans
     move_scores: dict[str, int]  # move_san -> strength score of resulting position
-    control_1: dict[str, int]  # {"White": count, "Black": count}
-    control_2: dict[str, int]
+    forward_1: dict[str, int]  # {"White": count, "Black": count}
+    forward_2: dict[str, int]
     material: dict[str, int]  # {"White": points, "Black": points}
-    control_score: int  # (W_c1 + W_c2) - (B_c1 + B_c2)
+    forward_score: int  # (W_f1 + W_f2) - (B_f1 + B_f2)
     material_score: int  # White material - Black material
     score: int  # Legal move count for the side to move
     total_score: float  # Weighted blend of legal moves, material, and forward
@@ -176,7 +176,7 @@ PIECE_POINTS = {
 
 LEGAL_MOVES_WEIGHT = 0.1
 MATERIAL_SCORE_WEIGHT = 4
-CONTROL_SCORE_WEIGHT = 3
+FORWARD_SCORE_WEIGHT = 3
 
 
 def _style_arrows(svg: str) -> str:
@@ -315,11 +315,11 @@ def _style_arrows(svg: str) -> str:
     return svg
 
 
-def _calculate_control(board: chess.Board) -> tuple[dict[str, int], dict[str, int]]:
-    """Calculate 1st and 2nd order control on the forward two ranks."""
-    c1 = get_board_control(board)
+def _calculate_forward(board: chess.Board) -> tuple[dict[str, int], dict[str, int]]:
+    """Calculate 1st and 2nd order forward on the forward two ranks."""
+    f1 = get_board_control(board)
     
-    c2 = {"White": 0, "Black": 0}
+    f2 = {"White": 0, "Black": 0}
     original_turn = board.turn
     
     # White 2nd order
@@ -331,9 +331,9 @@ def _calculate_control(board: chess.Board) -> tuple[dict[str, int], dict[str, in
             board.push(m)
             total_w_c1 += get_board_control(board)["White"]
             board.pop()
-        c2["White"] = int(total_w_c1 / len(w_moves))
+        f2["White"] = int(total_w_c1 / len(w_moves))
     else:
-        c2["White"] = c1["White"]
+        f2["White"] = f1["White"]
 
     # Black 2nd order
     board.turn = chess.BLACK
@@ -344,12 +344,12 @@ def _calculate_control(board: chess.Board) -> tuple[dict[str, int], dict[str, in
             board.push(m)
             total_b_c1 += get_board_control(board)["Black"]
             board.pop()
-        c2["Black"] = int(total_b_c1 / len(b_moves))
+        f2["Black"] = int(total_b_c1 / len(b_moves))
     else:
-        c2["Black"] = c1["Black"]
+        f2["Black"] = f1["Black"]
         
     board.turn = original_turn
-    return c1, c2
+    return f1, f2
 
 
 def get_board_control(board: chess.Board) -> dict[str, int]:
@@ -389,18 +389,18 @@ def _calculate_material(board: chess.Board) -> dict[str, int]:
 def _calculate_total_score(
     legal_moves: int,
     material_score: int,
-    control_score: int,
+    forward_score: int,
     *,
     legal_moves_weight: int = LEGAL_MOVES_WEIGHT,
     material_score_weight: int = MATERIAL_SCORE_WEIGHT,
-    control_score_weight: int = CONTROL_SCORE_WEIGHT,
+    forward_score_weight: int = FORWARD_SCORE_WEIGHT,
 ) -> float:
     """Blend mobility, material, and forward into one position score.
 
     Formula:
         total_score = legal_moves_weight * legal_moves
                     + material_score_weight * material_score
-                    + control_score_weight * control_score
+                    + forward_score_weight * forward_score
 
     The weights keep material as the strongest signal, while still letting
     mobility and forward move the score in a visible way.
@@ -408,7 +408,7 @@ def _calculate_total_score(
     return round(
         legal_moves_weight * legal_moves
         + material_score_weight * material_score
-        + control_score_weight * control_score
+        + forward_score_weight * forward_score
     , 2)
 
 
@@ -420,12 +420,12 @@ def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None
     legal_moves = list(board.legal_moves)
     
     # Pre-calculate current control and material
-    c1, c2 = _calculate_control(board)
+    f1, f2 = _calculate_forward(board)
     material = _calculate_material(board)
-    control_score = (c1["White"] + c2["White"]) - (c1["Black"] + c2["Black"])
+    forward_score = (f1["White"] + f2["White"]) - (f1["Black"] + f2["Black"])
     material_score = material["White"] - material["Black"]
     score = len(legal_moves)
-    total_score = _calculate_total_score(score, material_score, control_score)
+    total_score = _calculate_total_score(score, material_score, forward_score)
 
     for move in legal_moves:
         san = board.san(move)
@@ -448,7 +448,7 @@ def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None
 
     sans = [board.san(move) for move in legal_moves]
     svg = chess.svg.board(board, size=420, lastmove=lastmove, arrows=arrows)
-    return _style_arrows(svg), sans, tree, c1, c2, material, control_score, material_score, score, total_score, move_scores
+    return _style_arrows(svg), sans, tree, f1, f2, material, forward_score, material_score, score, total_score, move_scores
 
 
 def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
@@ -460,7 +460,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
     headers = game.headers
     board = game.board()
 
-    start_moves_svg, start_legal, start_tree, start_c1, start_c2, start_material, start_control_score, start_material_score, start_score, start_total_score, start_scores = _legal_moves_and_tree(board)
+    start_moves_svg, start_legal, start_tree, start_f1, start_f2, start_material, start_forward_score, start_material_score, start_score, start_total_score, start_scores = _legal_moves_and_tree(board)
     positions: list[GamePosition] = [
         GamePosition(
             ply=0,
@@ -473,10 +473,10 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
             legal_moves=start_legal,
             move_tree=start_tree,
             move_scores=start_scores,
-            control_1=start_c1,
-            control_2=start_c2,
+            forward_1=start_f1,
+            forward_2=start_f2,
             material=start_material,
-            control_score=start_control_score,
+            forward_score=start_forward_score,
             material_score=start_material_score,
             score=start_score,
             total_score=start_total_score,
@@ -490,7 +490,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
         move_number = board.fullmove_number
         san = board.san(move)
         board.push(move)
-        moves_svg, legal, tree, c1, c2, material, control_score, material_score, score, total_score, scores = _legal_moves_and_tree(board, lastmove=move)
+        moves_svg, legal, tree, f1, f2, material, forward_score, material_score, score, total_score, scores = _legal_moves_and_tree(board, lastmove=move)
         positions.append(
             GamePosition(
                 ply=ply,
@@ -503,10 +503,10 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
                 legal_moves=legal,
                 move_tree=tree,
                 move_scores=scores,
-                control_1=c1,
-                control_2=c2,
+                forward_1=f1,
+                forward_2=f2,
                 material=material,
-                control_score=control_score,
+                forward_score=forward_score,
                 material_score=material_score,
                 score=score,
                 total_score=total_score,

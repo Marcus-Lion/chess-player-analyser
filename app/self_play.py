@@ -11,7 +11,7 @@ from uuid import uuid4
 import chess
 import chess.pgn
 
-from app.games import _calculate_control, _calculate_material, _calculate_total_score, _result_summary
+from app.games import _calculate_forward, _calculate_material, _calculate_total_score, _result_summary
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -51,11 +51,11 @@ class SelfPlayConfig:
 
 def _evaluate_board(board: chess.Board) -> int:
     legal_moves = len(list(board.legal_moves))
-    c1, c2 = _calculate_control(board)
+    f1, f2 = _calculate_forward(board)
     material = _calculate_material(board)
-    control_score = (c1["White"] + c2["White"]) - (c1["Black"] + c2["Black"])
+    forward_score = (f1["White"] + f2["White"]) - (f1["Black"] + f2["Black"])
     material_score = material["White"] - material["Black"]
-    return _calculate_total_score(legal_moves, material_score, control_score)
+    return _calculate_total_score(legal_moves, material_score, forward_score)
 
 
 def _move_utility(board: chess.Board, move: chess.Move) -> tuple[int, int]:
@@ -199,7 +199,7 @@ def load_self_play_results(limit: int = 50) -> list[dict]:
             if not line:
                 continue
             try:
-                rows.append(json.loads(line))
+                rows.append(_normalize_result(json.loads(line)))
             except json.JSONDecodeError:
                 continue
 
@@ -220,8 +220,18 @@ def load_self_play_result(run_id: str, index: int) -> dict | None:
             except json.JSONDecodeError:
                 continue
             if row.get("run_id") == run_id and int(row.get("index", 0)) == index:
-                return row
+                return _normalize_result(row)
     return None
+
+
+def _normalize_result(row: dict) -> dict:
+    if "forward_1" not in row and "control_1" in row:
+        row["forward_1"] = row.pop("control_1")
+    if "forward_2" not in row and "control_2" in row:
+        row["forward_2"] = row.pop("control_2")
+    if "forward_score" not in row and "control_score" in row:
+        row["forward_score"] = row.pop("control_score")
+    return row
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

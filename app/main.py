@@ -11,7 +11,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.chesscom import ChessComClient
 from app.games import (
-    CONTROL_SCORE_WEIGHT,
+    FORWARD_SCORE_WEIGHT,
     LEGAL_MOVES_WEIGHT,
     MATERIAL_SCORE_WEIGHT,
     load_game_summaries,
@@ -203,7 +203,7 @@ def view_game(request: Request, username: str, index: int):
         "score_weights": {
             "legal_moves": LEGAL_MOVES_WEIGHT,
             "material": MATERIAL_SCORE_WEIGHT,
-            "control": CONTROL_SCORE_WEIGHT,
+            "forward": FORWARD_SCORE_WEIGHT,
         },
     })
 
@@ -243,7 +243,7 @@ def view_self_play_game(request: Request, run_id: str, index: int):
         "score_weights": {
             "legal_moves": LEGAL_MOVES_WEIGHT,
             "material": MATERIAL_SCORE_WEIGHT,
-            "control": CONTROL_SCORE_WEIGHT,
+            "forward": FORWARD_SCORE_WEIGHT,
         },
     })
 

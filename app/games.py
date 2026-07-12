@@ -43,7 +43,7 @@ class GamePosition:
     control_score: int  # (W_c1 + W_c2) - (B_c1 + B_c2)
     material_score: int  # White material - Black material
     score: int  # Legal move count for the side to move
-    total_score: int  # Weighted blend of legal moves, material, and forward
+    total_score: float  # Weighted blend of legal moves, material, and forward
 
 
 @dataclass
@@ -394,7 +394,7 @@ def _calculate_total_score(
     legal_moves_weight: int = LEGAL_MOVES_WEIGHT,
     material_score_weight: int = MATERIAL_SCORE_WEIGHT,
     control_score_weight: int = CONTROL_SCORE_WEIGHT,
-) -> int:
+) -> float:
     """Blend mobility, material, and forward into one position score.
 
     Formula:
@@ -405,11 +405,11 @@ def _calculate_total_score(
     The weights keep material as the strongest signal, while still letting
     mobility and forward move the score in a visible way.
     """
-    return (
+    return round(
         legal_moves_weight * legal_moves
         + material_score_weight * material_score
         + control_score_weight * control_score
-    )
+    , 2)
 
 
 def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None) -> tuple[str, list[str], dict[str, list[str]], dict[str, int], dict[str, int], dict[str, int], int, int, int, int, dict[str, int]]:

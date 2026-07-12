@@ -214,6 +214,11 @@ def view_self_play_game(request: Request, run_id: str, index: int):
 
     detail = load_game_detail(row["pgn"], 1)
     positions_data = [asdict(pos) for pos in detail.positions] if detail else []
+    game_summary = {
+        "status": row.get("outcome") or "",
+        "winner": row.get("winner") or "",
+        "loser": row.get("loser") or "",
+    }
     return templates.TemplateResponse("game.html", {
         "request": request,
         "username": f"Self-play {run_id}",
@@ -223,6 +228,7 @@ def view_self_play_game(request: Request, run_id: str, index: int):
         "positions_data": positions_data,
         "back_url": "/self-play",
         "back_label": "Back to self-play",
+        "game_summary": game_summary,
     })
 
 

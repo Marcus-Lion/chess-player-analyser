@@ -11,7 +11,7 @@ from uuid import uuid4
 import chess
 import chess.pgn
 
-from app.games import _calculate_control, _calculate_material, _calculate_total_score
+from app.games import _calculate_control, _calculate_material, _calculate_total_score, _result_summary
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -29,6 +29,9 @@ class SelfPlayGame:
     pgn: str
     final_fen: str
     final_score: int
+    outcome: str = ""
+    winner: str = ""
+    loser: str = ""
     run_id: str = ""
     played_at: str = ""
     seed: int | None = None
@@ -124,6 +127,7 @@ def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random |
     exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=True)
     pgn_text = game.accept(exporter)
     final_score = _evaluate_board(board)
+    summary = _result_summary(result, white="Heuristic", black="Heuristic")
 
     return SelfPlayGame(
         index=game_index,
@@ -133,6 +137,9 @@ def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random |
         pgn=pgn_text,
         final_fen=board.fen(),
         final_score=final_score,
+        outcome=summary["status"],
+        winner=summary["winner"],
+        loser=summary["loser"],
     )
 
 
@@ -173,6 +180,9 @@ def save_self_play_results(games: list[SelfPlayGame]) -> None:
                 "plies": game.plies,
                 "final_fen": game.final_fen,
                 "final_score": game.final_score,
+                "outcome": game.outcome,
+                "winner": game.winner,
+                "loser": game.loser,
                 "pgn": game.pgn,
             }
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")

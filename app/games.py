@@ -69,6 +69,37 @@ def _outcome_for(color: str, result: str) -> str:
     return "Unknown"
 
 
+def _result_summary(result: str, white: str = "White", black: str = "Black") -> dict[str, str]:
+    """Summarize a finished game in winner/loser/draw terms."""
+    if result == "1-0":
+        return {
+            "status": "White wins",
+            "winner": white,
+            "loser": black,
+            "result": result,
+        }
+    if result == "0-1":
+        return {
+            "status": "Black wins",
+            "winner": black,
+            "loser": white,
+            "result": result,
+        }
+    if result == "1/2-1/2":
+        return {
+            "status": "Draw",
+            "winner": "",
+            "loser": "",
+            "result": result,
+        }
+    return {
+        "status": "Unknown",
+        "winner": "",
+        "loser": "",
+        "result": result,
+    }
+
+
 def load_game_summaries(pgn_text: str, username: str | None = None) -> list[GameSummary]:
     """Read only the headers of every game in ``pgn_text`` (fast)."""
     username_l = (username or "").lower()

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
+import random
 from dataclasses import asdict
 from pathlib import Path
 import pandas as pd
+import chess
 import plotly.express as px
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse
@@ -14,6 +17,8 @@ from app.games import (
     FORWARD_SCORE_WEIGHT,
     LEGAL_MOVES_WEIGHT,
     MATERIAL_SCORE_WEIGHT,
+    _result_summary,
+    choose_engine_move,
     load_game_summaries,
     load_game_detail,
 )
@@ -38,6 +43,21 @@ from app.metrics import (
 BASE_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = BASE_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+PIECE_UNICODE = {
+    (chess.PAWN, chess.WHITE): "♙",
+    (chess.KNIGHT, chess.WHITE): "♘",
+    (chess.BISHOP, chess.WHITE): "♗",
+    (chess.ROOK, chess.WHITE): "♖",
+    (chess.QUEEN, chess.WHITE): "♕",
+    (chess.KING, chess.WHITE): "♔",
+    (chess.PAWN, chess.BLACK): "♟",
+    (chess.KNIGHT, chess.BLACK): "♞",
+    (chess.BISHOP, chess.BLACK): "♝",
+    (chess.ROOK, chess.BLACK): "♜",
+    (chess.QUEEN, chess.BLACK): "♛",
+    (chess.KING, chess.BLACK): "♚",
+}
 
 app = FastAPI(title="Marcus Lion Chess Player Analyser")
 templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
@@ -125,9 +145,185 @@ def _ensure_pgn(username: str, force_refresh: bool = False) -> str:
     return pgn_path.read_text(encoding="utf-8")
 
 
+def _normalize_human_color(value: str | None) -> str:
+    return "White" if (value or "").strip().lower().startswith("w") else "Black"
+
+
+def _parse_history(raw: str | None) -> list[dict]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _play_labels(human_color: str) -> tuple[str, str]:
+    if human_color == "White":
+        return "Human (White)", "Engine (Black)"
+    return "Engine (White)", "Human (Black)"
+
+
+def _piece_unicode(piece: chess.Piece | None) -> str:
+    if piece is None:
+        return ""
+    return PIECE_UNICODE[(piece.piece_type, piece.color)]
+
+
+def _board_grid(board: chess.Board, can_drag: bool) -> list[list[dict]]:
+    grid: list[list[dict]] = []
+    for rank in range(7, -1, -1):
+        row: list[dict] = []
+        for file in range(8):
+            square = chess.square(file, rank)
+            piece = board.piece_at(square)
+            row.append({
+                "square": chess.square_name(square),
+                "is_light": (file + rank) % 2 == 0,
+                "piece": _piece_unicode(piece),
+                "piece_color": "white" if piece and piece.color == chess.WHITE else "black" if piece else "",
+                "draggable": bool(piece and can_drag and piece.color == board.turn),
+            })
+        grid.append(row)
+    return grid
+
+
+def _legal_move_options(board: chess.Board) -> list[dict]:
+    options: list[dict] = []
+    for move in board.legal_moves:
+        options.append({
+            "uci": move.uci(),
+            "san": board.san(move),
+            "from": chess.square_name(move.from_square),
+            "to": chess.square_name(move.to_square),
+        })
+    return options
+
+
+def _append_history(history: list[dict], board: chess.Board, move: chess.Move) -> None:
+    history.append({
+        "ply": len(history) + 1,
+        "move_number": board.fullmove_number,
+        "side": "White" if board.turn == chess.WHITE else "Black",
+        "san": board.san(move),
+    })
+
+
+def _advance_engine(board: chess.Board, history: list[dict], human_is_white: bool, rng: random.Random, top_k: int) -> chess.Move | None:
+    last_move: chess.Move | None = None
+    while not board.is_game_over(claim_draw=False) and board.turn != human_is_white:
+        move, _ = choose_engine_move(board, rng, top_k)
+        _append_history(history, board, move)
+        board.push(move)
+        last_move = move
+    return last_move
+
+
+def _play_context(
+    board: chess.Board,
+    history: list[dict],
+    human_color: str,
+    top_k: int,
+    seed: int | None,
+    last_move: chess.Move | None,
+    message: str = "",
+    error: str = "",
+) -> dict:
+    human_label, engine_label = _play_labels(human_color)
+    human_is_white = human_color == "White"
+    can_move = board.turn == human_is_white and not board.is_game_over(claim_draw=False)
+    legal_move_options = _legal_move_options(board) if can_move else []
+    result_summary = None
+    if board.is_game_over(claim_draw=False):
+        white_label = human_label if human_color == "White" else engine_label
+        black_label = engine_label if human_color == "White" else human_label
+        result_summary = _result_summary(board.result(claim_draw=False), white=white_label, black=black_label)
+
+    return {
+        "board_grid": _board_grid(board, can_move),
+        "legal_move_options": legal_move_options,
+        "history": history,
+        "history_json": json.dumps(history, ensure_ascii=False),
+        "current_fen": board.fen(),
+        "human_color": human_color,
+        "human_label": human_label,
+        "engine_label": engine_label,
+        "can_move": can_move,
+        "side_to_move": "White" if board.turn == chess.WHITE else "Black",
+        "top_k": top_k,
+        "seed": seed,
+        "message": message,
+        "error": error,
+        "result_summary": result_summary,
+        "game_over": board.is_game_over(claim_draw=False),
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
+
+
+@app.get("/play", response_class=HTMLResponse)
+def play(request: Request, human_color: str = "white", top_k: int = 3, seed: str | None = None):
+    human_color_n = _normalize_human_color(human_color)
+    seed_value = int(seed) if seed and seed.strip().isdigit() else None
+    rng = random.Random(seed_value)
+    board = chess.Board()
+    history: list[dict] = []
+    last_move = _advance_engine(board, history, human_color_n == "White", rng, max(1, top_k))
+    message = "Engine moved first." if last_move is not None else "New game ready."
+    context = _play_context(board, history, human_color_n, max(1, top_k), seed_value, last_move, message=message)
+    return templates.TemplateResponse("play.html", {"request": request, **context})
+
+
+@app.post("/play", response_class=HTMLResponse)
+def play_move(
+    request: Request,
+    current_fen: str = Form(...),
+    human_color: str = Form("white"),
+    top_k: int = Form(3),
+    seed: str | None = Form(None),
+    history_json: str | None = Form(None),
+    move_uci: str | None = Form(None),
+    move_san: str | None = Form(None),
+):
+    human_color_n = _normalize_human_color(human_color)
+    seed_value = int(seed) if seed and seed.strip().isdigit() else None
+    rng = random.Random(seed_value)
+    board = chess.Board(current_fen)
+    history = _parse_history(history_json)
+    error = ""
+    message = ""
+    last_move: chess.Move | None = None
+
+    if move_san or move_uci:
+        try:
+            if board.turn != (human_color_n == "White"):
+                raise ValueError("It is not your turn.")
+            if move_uci:
+                move = chess.Move.from_uci(move_uci)
+                if move not in board.legal_moves:
+                    raise ValueError("Illegal move.")
+            else:
+                move = board.parse_san(move_san)
+            san_text = board.san(move)
+            _append_history(history, board, move)
+            board.push(move)
+            last_move = move
+            message = f"You played {san_text}."
+        except Exception as exc:
+            error = str(exc)
+
+    if not error:
+        engine_move = _advance_engine(board, history, human_color_n == "White", rng, max(1, top_k))
+        if engine_move is not None:
+            last_move = engine_move
+            message = f"{message} Engine replied." if message else "Engine moved."
+
+    context = _play_context(board, history, human_color_n, max(1, top_k), seed_value, last_move, message=message, error=error)
+    return templates.TemplateResponse("play.html", {"request": request, **context})
 
 
 @app.get("/self-play", response_class=HTMLResponse)

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,7 +10,9 @@ from uuid import uuid4
 import chess
 import chess.pgn
 
-from app.games import _calculate_forward, _calculate_material, _calculate_total_score, _result_summary
+import random
+
+from app.games import _calculate_forward, _calculate_material, _calculate_total_score, _result_summary, choose_engine_move
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -58,32 +59,6 @@ def _evaluate_board(board: chess.Board) -> int:
     return _calculate_total_score(legal_moves, material_score, forward_score)
 
 
-def _move_utility(board: chess.Board, move: chess.Move) -> tuple[int, int]:
-    mover = board.turn
-    board.push(move)
-    try:
-        score = _evaluate_board(board)
-        utility = score if mover == chess.WHITE else -score
-        return utility, score
-    finally:
-        board.pop()
-
-
-def _choose_move(board: chess.Board, rng: random.Random, top_k: int) -> tuple[chess.Move, int]:
-    scored_moves: list[tuple[int, int, chess.Move]] = []
-    for move in board.legal_moves:
-        utility, score = _move_utility(board, move)
-        scored_moves.append((utility, score, move))
-
-    if not scored_moves:
-        raise ValueError("No legal moves available")
-
-    scored_moves.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    top_n = scored_moves[: max(1, min(top_k, len(scored_moves)))]
-    _, score, move = rng.choice(top_n)
-    return move, score
-
-
 def _terminal_reason(board: chess.Board) -> tuple[str, str]:
     if board.is_checkmate():
         return ("1-0" if board.turn == chess.BLACK else "0-1", "checkmate")
@@ -109,7 +84,7 @@ def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random |
 
     result, termination = _terminal_reason(board)
     while plies < config.max_plies and not result:
-        move, _ = _choose_move(board, rng, config.top_k)
+        move, _ = choose_engine_move(board, rng, config.top_k)
         san = board.san(move)
         board.push(move)
         node = node.add_variation(move)

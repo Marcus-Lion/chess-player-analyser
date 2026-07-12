@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import random
 from dataclasses import dataclass
 from io import StringIO
 
@@ -384,6 +385,40 @@ def _calculate_material(board: chess.Board) -> dict[str, int]:
         white += len(board.pieces(piece_type, chess.WHITE)) * points
         black += len(board.pieces(piece_type, chess.BLACK)) * points
     return {"White": white, "Black": black}
+
+
+def _move_utility(board: chess.Board, move: chess.Move) -> tuple[int, float]:
+    mover = board.turn
+    board.push(move)
+    try:
+        if board.is_checkmate():
+            return (1_000_000 if mover == chess.WHITE else -1_000_000), 1_000_000.0
+        legal_moves = len(list(board.legal_moves))
+        f1, f2 = _calculate_forward(board)
+        material = _calculate_material(board)
+        forward_score = (f1["White"] + f2["White"]) - (f1["Black"] + f2["Black"])
+        material_score = material["White"] - material["Black"]
+        total_score = _calculate_total_score(legal_moves, material_score, forward_score)
+        utility = total_score if mover == chess.WHITE else -total_score
+        return utility, total_score
+    finally:
+        board.pop()
+
+
+def choose_engine_move(board: chess.Board, rng: random.Random | None = None, top_k: int = 3) -> tuple[chess.Move, float]:
+    rng = rng or random.Random()
+    scored_moves: list[tuple[int, float, chess.Move]] = []
+    for move in board.legal_moves:
+        utility, score = _move_utility(board, move)
+        scored_moves.append((utility, score, move))
+
+    if not scored_moves:
+        raise ValueError("No legal moves available")
+
+    scored_moves.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    top_n = scored_moves[: max(1, min(top_k, len(scored_moves)))]
+    _, score, move = rng.choice(top_n)
+    return move, score
 
 
 def _calculate_total_score(

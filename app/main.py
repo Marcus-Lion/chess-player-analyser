@@ -10,7 +10,13 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from app.chesscom import ChessComClient
-from app.games import load_game_summaries, load_game_detail
+from app.games import (
+    CONTROL_SCORE_WEIGHT,
+    LEGAL_MOVES_WEIGHT,
+    MATERIAL_SCORE_WEIGHT,
+    load_game_summaries,
+    load_game_detail,
+)
 from app.parser import parse_pgn_to_dataframe
 from app.self_play import (
     SelfPlayConfig,
@@ -194,6 +200,11 @@ def view_game(request: Request, username: str, index: int):
         "total": total,
         "detail": detail,
         "positions_data": positions_data,
+        "score_weights": {
+            "legal_moves": LEGAL_MOVES_WEIGHT,
+            "material": MATERIAL_SCORE_WEIGHT,
+            "control": CONTROL_SCORE_WEIGHT,
+        },
     })
 
 
@@ -229,6 +240,11 @@ def view_self_play_game(request: Request, run_id: str, index: int):
         "back_url": "/self-play",
         "back_label": "Back to self-play",
         "game_summary": game_summary,
+        "score_weights": {
+            "legal_moves": LEGAL_MOVES_WEIGHT,
+            "material": MATERIAL_SCORE_WEIGHT,
+            "control": CONTROL_SCORE_WEIGHT,
+        },
     })
 
 

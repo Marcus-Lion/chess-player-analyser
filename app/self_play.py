@@ -2,23 +2,44 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import dataclass
+import math
+import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from io import StringIO
+import subprocess
+import sys
 from pathlib import Path
 from uuid import uuid4
+import threading
+from collections.abc import Callable
 
 import chess
 import chess.pgn
 
 import random
 
-from app.games import _calculate_forward, _calculate_material, _calculate_total_score, _result_summary, choose_engine_move
+from app.games import (
+    FORWARD_SCORE_WEIGHT,
+    LEGAL_MOVES_WEIGHT,
+    MATERIAL_SCORE_WEIGHT,
+    _calculate_forward,
+    _calculate_material,
+    _calculate_total_score,
+    _result_summary,
+    choose_engine_move,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = BASE_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 SELF_PLAY_RESULTS_PATH = CACHE_DIR / "self_play_results.jsonl"
+SELF_PLAY_JOBS_DIR = CACHE_DIR / "self_play_jobs"
+SELF_PLAY_JOBS_DIR.mkdir(parents=True, exist_ok=True)
+SELF_PLAY_RESULTS_LOCK = threading.Lock()
+DEFAULT_SELF_PLAY_WORKERS = max(1, os.cpu_count() or 1)
 
 
 @dataclass
@@ -29,7 +50,7 @@ class SelfPlayGame:
     plies: int
     pgn: str
     final_fen: str
-    final_score: int
+    final_score: float
     outcome: str = ""
     winner: str = ""
     loser: str = ""
@@ -37,26 +58,318 @@ class SelfPlayGame:
     played_at: str = ""
     seed: int | None = None
     top_k: int = 3
-    max_plies: int = 200
+    max_plies: int = 55
     start_fen: str = "startpos"
+    white_weights: dict[str, float] | None = None
+    black_weights: dict[str, float] | None = None
 
 
 @dataclass
 class SelfPlayConfig:
     games: int = 1
-    max_plies: int = 200
+    max_plies: int = 55
     top_k: int = 3
     seed: int | None = None
     fen: str | None = None
+    legal_moves_weight: float = LEGAL_MOVES_WEIGHT
+    material_score_weight: float = MATERIAL_SCORE_WEIGHT
+    forward_score_weight: float = FORWARD_SCORE_WEIGHT
+    randomize_player_weights: bool = True
+    player_weight_min_multiplier: float = 0.5
+    player_weight_max_multiplier: float = 1.5
 
 
-def _evaluate_board(board: chess.Board) -> int:
+@dataclass
+class SelfPlayJobStatus:
+    job_id: str
+    state: str
+    total: int
+    completed: int = 0
+    message: str = ""
+    played_at: str = ""
+    run_id: str = ""
+    error: str = ""
+
+
+def _score_weights(config: SelfPlayConfig) -> tuple[float, float, float]:
+    return (
+        config.legal_moves_weight,
+        config.material_score_weight,
+        config.forward_score_weight,
+    )
+
+
+def _weight_triplet_to_dict(weights: tuple[float, float, float]) -> dict[str, float]:
+    return {
+        "legal_moves_weight": weights[0],
+        "material_score_weight": weights[1],
+        "forward_score_weight": weights[2],
+    }
+
+
+def _randomize_weight_triplet(
+    base_weights: tuple[float, float, float],
+    rng: random.Random,
+    *,
+    min_multiplier: float,
+    max_multiplier: float,
+) -> tuple[float, float, float]:
+    log_min = math.log(min_multiplier)
+    log_max = math.log(max_multiplier)
+    return tuple(
+        base * math.exp(rng.uniform(log_min, log_max))
+        for base in base_weights
+    )
+
+
+def _player_weight_sets(config: SelfPlayConfig, rng: random.Random) -> tuple[dict[str, float], dict[str, float]]:
+    base = _score_weights(config)
+    if not config.randomize_player_weights:
+        shared = _weight_triplet_to_dict(base)
+        return shared, shared.copy()
+
+    white = _weight_triplet_to_dict(
+        _randomize_weight_triplet(
+            base,
+            rng,
+            min_multiplier=config.player_weight_min_multiplier,
+            max_multiplier=config.player_weight_max_multiplier,
+        )
+    )
+    black = _weight_triplet_to_dict(
+        _randomize_weight_triplet(
+            base,
+            rng,
+            min_multiplier=config.player_weight_min_multiplier,
+            max_multiplier=config.player_weight_max_multiplier,
+        )
+    )
+    return white, black
+
+
+def _seed_for_game(config: SelfPlayConfig, game_index: int) -> int | None:
+    if config.seed is None:
+        return random.SystemRandom().randint(0, 2**31 - 1)
+    return config.seed + game_index - 1
+
+
+def _config_for_game(config: SelfPlayConfig, game_index: int) -> SelfPlayConfig:
+    return SelfPlayConfig(
+        games=1,
+        max_plies=config.max_plies,
+        top_k=config.top_k,
+        seed=_seed_for_game(config, game_index),
+        fen=config.fen,
+        legal_moves_weight=config.legal_moves_weight,
+        material_score_weight=config.material_score_weight,
+        forward_score_weight=config.forward_score_weight,
+        randomize_player_weights=config.randomize_player_weights,
+        player_weight_min_multiplier=config.player_weight_min_multiplier,
+        player_weight_max_multiplier=config.player_weight_max_multiplier,
+    )
+
+
+def _job_path(job_id: str) -> Path:
+    return SELF_PLAY_JOBS_DIR / f"{job_id}.json"
+
+
+def _job_request_path(job_id: str) -> Path:
+    return SELF_PLAY_JOBS_DIR / f"{job_id}.request.json"
+
+
+def _write_job_status(status: SelfPlayJobStatus) -> None:
+    payload = asdict(status)
+    path = _job_path(status.job_id)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
+def load_self_play_job(job_id: str) -> dict | None:
+    path = _job_path(job_id)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
+def _write_job_request(job_id: str, run_id: str, config: SelfPlayConfig) -> Path:
+    path = _job_request_path(job_id)
+    payload = {
+        "job_id": job_id,
+        "run_id": run_id,
+        "config": asdict(config),
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def _evaluate_board(board: chess.Board, config: SelfPlayConfig | None = None) -> float:
     legal_moves = len(list(board.legal_moves))
     f1, f2 = _calculate_forward(board)
     material = _calculate_material(board)
     forward_score = (f1["White"] + f2["White"]) - (f1["Black"] + f2["Black"])
     material_score = material["White"] - material["Black"]
-    return _calculate_total_score(legal_moves, material_score, forward_score)
+    legal_moves_weight, material_score_weight, forward_score_weight = _score_weights(config or SelfPlayConfig())
+    return _calculate_total_score(
+        legal_moves,
+        material_score,
+        forward_score,
+        legal_moves_weight=legal_moves_weight,
+        material_score_weight=material_score_weight,
+        forward_score_weight=forward_score_weight,
+    )
+
+
+def _sigmoid(value: float) -> float:
+    if value >= 0:
+        z = math.exp(-value)
+        return 1.0 / (1.0 + z)
+    z = math.exp(value)
+    return z / (1.0 + z)
+
+
+def _result_target(board: chess.Board, result: str) -> float:
+    if result == "1/2-1/2":
+        return 0.5
+    if result == "1-0":
+        return 1.0 if board.turn == chess.WHITE else 0.0
+    if result == "0-1":
+        return 1.0 if board.turn == chess.BLACK else 0.0
+    return 0.5
+
+
+def _extract_samples_from_pgn(pgn_text: str) -> list[tuple[int, int, int, int, float]]:
+    game = chess.pgn.read_game(StringIO(pgn_text))
+    if game is None:
+        return []
+
+    result = game.headers.get("Result", "*")
+    if result not in {"1-0", "0-1", "1/2-1/2"}:
+        return []
+
+    board = game.board()
+    node = game
+    samples: list[tuple[int, int, int, int, float]] = []
+
+    while node.variations:
+        f1, f2 = _calculate_forward(board)
+        material = _calculate_material(board)
+        forward_score = (f1["White"] + f2["White"]) - (f1["Black"] + f2["Black"])
+        material_score = material["White"] - material["Black"]
+        samples.append((
+            len(list(board.legal_moves)),
+            material_score,
+            forward_score,
+            1 if board.turn == chess.WHITE else -1,
+            _result_target(board, result),
+        ))
+        node = node.variation(0)
+        board.push(node.move)
+
+    return samples
+
+
+def _log_loss(probability: float, target: float) -> float:
+    clipped = min(max(probability, 1e-9), 1.0 - 1e-9)
+    return -(target * math.log(clipped) + (1.0 - target) * math.log(1.0 - clipped))
+
+
+def _evaluate_candidate(
+    samples: list[tuple[int, int, int, int, float]],
+    weights: tuple[float, float, float],
+    *,
+    temperature: float,
+) -> float:
+    if not samples:
+        return float("inf")
+
+    lm_w, mat_w, fwd_w = weights
+    total_loss = 0.0
+    for legal_moves, material_score, forward_score, side_sign, target in samples:
+        score = _calculate_total_score(
+            legal_moves,
+            material_score,
+            forward_score,
+            legal_moves_weight=lm_w,
+            material_score_weight=mat_w,
+            forward_score_weight=fwd_w,
+        )
+        utility = score * side_sign
+        probability = _sigmoid(utility / max(temperature, 1e-6))
+        total_loss += _log_loss(probability, target)
+    return total_loss / len(samples)
+
+
+def tune_score_weights(
+    corpus: list[dict],
+    *,
+    iterations: int = 100,
+    seed: int | None = None,
+    temperature: float = 8.0,
+    min_multiplier: float = 0.25,
+    max_multiplier: float = 4.0,
+) -> dict:
+    rng = random.Random(seed)
+    samples: list[tuple[int, int, int, float]] = []
+    for row in corpus:
+        samples.extend(_extract_samples_from_pgn(row.get("pgn", "")))
+
+    if not samples:
+        raise ValueError("No labeled positions available for tuning")
+
+    rng.shuffle(samples)
+    split = max(1, int(len(samples) * 0.8))
+    train_samples = samples[:split]
+    validation_samples = samples[split:] or samples[:]
+
+    base_weights = (LEGAL_MOVES_WEIGHT, MATERIAL_SCORE_WEIGHT, FORWARD_SCORE_WEIGHT)
+    best_weights = base_weights
+    best_loss = _evaluate_candidate(validation_samples, base_weights, temperature=temperature)
+    history: list[dict[str, float]] = [
+        {
+            "legal_moves_weight": base_weights[0],
+            "material_score_weight": base_weights[1],
+            "forward_score_weight": base_weights[2],
+            "validation_loss": best_loss,
+        }
+    ]
+
+    log_min = math.log(min_multiplier)
+    log_max = math.log(max_multiplier)
+
+    for _ in range(max(1, iterations)):
+        candidate = tuple(
+            base * math.exp(rng.uniform(log_min, log_max))
+            for base in base_weights
+        )
+        loss = _evaluate_candidate(train_samples, candidate, temperature=temperature)
+        validation_loss = _evaluate_candidate(validation_samples, candidate, temperature=temperature)
+        history.append({
+            "legal_moves_weight": candidate[0],
+            "material_score_weight": candidate[1],
+            "forward_score_weight": candidate[2],
+            "training_loss": loss,
+            "validation_loss": validation_loss,
+        })
+        if validation_loss < best_loss:
+            best_loss = validation_loss
+            best_weights = candidate
+
+    return {
+        "best_weights": {
+            "legal_moves_weight": best_weights[0],
+            "material_score_weight": best_weights[1],
+            "forward_score_weight": best_weights[2],
+        },
+        "best_validation_loss": best_loss,
+        "samples": len(samples),
+        "train_samples": len(train_samples),
+        "validation_samples": len(validation_samples),
+        "history": history,
+    }
 
 
 def _terminal_reason(board: chess.Board) -> tuple[str, str]:
@@ -72,19 +385,30 @@ def _terminal_reason(board: chess.Board) -> tuple[str, str]:
 def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random | None = None) -> SelfPlayGame:
     rng = rng or random.Random(config.seed)
     board = chess.Board(config.fen) if config.fen else chess.Board()
+    white_weights, black_weights = _player_weight_sets(config, rng)
     game = chess.pgn.Game()
     game.headers["Event"] = "Self-play harness"
     game.headers["Site"] = "Local"
     game.headers["Round"] = str(game_index)
     game.headers["White"] = "Heuristic"
     game.headers["Black"] = "Heuristic"
+    game.headers["WhiteWeights"] = json.dumps(white_weights, sort_keys=True)
+    game.headers["BlackWeights"] = json.dumps(black_weights, sort_keys=True)
 
     node = game
     plies = 0
 
     result, termination = _terminal_reason(board)
     while plies < config.max_plies and not result:
-        move, _ = choose_engine_move(board, rng, config.top_k)
+        active_weights = white_weights if board.turn == chess.WHITE else black_weights
+        move, _ = choose_engine_move(
+            board,
+            rng,
+            config.top_k,
+            legal_moves_weight=active_weights["legal_moves_weight"],
+            material_score_weight=active_weights["material_score_weight"],
+            forward_score_weight=active_weights["forward_score_weight"],
+        )
         san = board.san(move)
         board.push(move)
         node = node.add_variation(move)
@@ -115,52 +439,92 @@ def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random |
         outcome=summary["status"],
         winner=summary["winner"],
         loser=summary["loser"],
+        white_weights=white_weights,
+        black_weights=black_weights,
     )
 
 
-def run_self_play(config: SelfPlayConfig) -> list[SelfPlayGame]:
-    rng = random.Random(config.seed)
+def run_self_play(
+    config: SelfPlayConfig,
+    *,
+    progress_callback: Callable[[int, SelfPlayGame, list[SelfPlayGame]], None] | None = None,
+    run_id: str | None = None,
+) -> list[SelfPlayGame]:
     played_at = datetime.now(timezone.utc).isoformat()
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8]
+    run_id = run_id or (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8])
     start_fen = config.fen or "startpos"
     games: list[SelfPlayGame] = []
-    for i in range(config.games):
-        game = play_self_game(config, i + 1, rng=rng)
+
+    if config.games <= 1:
+        game_config = _config_for_game(config, 1)
+        game = play_self_game(game_config, 1)
         game.run_id = run_id
         game.played_at = played_at
-        game.seed = config.seed
+        game.seed = game_config.seed
         game.top_k = config.top_k
         game.max_plies = config.max_plies
         game.start_fen = start_fen
         games.append(game)
-    return games
+        if progress_callback is not None:
+            progress_callback(1, game, games)
+        return games
+
+    max_workers = min(DEFAULT_SELF_PLAY_WORKERS, config.games)
+    future_to_index: dict = {}
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        for i in range(1, config.games + 1):
+            game_config = _config_for_game(config, i)
+            future = executor.submit(play_self_game, game_config, i)
+            future_to_index[future] = i
+
+        completed_games: dict[int, SelfPlayGame] = {}
+        completed_count = 0
+        for future in as_completed(future_to_index):
+            index = future_to_index[future]
+            game = future.result()
+            game.run_id = run_id
+            game.played_at = played_at
+            game.seed = _seed_for_game(config, index)
+            game.top_k = config.top_k
+            game.max_plies = config.max_plies
+            game.start_fen = start_fen
+            completed_games[index] = game
+            completed_count += 1
+            ordered_games = [completed_games[i] for i in sorted(completed_games)]
+            if progress_callback is not None:
+                progress_callback(completed_count, game, ordered_games)
+
+    return [completed_games[i] for i in sorted(completed_games)]
 
 
 def save_self_play_results(games: list[SelfPlayGame]) -> None:
     if not games:
         return
 
-    with SELF_PLAY_RESULTS_PATH.open("a", encoding="utf-8") as handle:
-        for game in games:
-            payload = {
-                "played_at": game.played_at or datetime.now(timezone.utc).isoformat(),
-                "run_id": game.run_id,
-                "index": game.index,
-                "seed": game.seed,
-                "top_k": game.top_k,
-                "max_plies": game.max_plies,
-                "start_fen": game.start_fen,
-                "result": game.result,
-                "termination": game.termination,
-                "plies": game.plies,
-                "final_fen": game.final_fen,
-                "final_score": game.final_score,
-                "outcome": game.outcome,
-                "winner": game.winner,
-                "loser": game.loser,
-                "pgn": game.pgn,
-            }
-            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    with SELF_PLAY_RESULTS_LOCK:
+        with SELF_PLAY_RESULTS_PATH.open("a", encoding="utf-8") as handle:
+            for game in games:
+                payload = {
+                    "played_at": game.played_at or datetime.now(timezone.utc).isoformat(),
+                    "run_id": game.run_id,
+                    "index": game.index,
+                    "seed": game.seed,
+                    "top_k": game.top_k,
+                    "max_plies": game.max_plies,
+                    "start_fen": game.start_fen,
+                    "result": game.result,
+                    "termination": game.termination,
+                    "plies": game.plies,
+                    "final_fen": game.final_fen,
+                    "final_score": game.final_score,
+                    "outcome": game.outcome,
+                    "winner": game.winner,
+                    "loser": game.loser,
+                    "white_weights": game.white_weights,
+                    "black_weights": game.black_weights,
+                    "pgn": game.pgn,
+                }
+                handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
 def load_self_play_results(limit: int = 50) -> list[dict]:
@@ -206,16 +570,127 @@ def _normalize_result(row: dict) -> dict:
         row["forward_2"] = row.pop("control_2")
     if "forward_score" not in row and "control_score" in row:
         row["forward_score"] = row.pop("control_score")
+    row["played_at_display"] = _format_played_at(row.get("played_at", ""))
     return row
+
+
+def _format_played_at(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value.split(".", 1)[0].replace("T", " ")
+
+    local_tz = datetime.now().astimezone().tzinfo
+    if local_tz is not None:
+        parsed = parsed.astimezone(local_tz)
+    return parsed.replace(tzinfo=None, microsecond=0).isoformat(sep=" ")
+
+
+def load_tuning_corpus(limit: int = 50) -> list[dict]:
+    corpus = load_self_play_results(limit=limit)
+    if corpus:
+        return corpus
+
+    bootstrap_config = SelfPlayConfig(games=max(1, min(5, limit)))
+    bootstrap_games = run_self_play(bootstrap_config)
+    save_self_play_results(bootstrap_games)
+    return load_self_play_results(limit=limit)
+
+
+def _run_self_play_job(job_id: str, run_id: str, config_data: dict) -> None:
+    config = SelfPlayConfig(**config_data)
+    status = SelfPlayJobStatus(
+        job_id=job_id,
+        state="running",
+        total=max(1, config.games),
+        completed=0,
+        message="Running",
+        played_at=datetime.now(timezone.utc).isoformat(),
+        run_id=run_id,
+    )
+    _write_job_status(status)
+
+    try:
+        def progress_callback(completed: int, game: SelfPlayGame, games: list[SelfPlayGame]) -> None:
+            save_self_play_results([game])
+            status.completed = completed
+            status.message = f"Completed {completed} of {status.total}"
+            status.run_id = game.run_id or run_id
+            _write_job_status(status)
+
+        games = run_self_play(config, progress_callback=progress_callback, run_id=run_id)
+        if not config.games:
+            save_self_play_results(games)
+        status.state = "completed"
+        status.completed = status.total
+        status.message = "Completed"
+        status.run_id = run_id
+        _write_job_status(status)
+    except Exception as exc:
+        status.state = "failed"
+        status.error = str(exc)
+        status.message = "Failed"
+        _write_job_status(status)
+
+
+def start_self_play_job(config: SelfPlayConfig) -> dict:
+    job_id = uuid4().hex
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8]
+    status = SelfPlayJobStatus(
+        job_id=job_id,
+        state="queued",
+        total=max(1, config.games),
+        message="Queued",
+        played_at=datetime.now(timezone.utc).isoformat(),
+        run_id=run_id,
+    )
+    _write_job_status(status)
+
+    request_path = _write_job_request(job_id, run_id, config)
+    cmd = [
+        sys.executable,
+        "-m",
+        "app.self_play_worker",
+        "--job-id",
+        job_id,
+        "--request-path",
+        str(request_path),
+    ]
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen(
+        cmd,
+        cwd=str(BASE_DIR),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        creationflags=creationflags,
+        close_fds=True,
+    )
+    return asdict(status)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the position scorer against itself.")
     parser.add_argument("--games", type=int, default=1, help="Number of self-play games to run.")
-    parser.add_argument("--max-plies", type=int, default=200, help="Stop each game after this many plies.")
+    parser.add_argument("--max-plies", type=int, default=55, help="Stop each game after this many plies.")
     parser.add_argument("--top-k", type=int, default=3, help="Randomly choose among the top K evaluated moves.")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for move selection.")
     parser.add_argument("--fen", type=str, default=None, help="Optional starting FEN.")
+    parser.add_argument("--legal-moves-weight", type=float, default=LEGAL_MOVES_WEIGHT, help="Weight for legal move count.")
+    parser.add_argument("--material-score-weight", type=float, default=MATERIAL_SCORE_WEIGHT, help="Weight for material balance.")
+    parser.add_argument("--forward-score-weight", type=float, default=FORWARD_SCORE_WEIGHT, help="Weight for forward control.")
+    parser.add_argument("--fixed-player-weights", action="store_true", help="Use the same weights for both sides.")
+    parser.add_argument("--player-weight-min-multiplier", type=float, default=0.5, help="Lower bound for per-player randomization.")
+    parser.add_argument("--player-weight-max-multiplier", type=float, default=1.5, help="Upper bound for per-player randomization.")
+    parser.add_argument("--tune-weights", action="store_true", help="Search for better score weights before playing.")
+    parser.add_argument("--tune-iterations", type=int, default=100, help="Number of random weight candidates to test.")
+    parser.add_argument("--tune-corpus-size", type=int, default=50, help="How many recent self-play games to use as tuning data.")
+    parser.add_argument("--tune-temperature", type=float, default=8.0, help="Temperature used when turning scores into probabilities.")
+    parser.add_argument("--tune-output", type=Path, default=None, help="Optional JSON file to write the tuning result.")
     parser.add_argument("--output", type=Path, default=None, help="Optional file to write PGN output.")
     return parser
 
@@ -230,7 +705,36 @@ def main(argv: list[str] | None = None) -> int:
         top_k=max(1, args.top_k),
         seed=args.seed,
         fen=args.fen,
+        legal_moves_weight=args.legal_moves_weight,
+        material_score_weight=args.material_score_weight,
+        forward_score_weight=args.forward_score_weight,
+        randomize_player_weights=not args.fixed_player_weights,
+        player_weight_min_multiplier=args.player_weight_min_multiplier,
+        player_weight_max_multiplier=args.player_weight_max_multiplier,
     )
+
+    if args.tune_weights:
+        corpus = load_tuning_corpus(limit=max(1, args.tune_corpus_size))
+        tuning = tune_score_weights(
+            corpus,
+            iterations=max(1, args.tune_iterations),
+            seed=args.seed,
+            temperature=max(0.001, args.tune_temperature),
+        )
+        best = tuning["best_weights"]
+        config.legal_moves_weight = best["legal_moves_weight"]
+        config.material_score_weight = best["material_score_weight"]
+        config.forward_score_weight = best["forward_score_weight"]
+        print(
+            "Best weights: "
+            f"legal_moves={config.legal_moves_weight:.6f}, "
+            f"material={config.material_score_weight:.6f}, "
+            f"forward={config.forward_score_weight:.6f}"
+        )
+        print(f"Validation loss: {tuning['best_validation_loss']:.6f}")
+        if args.tune_output:
+            args.tune_output.write_text(json.dumps(tuning, indent=2), encoding="utf-8")
+
     games = run_self_play(config)
     save_self_play_results(games)
 
@@ -238,7 +742,14 @@ def main(argv: list[str] | None = None) -> int:
         args.output.write_text("\n\n".join(game.pgn for game in games) + "\n", encoding="utf-8")
 
     for game in games:
-        print(f"Game {game.index}: {game.result} after {game.plies} plies ({game.termination}); final score {game.final_score}")
+        white = game.white_weights or {}
+        black = game.black_weights or {}
+        print(
+            f"Game {game.index}: {game.result} after {game.plies} plies ({game.termination}); "
+            f"final score {game.final_score}; "
+            f"W[lm={white.get('legal_moves_weight', 0):.6f}, mat={white.get('material_score_weight', 0):.6f}, fwd={white.get('forward_score_weight', 0):.6f}] "
+            f"B[lm={black.get('legal_moves_weight', 0):.6f}, mat={black.get('material_score_weight', 0):.6f}, fwd={black.get('forward_score_weight', 0):.6f}]"
+        )
 
     return 0
 

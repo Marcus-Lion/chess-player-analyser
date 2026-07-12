@@ -43,6 +43,7 @@ class GamePosition:
     control_score: int  # (W_c1 + W_c2) - (B_c1 + B_c2)
     material_score: int  # White material - Black material
     score: int  # Legal move count for the side to move
+    total_score: int  # Weighted blend of legal moves, material, and forward control
 
 
 @dataclass
@@ -350,7 +351,19 @@ def _calculate_material(board: chess.Board) -> dict[str, int]:
     return {"White": white, "Black": black}
 
 
-def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None) -> tuple[str, list[str], dict[str, list[str]], dict[str, int], dict[str, int], dict[str, int], int, int, int, dict[str, int]]:
+def _calculate_total_score(legal_moves: int, material_score: int, control_score: int) -> int:
+    """Blend mobility, material, and forward control into one position score.
+
+    Formula:
+        total_score = legal_moves + 4 * material_score + 2 * control_score
+
+    The weights keep material as the strongest signal, while still letting
+    mobility and forward control move the score in a visible way.
+    """
+    return legal_moves + 4 * material_score + 2 * control_score
+
+
+def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None) -> tuple[str, list[str], dict[str, list[str]], dict[str, int], dict[str, int], dict[str, int], int, int, int, int, dict[str, int]]:
     """Render board with legal moves arrows, and return SAN list, 2-ply move tree, control metrics, material metrics, scores and move scores."""
     arrows = []
     tree = {}
@@ -363,6 +376,7 @@ def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None
     control_score = (c1["White"] + c2["White"]) - (c1["Black"] + c2["Black"])
     material_score = material["White"] - material["Black"]
     score = len(legal_moves)
+    total_score = _calculate_total_score(score, material_score, control_score)
 
     for move in legal_moves:
         san = board.san(move)
@@ -385,7 +399,7 @@ def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None
 
     sans = [board.san(move) for move in legal_moves]
     svg = chess.svg.board(board, size=420, lastmove=lastmove, arrows=arrows)
-    return _style_arrows(svg), sans, tree, c1, c2, material, control_score, material_score, score, move_scores
+    return _style_arrows(svg), sans, tree, c1, c2, material, control_score, material_score, score, total_score, move_scores
 
 
 def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
@@ -397,7 +411,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
     headers = game.headers
     board = game.board()
 
-    start_moves_svg, start_legal, start_tree, start_c1, start_c2, start_material, start_control_score, start_material_score, start_score, start_scores = _legal_moves_and_tree(board)
+    start_moves_svg, start_legal, start_tree, start_c1, start_c2, start_material, start_control_score, start_material_score, start_score, start_total_score, start_scores = _legal_moves_and_tree(board)
     positions: list[GamePosition] = [
         GamePosition(
             ply=0,
@@ -416,6 +430,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
             control_score=start_control_score,
             material_score=start_material_score,
             score=start_score,
+            total_score=start_total_score,
         )
     ]
 
@@ -426,7 +441,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
         move_number = board.fullmove_number
         san = board.san(move)
         board.push(move)
-        moves_svg, legal, tree, c1, c2, material, control_score, material_score, score, scores = _legal_moves_and_tree(board, lastmove=move)
+        moves_svg, legal, tree, c1, c2, material, control_score, material_score, score, total_score, scores = _legal_moves_and_tree(board, lastmove=move)
         positions.append(
             GamePosition(
                 ply=ply,
@@ -445,6 +460,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
                 control_score=control_score,
                 material_score=material_score,
                 score=score,
+                total_score=total_score,
             )
         )
 

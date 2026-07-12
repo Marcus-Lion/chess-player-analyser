@@ -140,7 +140,7 @@ def self_play_run(
     request: Request,
     games: int = Form(1),
     max_plies: int = Form(200),
-    top_k: int = Form(1),
+    top_k: int = Form(3),
     seed: str | None = Form(None),
     fen: str | None = Form(None),
 ):

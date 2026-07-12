@@ -32,7 +32,7 @@ class SelfPlayGame:
     run_id: str = ""
     played_at: str = ""
     seed: int | None = None
-    top_k: int = 1
+    top_k: int = 3
     max_plies: int = 200
     start_fen: str = "startpos"
 
@@ -41,7 +41,7 @@ class SelfPlayGame:
 class SelfPlayConfig:
     games: int = 1
     max_plies: int = 200
-    top_k: int = 1
+    top_k: int = 3
     seed: int | None = None
     fen: str | None = None
 
@@ -218,7 +218,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the position scorer against itself.")
     parser.add_argument("--games", type=int, default=1, help="Number of self-play games to run.")
     parser.add_argument("--max-plies", type=int, default=200, help="Stop each game after this many plies.")
-    parser.add_argument("--top-k", type=int, default=1, help="Randomly choose among the top K evaluated moves.")
+    parser.add_argument("--top-k", type=int, default=3, help="Randomly choose among the top K evaluated moves.")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for move selection.")
     parser.add_argument("--fen", type=str, default=None, help="Optional starting FEN.")
     parser.add_argument("--output", type=Path, default=None, help="Optional file to write PGN output.")

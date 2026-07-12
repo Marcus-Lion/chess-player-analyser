@@ -143,6 +143,10 @@ PIECE_POINTS = {
     chess.KING: 0,
 }
 
+LEGAL_MOVES_WEIGHT = 1
+MATERIAL_SCORE_WEIGHT = 4
+CONTROL_SCORE_WEIGHT = 2
+
 
 def _style_arrows(svg: str) -> str:
     """Make the overlaid legal-move arrows smaller and add a border.
@@ -351,16 +355,30 @@ def _calculate_material(board: chess.Board) -> dict[str, int]:
     return {"White": white, "Black": black}
 
 
-def _calculate_total_score(legal_moves: int, material_score: int, control_score: int) -> int:
+def _calculate_total_score(
+    legal_moves: int,
+    material_score: int,
+    control_score: int,
+    *,
+    legal_moves_weight: int = LEGAL_MOVES_WEIGHT,
+    material_score_weight: int = MATERIAL_SCORE_WEIGHT,
+    control_score_weight: int = CONTROL_SCORE_WEIGHT,
+) -> int:
     """Blend mobility, material, and forward control into one position score.
 
     Formula:
-        total_score = legal_moves + 4 * material_score + 2 * control_score
+        total_score = legal_moves_weight * legal_moves
+                    + material_score_weight * material_score
+                    + control_score_weight * control_score
 
     The weights keep material as the strongest signal, while still letting
     mobility and forward control move the score in a visible way.
     """
-    return legal_moves + 4 * material_score + 2 * control_score
+    return (
+        legal_moves_weight * legal_moves
+        + material_score_weight * material_score
+        + control_score_weight * control_score
+    )
 
 
 def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None) -> tuple[str, list[str], dict[str, list[str]], dict[str, int], dict[str, int], dict[str, int], int, int, int, int, dict[str, int]]:

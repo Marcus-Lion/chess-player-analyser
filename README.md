@@ -29,6 +29,21 @@ Open:
 http://127.0.0.1:8134
 ```
 
+## Self-play harness
+
+The repo also includes a headless harness that plays the current scoring
+engine against itself from the starting position, or from a supplied FEN.
+
+```bash
+uv run python -m app.self_play --games 10 --max-plies 200 --top-k 3 --seed 1
+```
+
+You can also write PGN output to a file:
+
+```bash
+uv run python -m app.self_play --games 20 --output selfplay.pgn
+```
+
 ## Hostinger VPS deployment
 
 ### Automated (recommended)

@@ -12,6 +12,13 @@ from fastapi.templating import Jinja2Templates
 from app.chesscom import ChessComClient
 from app.games import load_game_summaries, load_game_detail
 from app.parser import parse_pgn_to_dataframe
+from app.self_play import (
+    SelfPlayConfig,
+    load_self_play_result,
+    load_self_play_results,
+    run_self_play,
+    save_self_play_results,
+)
 from app.metrics import (
     summarize,
     monthly_performance,
@@ -117,6 +124,49 @@ def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+@app.get("/self-play", response_class=HTMLResponse)
+def self_play_page(request: Request):
+    results = load_self_play_results()
+    return templates.TemplateResponse("self_play.html", {
+        "request": request,
+        "results": results,
+        "recent_games": [],
+        "config": None,
+    })
+
+
+@app.post("/self-play", response_class=HTMLResponse)
+def self_play_run(
+    request: Request,
+    games: int = Form(1),
+    max_plies: int = Form(200),
+    top_k: int = Form(1),
+    seed: str | None = Form(None),
+    fen: str | None = Form(None),
+):
+    fen = fen.strip() if fen and fen.strip() else None
+    try:
+        seed_value = int(seed) if seed and seed.strip() else None
+    except ValueError:
+        seed_value = None
+    config = SelfPlayConfig(
+        games=max(1, games),
+        max_plies=max(1, max_plies),
+        top_k=max(1, top_k),
+        seed=seed_value,
+        fen=fen,
+    )
+    recent_games = run_self_play(config)
+    save_self_play_results(recent_games)
+    results = load_self_play_results()
+    return templates.TemplateResponse("self_play.html", {
+        "request": request,
+        "results": results,
+        "recent_games": recent_games,
+        "config": config,
+    })
+
+
 @app.get("/games", response_class=HTMLResponse)
 def list_games(request: Request, username: str, force_refresh: str | None = None):
     username = username.strip()
@@ -144,6 +194,35 @@ def view_game(request: Request, username: str, index: int):
         "total": total,
         "detail": detail,
         "positions_data": positions_data,
+    })
+
+
+@app.get("/self-play/view/{run_id}/{index}", response_class=HTMLResponse)
+def view_self_play_game(request: Request, run_id: str, index: int):
+    row = load_self_play_result(run_id, index)
+    if row is None:
+        return templates.TemplateResponse("game.html", {
+            "request": request,
+            "username": "Self-play",
+            "index": index,
+            "total": 0,
+            "detail": None,
+            "positions_data": [],
+            "back_url": "/self-play",
+            "back_label": "Back to self-play",
+        })
+
+    detail = load_game_detail(row["pgn"], 1)
+    positions_data = [asdict(pos) for pos in detail.positions] if detail else []
+    return templates.TemplateResponse("game.html", {
+        "request": request,
+        "username": f"Self-play {run_id}",
+        "index": index,
+        "total": 1,
+        "detail": detail,
+        "positions_data": positions_data,
+        "back_url": "/self-play",
+        "back_label": "Back to self-play",
     })
 
 

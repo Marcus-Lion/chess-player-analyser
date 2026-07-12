@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import asdict
 from pathlib import Path
 import pandas as pd
 import plotly.express as px
@@ -135,12 +136,14 @@ def view_game(request: Request, username: str, index: int):
     detail = load_game_detail(pgn_text, index)
     summaries = load_game_summaries(pgn_text, username=username)
     total = len(summaries)
+    positions_data = [asdict(pos) for pos in detail.positions] if detail else []
     return templates.TemplateResponse("game.html", {
         "request": request,
         "username": username,
         "index": index,
         "total": total,
         "detail": detail,
+        "positions_data": positions_data,
     })
 
 

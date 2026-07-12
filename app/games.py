@@ -39,7 +39,10 @@ class GamePosition:
     move_scores: dict[str, int]  # move_san -> strength score of resulting position
     control_1: dict[str, int]  # {"White": count, "Black": count}
     control_2: dict[str, int]
-    strength: int  # Simple metric: (W_c1 + W_c2) - (B_c1 + B_c2)
+    material: dict[str, int]  # {"White": points, "Black": points}
+    control_score: int  # (W_c1 + W_c2) - (B_c1 + B_c2)
+    material_score: int  # White material - Black material
+    score: int  # Legal move count for the side to move
 
 
 @dataclass
@@ -128,6 +131,15 @@ PIECE_COLORS = {
     chess.ROOK: "#e74c3c",    # Alizarin Red
     chess.QUEEN: "#f1c40f",   # Sunflower Yellow
     chess.KING: "#1abc9c",    # Turquoise
+}
+
+PIECE_POINTS = {
+    chess.PAWN: 1,
+    chess.KNIGHT: 3,
+    chess.BISHOP: 3,
+    chess.ROOK: 5,
+    chess.QUEEN: 9,
+    chess.KING: 0,
 }
 
 
@@ -268,7 +280,7 @@ def _style_arrows(svg: str) -> str:
 
 
 def _calculate_control(board: chess.Board) -> tuple[dict[str, int], dict[str, int]]:
-    """Calculate 1st and 2nd order board control."""
+    """Calculate 1st and 2nd order control on the forward two ranks."""
     c1 = get_board_control(board)
     
     c2 = {"White": 0, "Black": 0}
@@ -305,33 +317,52 @@ def _calculate_control(board: chess.Board) -> tuple[dict[str, int], dict[str, in
 
 
 def get_board_control(board: chess.Board) -> dict[str, int]:
-    """Calculate 1st order board control using bitboards."""
-    white_attacks_bb = 0
-    for piece_type in chess.PIECE_TYPES:
-        for sq in board.pieces(piece_type, chess.WHITE):
-            white_attacks_bb |= int(board.attacks(sq))
-    
-    black_attacks_bb = 0
-    for piece_type in chess.PIECE_TYPES:
-        for sq in board.pieces(piece_type, chess.BLACK):
-            black_attacks_bb |= int(board.attacks(sq))
-    
+    """Count squares attacked on the forward two ranks for each side.
+
+    For White, this is ranks 2 and 3. For Black, this is ranks 7 and 6.
+    """
+    forward_ranks = {
+        chess.WHITE: {1, 2},
+        chess.BLACK: {5, 6},
+    }
+
     return {
-        "White": bin(white_attacks_bb).count('1'),
-        "Black": bin(black_attacks_bb).count('1')
+        "White": sum(
+            1
+            for sq in chess.SQUARES
+            if chess.square_rank(sq) in forward_ranks[chess.WHITE] and board.is_attacked_by(chess.WHITE, sq)
+        ),
+        "Black": sum(
+            1
+            for sq in chess.SQUARES
+            if chess.square_rank(sq) in forward_ranks[chess.BLACK] and board.is_attacked_by(chess.BLACK, sq)
+        ),
     }
 
 
-def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None) -> tuple[str, list[str], dict[str, list[str]], dict[str, int], dict[str, int], int, dict[str, int]]:
-    """Render board with legal moves arrows, and return SAN list, 2-ply move tree, control metrics, strength and move scores."""
+def _calculate_material(board: chess.Board) -> dict[str, int]:
+    """Count material points for each side."""
+    white = 0
+    black = 0
+    for piece_type, points in PIECE_POINTS.items():
+        white += len(board.pieces(piece_type, chess.WHITE)) * points
+        black += len(board.pieces(piece_type, chess.BLACK)) * points
+    return {"White": white, "Black": black}
+
+
+def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None) -> tuple[str, list[str], dict[str, list[str]], dict[str, int], dict[str, int], dict[str, int], int, int, int, dict[str, int]]:
+    """Render board with legal moves arrows, and return SAN list, 2-ply move tree, control metrics, material metrics, scores and move scores."""
     arrows = []
     tree = {}
     move_scores = {}
     legal_moves = list(board.legal_moves)
     
-    # Pre-calculate current control and strength
+    # Pre-calculate current control and material
     c1, c2 = _calculate_control(board)
-    strength = (c1["White"] + c2["White"]) - (c1["Black"] + c2["Black"])
+    material = _calculate_material(board)
+    control_score = (c1["White"] + c2["White"]) - (c1["Black"] + c2["Black"])
+    material_score = material["White"] - material["Black"]
+    score = len(legal_moves)
 
     for move in legal_moves:
         san = board.san(move)
@@ -354,7 +385,7 @@ def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None
 
     sans = [board.san(move) for move in legal_moves]
     svg = chess.svg.board(board, size=420, lastmove=lastmove, arrows=arrows)
-    return _style_arrows(svg), sans, tree, c1, c2, strength, move_scores
+    return _style_arrows(svg), sans, tree, c1, c2, material, control_score, material_score, score, move_scores
 
 
 def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
@@ -366,7 +397,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
     headers = game.headers
     board = game.board()
 
-    start_moves_svg, start_legal, start_tree, start_c1, start_c2, start_strength, start_scores = _legal_moves_and_tree(board)
+    start_moves_svg, start_legal, start_tree, start_c1, start_c2, start_material, start_control_score, start_material_score, start_score, start_scores = _legal_moves_and_tree(board)
     positions: list[GamePosition] = [
         GamePosition(
             ply=0,
@@ -381,7 +412,10 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
             move_scores=start_scores,
             control_1=start_c1,
             control_2=start_c2,
-            strength=start_strength,
+            material=start_material,
+            control_score=start_control_score,
+            material_score=start_material_score,
+            score=start_score,
         )
     ]
 
@@ -392,7 +426,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
         move_number = board.fullmove_number
         san = board.san(move)
         board.push(move)
-        moves_svg, legal, tree, c1, c2, strength, scores = _legal_moves_and_tree(board, lastmove=move)
+        moves_svg, legal, tree, c1, c2, material, control_score, material_score, score, scores = _legal_moves_and_tree(board, lastmove=move)
         positions.append(
             GamePosition(
                 ply=ply,
@@ -407,7 +441,10 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
                 move_scores=scores,
                 control_1=c1,
                 control_2=c2,
-                strength=strength,
+                material=material,
+                control_score=control_score,
+                material_score=material_score,
+                score=score,
             )
         )
 

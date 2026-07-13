@@ -22,12 +22,14 @@ import chess.pgn
 import random
 
 from app.games import (
+    CHECKMATE_WEIGHT,
     FORWARD_SCORE_WEIGHT,
     LEGAL_MOVES_WEIGHT,
     MATERIAL_SCORE_WEIGHT,
     _calculate_forward,
     _calculate_material,
     _calculate_total_score,
+    _mate_pressure,
     _result_summary,
     choose_engine_move,
 )
@@ -63,7 +65,7 @@ class SelfPlayGame:
     played_at: str = ""
     seed: int | None = None
     top_k: int = 3
-    max_plies: int = 55
+    max_plies: int = 100
     start_fen: str = "startpos"
     white_weights: dict[str, float] | None = None
     black_weights: dict[str, float] | None = None
@@ -71,14 +73,17 @@ class SelfPlayGame:
 
 @dataclass
 class SelfPlayConfig:
-    games: int = 1
-    max_plies: int = 55
+    games: int = 3
+    max_plies: int = 100
     top_k: int = 3
     seed: int | None = None
     fen: str | None = None
     legal_moves_weight: float = LEGAL_MOVES_WEIGHT
     material_score_weight: float = MATERIAL_SCORE_WEIGHT
     forward_score_weight: float = FORWARD_SCORE_WEIGHT
+    # Shared "goal is checkmate" pressure applied to both sides (not
+    # per-player randomized): the objective is the same for everyone.
+    checkmate_weight: float = CHECKMATE_WEIGHT
     randomize_player_weights: bool = True
     player_weight_min_multiplier: float = 0.5
     player_weight_max_multiplier: float = 1.5
@@ -168,6 +173,7 @@ def _config_for_game(config: SelfPlayConfig, game_index: int) -> SelfPlayConfig:
         legal_moves_weight=config.legal_moves_weight,
         material_score_weight=config.material_score_weight,
         forward_score_weight=config.forward_score_weight,
+        checkmate_weight=config.checkmate_weight,
         randomize_player_weights=config.randomize_player_weights,
         player_weight_min_multiplier=config.player_weight_min_multiplier,
         player_weight_max_multiplier=config.player_weight_max_multiplier,
@@ -289,7 +295,7 @@ def _result_target(board: chess.Board, result: str) -> float:
     return 0.5
 
 
-def _extract_samples_from_pgn(pgn_text: str) -> list[tuple[int, int, int, int, float]]:
+def _extract_samples_from_pgn(pgn_text: str) -> list[tuple[int, int, int, float, int, float]]:
     game = chess.pgn.read_game(StringIO(pgn_text))
     if game is None:
         return []
@@ -300,7 +306,7 @@ def _extract_samples_from_pgn(pgn_text: str) -> list[tuple[int, int, int, int, f
 
     board = game.board()
     node = game
-    samples: list[tuple[int, int, int, int, float]] = []
+    samples: list[tuple[int, int, int, float, int, float]] = []
 
     while node.variations:
         f1, f2 = _calculate_forward(board)
@@ -311,6 +317,7 @@ def _extract_samples_from_pgn(pgn_text: str) -> list[tuple[int, int, int, int, f
             len(list(board.legal_moves)),
             material_score,
             forward_score,
+            _mate_pressure(board),
             1 if board.turn == chess.WHITE else -1,
             _result_target(board, result),
         ))
@@ -326,17 +333,17 @@ def _log_loss(probability: float, target: float) -> float:
 
 
 def _evaluate_candidate(
-    samples: list[tuple[int, int, int, int, float]],
-    weights: tuple[float, float, float],
+    samples: list[tuple[int, int, int, float, int, float]],
+    weights: tuple[float, float, float, float],
     *,
     temperature: float,
 ) -> float:
     if not samples:
         return float("inf")
 
-    lm_w, mat_w, fwd_w = weights
+    lm_w, mat_w, fwd_w, mate_w = weights
     total_loss = 0.0
-    for legal_moves, material_score, forward_score, side_sign, target in samples:
+    for legal_moves, material_score, forward_score, mate_pressure, side_sign, target in samples:
         score = _calculate_total_score(
             legal_moves,
             material_score,
@@ -344,7 +351,7 @@ def _evaluate_candidate(
             legal_moves_weight=lm_w,
             material_score_weight=mat_w,
             forward_score_weight=fwd_w,
-        )
+        ) + mate_w * mate_pressure
         utility = score * side_sign
         probability = _sigmoid(utility / max(temperature, 1e-6))
         total_loss += _log_loss(probability, target)
@@ -361,7 +368,7 @@ def tune_score_weights(
     max_multiplier: float = 4.0,
 ) -> dict:
     rng = random.Random(seed)
-    samples: list[tuple[int, int, int, float]] = []
+    samples: list[tuple[int, int, int, float, int, float]] = []
     for row in corpus:
         samples.extend(_extract_samples_from_pgn(row.get("pgn", "")))
 
@@ -373,7 +380,7 @@ def tune_score_weights(
     train_samples = samples[:split]
     validation_samples = samples[split:] or samples[:]
 
-    base_weights = (LEGAL_MOVES_WEIGHT, MATERIAL_SCORE_WEIGHT, FORWARD_SCORE_WEIGHT)
+    base_weights = (LEGAL_MOVES_WEIGHT, MATERIAL_SCORE_WEIGHT, FORWARD_SCORE_WEIGHT, CHECKMATE_WEIGHT)
     best_weights = base_weights
     best_loss = _evaluate_candidate(validation_samples, base_weights, temperature=temperature)
     history: list[dict[str, float]] = [
@@ -381,6 +388,7 @@ def tune_score_weights(
             "legal_moves_weight": base_weights[0],
             "material_score_weight": base_weights[1],
             "forward_score_weight": base_weights[2],
+            "checkmate_weight": base_weights[3],
             "validation_loss": best_loss,
         }
     ]
@@ -399,6 +407,7 @@ def tune_score_weights(
             "legal_moves_weight": candidate[0],
             "material_score_weight": candidate[1],
             "forward_score_weight": candidate[2],
+            "checkmate_weight": candidate[3],
             "training_loss": loss,
             "validation_loss": validation_loss,
         })
@@ -411,6 +420,7 @@ def tune_score_weights(
             "legal_moves_weight": best_weights[0],
             "material_score_weight": best_weights[1],
             "forward_score_weight": best_weights[2],
+            "checkmate_weight": best_weights[3],
         },
         "best_validation_loss": best_loss,
         "samples": len(samples),
@@ -427,6 +437,14 @@ def _terminal_reason(board: chess.Board) -> tuple[str, str]:
         return ("1/2-1/2", "stalemate")
     if board.is_insufficient_material():
         return ("1/2-1/2", "insufficient material")
+    if board.is_fivefold_repetition():
+        return ("1/2-1/2", "fivefold repetition")
+    if board.is_seventyfive_moves():
+        return ("1/2-1/2", "75-move rule")
+    if board.can_claim_threefold_repetition():
+        return ("1/2-1/2", "threefold repetition")
+    if board.can_claim_fifty_moves():
+        return ("1/2-1/2", "fifty-move rule")
     return ("", "")
 
 
@@ -456,6 +474,7 @@ def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random |
             legal_moves_weight=active_weights["legal_moves_weight"],
             material_score_weight=active_weights["material_score_weight"],
             forward_score_weight=active_weights["forward_score_weight"],
+            checkmate_weight=config.checkmate_weight,
         )
         san = board.san(move)
         board.push(move)
@@ -756,14 +775,15 @@ def start_self_play_job(config: SelfPlayConfig) -> dict:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the position scorer against itself.")
-    parser.add_argument("--games", type=int, default=1, help="Number of self-play games to run.")
-    parser.add_argument("--max-plies", type=int, default=55, help="Stop each game after this many plies.")
+    parser.add_argument("--games", type=int, default=3, help="Number of self-play games to run.")
+    parser.add_argument("--max-plies", type=int, default=100, help="Stop each game after this many plies.")
     parser.add_argument("--top-k", type=int, default=3, help="Randomly choose among the top K evaluated moves.")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for move selection.")
     parser.add_argument("--fen", type=str, default=None, help="Optional starting FEN.")
     parser.add_argument("--legal-moves-weight", type=float, default=LEGAL_MOVES_WEIGHT, help="Weight for legal move count.")
     parser.add_argument("--material-score-weight", type=float, default=MATERIAL_SCORE_WEIGHT, help="Weight for material balance.")
     parser.add_argument("--forward-score-weight", type=float, default=FORWARD_SCORE_WEIGHT, help="Weight for forward control.")
+    parser.add_argument("--checkmate-weight", type=float, default=CHECKMATE_WEIGHT, help="Weight for the mate-pressure heuristic (drive the enemy king toward checkmate).")
     parser.add_argument("--fixed-player-weights", action="store_true", help="Use the same weights for both sides.")
     parser.add_argument("--player-weight-min-multiplier", type=float, default=0.5, help="Lower bound for per-player randomization.")
     parser.add_argument("--player-weight-max-multiplier", type=float, default=1.5, help="Upper bound for per-player randomization.")
@@ -789,6 +809,7 @@ def main(argv: list[str] | None = None) -> int:
         legal_moves_weight=args.legal_moves_weight,
         material_score_weight=args.material_score_weight,
         forward_score_weight=args.forward_score_weight,
+        checkmate_weight=args.checkmate_weight,
         randomize_player_weights=not args.fixed_player_weights,
         player_weight_min_multiplier=args.player_weight_min_multiplier,
         player_weight_max_multiplier=args.player_weight_max_multiplier,
@@ -806,11 +827,13 @@ def main(argv: list[str] | None = None) -> int:
         config.legal_moves_weight = best["legal_moves_weight"]
         config.material_score_weight = best["material_score_weight"]
         config.forward_score_weight = best["forward_score_weight"]
+        config.checkmate_weight = best["checkmate_weight"]
         print(
             "Best weights: "
             f"legal_moves={config.legal_moves_weight:.6f}, "
             f"material={config.material_score_weight:.6f}, "
-            f"forward={config.forward_score_weight:.6f}"
+            f"forward={config.forward_score_weight:.6f}, "
+            f"checkmate={config.checkmate_weight:.6f}"
         )
         print(f"Validation loss: {tuning['best_validation_loss']:.6f}")
         if args.tune_output:

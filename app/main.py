@@ -14,9 +14,6 @@ from fastapi.templating import Jinja2Templates
 
 from app.chesscom import ChessComClient
 from app.games import (
-    FORWARD_SCORE_WEIGHT,
-    LEGAL_MOVES_WEIGHT,
-    MATERIAL_SCORE_WEIGHT,
     _result_summary,
     choose_engine_move,
     load_game_summaries,
@@ -343,8 +340,8 @@ def self_play_page(request: Request):
 @app.post("/self-play", response_class=HTMLResponse)
 def self_play_run(
     request: Request,
-    games: int = Form(1),
-    max_plies: int = Form(55),
+    games: int = Form(3),
+    max_plies: int = Form(100),
     top_k: int = Form(3),
     seed: str | None = Form(None),
     fen: str | None = Form(None),
@@ -374,8 +371,8 @@ def self_play_run(
 
 @app.post("/self-play/start")
 def self_play_start(
-    games: int = Form(1),
-    max_plies: int = Form(55),
+    games: int = Form(3),
+    max_plies: int = Form(100),
     top_k: int = Form(3),
     seed: str | None = Form(None),
     fen: str | None = Form(None),
@@ -434,11 +431,6 @@ def view_game(request: Request, username: str, index: int):
         "total": total,
         "detail": detail,
         "positions_data": positions_data,
-        "score_weights": {
-            "legal_moves": LEGAL_MOVES_WEIGHT,
-            "material": MATERIAL_SCORE_WEIGHT,
-            "forward": FORWARD_SCORE_WEIGHT,
-        },
     })
 
 
@@ -476,11 +468,6 @@ def view_self_play_game(request: Request, run_id: str, index: int):
         "back_url": "/self-play",
         "back_label": "Back to self-play",
         "game_summary": game_summary,
-        "score_weights": {
-            "legal_moves": LEGAL_MOVES_WEIGHT,
-            "material": MATERIAL_SCORE_WEIGHT,
-            "forward": FORWARD_SCORE_WEIGHT,
-        },
     })
 
 

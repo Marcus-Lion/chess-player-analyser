@@ -178,6 +178,11 @@ PIECE_POINTS = {
 LEGAL_MOVES_WEIGHT:float = 0.3
 MATERIAL_SCORE_WEIGHT:float = 4.0
 FORWARD_SCORE_WEIGHT:float = 3.0
+# Weight for the "goal is checkmate" heuristic: how hard the engine leans on
+# driving the enemy king to the edge and cutting off its escape squares. Kept
+# small relative to material so it only breaks ties between otherwise-similar
+# moves rather than sacrificing material to chase the king.
+CHECKMATE_WEIGHT:float = 1.0
 
 
 def _style_arrows(svg: str) -> str:
@@ -387,6 +392,53 @@ def _calculate_material(board: chess.Board) -> dict[str, int]:
     return {"White": white, "Black": black}
 
 
+def _king_escape_squares(board: chess.Board, king_color: chess.Color) -> int:
+    """Count squares the ``king_color`` king could flee to.
+
+    A square counts only if it is not blocked by one of the king's own pieces
+    and is not attacked by the opponent. Fewer escape squares means the king is
+    closer to being mated, so this is the raw signal the mate heuristic wants to
+    minimise for the side under pressure.
+    """
+    king_sq = board.king(king_color)
+    if king_sq is None:
+        return 0
+    enemy = not king_color
+    escapes = 0
+    for square in chess.SquareSet(chess.BB_KING_ATTACKS[king_sq]):
+        occupant = board.piece_at(square)
+        if occupant is not None and occupant.color == king_color:
+            continue
+        if board.is_attacked_by(enemy, square):
+            continue
+        escapes += 1
+    return escapes
+
+
+def _mate_pressure(board: chess.Board) -> float:
+    """Positional pressure toward checkmate, from White's perspective.
+
+    Positive favours White. For each king we reward its opponent for pushing it
+    toward the board edge/corner and for stripping away its escape squares --
+    the two conditions that precede a forced mate. This is what tells the
+    self-play engine that *the goal is checkmate*, not merely a material lead:
+    once ahead, it keeps herding the enemy king instead of shuffling.
+    """
+    pressure = 0.0
+    for defender, sign in ((chess.BLACK, 1.0), (chess.WHITE, -1.0)):
+        king_sq = board.king(defender)
+        if king_sq is None:
+            continue
+        file = chess.square_file(king_sq)
+        rank = chess.square_rank(king_sq)
+        # 2 in the centre, up to 14 in a corner: the further out, the better
+        # for the attacker.
+        corner_proximity = abs(2 * file - 7) + abs(2 * rank - 7)
+        escapes = _king_escape_squares(board, defender)
+        pressure += sign * (corner_proximity - 2.0 * escapes)
+    return pressure
+
+
 def _move_utility(
     board: chess.Board,
     move: chess.Move,
@@ -394,6 +446,7 @@ def _move_utility(
     legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
     material_score_weight: float = MATERIAL_SCORE_WEIGHT,
     forward_score_weight: float = FORWARD_SCORE_WEIGHT,
+    checkmate_weight: float = CHECKMATE_WEIGHT,
 ) -> tuple[int, float]:
     mover = board.turn
     board.push(move)
@@ -413,6 +466,9 @@ def _move_utility(
             material_score_weight=material_score_weight,
             forward_score_weight=forward_score_weight,
         )
+        # Add the "goal is checkmate" term so the engine actively herds the
+        # enemy king toward mate instead of stalling on a won position.
+        total_score = round(total_score + checkmate_weight * _mate_pressure(board), 2)
         utility = total_score if mover == chess.WHITE else -total_score
         return utility, total_score
     finally:
@@ -427,6 +483,7 @@ def choose_engine_move(
     legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
     material_score_weight: float = MATERIAL_SCORE_WEIGHT,
     forward_score_weight: float = FORWARD_SCORE_WEIGHT,
+    checkmate_weight: float = CHECKMATE_WEIGHT,
 ) -> tuple[chess.Move, float]:
     rng = rng or random.Random()
     scored_moves: list[tuple[int, float, chess.Move]] = []
@@ -437,6 +494,7 @@ def choose_engine_move(
             legal_moves_weight=legal_moves_weight,
             material_score_weight=material_score_weight,
             forward_score_weight=forward_score_weight,
+            checkmate_weight=checkmate_weight,
         )
         scored_moves.append((utility, score, move))
 

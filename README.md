@@ -57,6 +57,13 @@ Multi-game self-play now runs in a detached worker process and the browser
 remembers the active job id, so if the dev server reloads while a job is
 running, reopening the page resumes the progress bar from the saved job id.
 
+Games end on checkmate, stalemate, insufficient material, threefold
+repetition, or the fifty-move rule (the fivefold repetition and 75-move
+rules also apply as automatic backstops). Since self-play has no player to
+claim a draw, threefold repetition and the fifty-move rule are adjudicated
+automatically as soon as they become claimable. If none of these trigger,
+the game is called a draw once `--max-plies` is reached.
+
 ## Hostinger VPS deployment
 
 ### Automated (recommended)

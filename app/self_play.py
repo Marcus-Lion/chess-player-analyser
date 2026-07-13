@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from io import StringIO
 import subprocess
 import sys
+import time
 from pathlib import Path
 from uuid import uuid4
 import threading
@@ -40,6 +41,10 @@ SELF_PLAY_JOBS_DIR = CACHE_DIR / "self_play_jobs"
 SELF_PLAY_JOBS_DIR.mkdir(parents=True, exist_ok=True)
 SELF_PLAY_RESULTS_LOCK = threading.Lock()
 DEFAULT_SELF_PLAY_WORKERS = max(1, os.cpu_count() or 1)
+# Job-tracking files (status/request/log) are only needed while the browser is
+# polling a run. Delete each job's files once its status has been idle for this
+# long so cache/self_play_jobs/ doesn't grow without bound.
+JOB_RETENTION_SECONDS = 60
 
 
 @dataclass
@@ -179,6 +184,45 @@ def _job_request_path(job_id: str) -> Path:
 
 def _job_log_path(job_id: str) -> Path:
     return SELF_PLAY_JOBS_DIR / f"{job_id}.log"
+
+
+def prune_old_jobs(max_age_seconds: int = JOB_RETENTION_SECONDS) -> None:
+    """Delete job-tracking files whose status has been idle past the retention window.
+
+    A running job rewrites its status file on every progress step, so its
+    modification time stays recent and it is never pruned mid-run. Only jobs
+    that have been finished (or dead) for longer than ``max_age_seconds`` are
+    removed, along with their request and log files.
+    """
+    now = time.time()
+    try:
+        status_files = list(SELF_PLAY_JOBS_DIR.glob("*.json"))
+    except OSError:
+        return
+
+    for status_path in status_files:
+        # Skip request payloads; they are cleaned up alongside their status file.
+        if status_path.name.endswith(".request.json"):
+            continue
+        try:
+            age = now - status_path.stat().st_mtime
+        except OSError:
+            continue
+        if age <= max_age_seconds:
+            continue
+        job_id = status_path.stem
+        for related in (
+            status_path,
+            status_path.with_suffix(".json.tmp"),
+            _job_request_path(job_id),
+            _job_log_path(job_id),
+        ):
+            try:
+                related.unlink()
+            except OSError:
+                # Missing or briefly locked (e.g. still being written) — leave
+                # it for the next prune pass.
+                pass
 
 
 def _write_job_status(status: SelfPlayJobStatus) -> None:
@@ -640,6 +684,7 @@ def _run_self_play_job(job_id: str, run_id: str, config_data: dict) -> None:
 
 
 def start_self_play_job(config: SelfPlayConfig) -> dict:
+    prune_old_jobs()
     job_id = uuid4().hex
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8]
     status = SelfPlayJobStatus(

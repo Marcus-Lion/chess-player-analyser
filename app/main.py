@@ -28,6 +28,7 @@ from app.self_play import (
     load_self_play_job,
     load_self_play_result,
     load_self_play_results,
+    prune_old_jobs,
     run_self_play,
     save_self_play_results,
     start_self_play_job,
@@ -397,6 +398,7 @@ def self_play_start(
 @app.get("/self-play/status/{job_id}")
 def self_play_status(job_id: str):
     headers = {"Cache-Control": "no-store"}
+    prune_old_jobs()
     job = load_self_play_job(job_id)
     if job is None:
         return JSONResponse(

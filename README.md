@@ -63,8 +63,14 @@ rules also apply as automatic backstops). Since self-play has no player to
 claim a draw, threefold repetition and the fifty-move rule are adjudicated
 automatically as soon as they become claimable. If none of these trigger,
 the game is called a draw once `--max-plies` is reached (labelled **Max
-turns** in the web form; the count itself covers every half-move, i.e. both
-White's and Black's turns).
+turns** in the web form and reported as "max turns reached"; the count
+itself covers every half-move, i.e. both White's and Black's turns).
+
+The "Analyse results →" link on `/self-play` opens `/self-play/analysis`, a
+chart dashboard over every saved self-play game: outcome mix, termination
+reasons, game-length distribution, rolling win/draw/loss rate over games
+played, final-score spread by outcome, and — for tuning — white's win rate
+bucketed by how much more (or less) of each score weight it had versus black.
 
 The "Recent saved self-play results" table on `/self-play` can be filtered
 by Result, Outcome (including an "Anyone wins" option that matches either

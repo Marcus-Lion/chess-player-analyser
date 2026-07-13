@@ -30,6 +30,17 @@ from app.self_play import (
     save_self_play_results,
     start_self_play_job,
 )
+from app.self_play_metrics import (
+    OUTCOME_ORDER,
+    final_score_by_outcome,
+    outcome_counts,
+    plies_by_termination,
+    rolling_outcome_rates,
+    summary as self_play_summary,
+    termination_counts,
+    to_dataframe as self_play_to_dataframe,
+    win_rate_by_weight_advantage_all,
+)
 from app.metrics import (
     summarize,
     monthly_performance,
@@ -130,6 +141,57 @@ def _make_charts(df: pd.DataFrame) -> dict[str, str]:
             hovertemplate="Time: %{y}<br>Day: %{x}<br>Rating: %{z:.0f}<br>Games: %{customdata}<extra></extra>"
         )
         charts["time_day"] = _fig_html(fig)
+
+    return charts
+
+
+def _make_self_play_charts(df: pd.DataFrame) -> dict[str, str]:
+    charts = {}
+
+    outcomes = outcome_counts(df)
+    if not outcomes.empty:
+        fig = px.bar(outcomes, x="outcome", y="games", title="Outcome mix",
+                     category_orders={"outcome": OUTCOME_ORDER})
+        charts["outcomes"] = _fig_html(fig)
+
+    terminations = termination_counts(df)
+    if not terminations.empty:
+        fig = px.bar(terminations, x="games", y="termination", orientation="h",
+                     title="Termination reasons",
+                     category_orders={"termination": terminations["termination"].tolist()})
+        fig.update_yaxes(autorange="reversed")
+        charts["terminations"] = _fig_html(fig)
+
+    if "plies" in df.columns and not df["plies"].dropna().empty:
+        fig = px.histogram(df, x="plies", nbins=40, title="Game length distribution (turns)")
+        charts["plies_hist"] = _fig_html(fig)
+
+    avg_plies = plies_by_termination(df)
+    if not avg_plies.empty:
+        fig = px.bar(avg_plies, x="termination", y="avg_plies", title="Average turns by termination",
+                     category_orders={"termination": avg_plies["termination"].tolist()})
+        charts["avg_plies_by_termination"] = _fig_html(fig)
+
+    rolling = rolling_outcome_rates(df)
+    if not rolling.empty:
+        fig = px.line(rolling, x="game_seq", y="rate", color="outcome",
+                      title="Rolling outcome rate over games played",
+                      category_orders={"outcome": OUTCOME_ORDER})
+        charts["rolling_outcomes"] = _fig_html(fig)
+
+    weight_advantage = win_rate_by_weight_advantage_all(df)
+    if not weight_advantage.empty:
+        fig = px.bar(weight_advantage, x="bucket", y="white_win_rate", facet_col="weight_dim",
+                     hover_data=["games"],
+                     title="White win rate by (white − black) weight advantage")
+        fig.update_xaxes(tickangle=45, matches=None)
+        charts["weight_advantage"] = _fig_html(fig)
+
+    score_by_outcome = final_score_by_outcome(df)
+    if not score_by_outcome.empty:
+        fig = px.box(score_by_outcome, x="outcome", y="final_score", title="Final score spread by outcome",
+                     category_orders={"outcome": OUTCOME_ORDER})
+        charts["score_by_outcome"] = _fig_html(fig)
 
     return charts
 
@@ -402,6 +464,17 @@ def self_play_status(job_id: str):
             {"job_id": job_id, "state": "missing"}, status_code=404, headers=headers
         )
     return JSONResponse(job, headers=headers)
+
+
+@app.get("/self-play/analysis", response_class=HTMLResponse)
+def self_play_analysis(request: Request):
+    rows = load_self_play_results(limit=None)
+    df = self_play_to_dataframe(rows)
+    return templates.TemplateResponse("self_play_analysis.html", {
+        "request": request,
+        "summary": self_play_summary(df),
+        "charts": _make_self_play_charts(df) if not df.empty else {},
+    })
 
 
 @app.get("/games", response_class=HTMLResponse)

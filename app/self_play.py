@@ -485,7 +485,7 @@ def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random |
 
     if not result:
         result = "1/2-1/2"
-        termination = "max plies reached"
+        termination = "max turns reached"
 
     game.headers["Result"] = result
     game.headers["Termination"] = termination
@@ -594,7 +594,7 @@ def save_self_play_results(games: list[SelfPlayGame]) -> None:
                 handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
-def load_self_play_results(limit: int = 50) -> list[dict]:
+def load_self_play_results(limit: int | None = 50) -> list[dict]:
     if not SELF_PLAY_RESULTS_PATH.exists():
         return []
 
@@ -609,7 +609,7 @@ def load_self_play_results(limit: int = 50) -> list[dict]:
             except json.JSONDecodeError:
                 continue
 
-    return rows[-limit:]
+    return rows if limit is None else rows[-limit:]
 
 
 def load_self_play_result(run_id: str, index: int) -> dict | None:

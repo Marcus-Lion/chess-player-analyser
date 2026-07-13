@@ -62,7 +62,14 @@ repetition, or the fifty-move rule (the fivefold repetition and 75-move
 rules also apply as automatic backstops). Since self-play has no player to
 claim a draw, threefold repetition and the fifty-move rule are adjudicated
 automatically as soon as they become claimable. If none of these trigger,
-the game is called a draw once `--max-plies` is reached.
+the game is called a draw once `--max-plies` is reached (labelled **Max
+turns** in the web form; the count itself covers every half-move, i.e. both
+White's and Black's turns).
+
+The "Recent saved self-play results" table on `/self-play` can be filtered
+by Result, Outcome (including an "Anyone wins" option that matches either
+color winning), Termination, an absolute-value comparison (`>`/`<`) on
+final score, and a Played-at date range.
 
 ## Hostinger VPS deployment
 
@@ -108,6 +115,8 @@ Beyond the analytics dashboard you can inspect individual games move by move:
   every position of that game as a chess board (server-side SVG, no external
   assets). Step through positions with the ⏮ ◀ ▶ ⏭ buttons, the slider, the
   left/right arrow keys, or by clicking any move in the "Positions" list.
+  The list lays out White's and Black's turns side by side, two turns per
+  line, each numbered by its own turn count.
   Tick **Show all valid moves** to overlay arrows for every legal move in the
   current position and list them in SAN notation. The arrows are drawn thin
   with a dark border so they stay readable even when many overlap.

@@ -733,7 +733,11 @@ def start_self_play_job(config: SelfPlayConfig) -> dict:
     ]
     creationflags = 0
     if os.name == "nt":
-        creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        creationflags = (
+            subprocess.DETACHED_PROCESS
+            | subprocess.CREATE_NEW_PROCESS_GROUP
+            | subprocess.CREATE_NO_WINDOW
+        )
 
     # Ensure the worker can import the ``app`` package regardless of how the
     # subprocess is launched. ``python -m`` normally relies on the current

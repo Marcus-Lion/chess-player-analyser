@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 import random
 from dataclasses import dataclass
@@ -439,40 +440,129 @@ def _mate_pressure(board: chess.Board) -> float:
     return pressure
 
 
-def _move_utility(
+def _color_mobility(board: chess.Board, color: chess.Color) -> int:
+    """Count legal moves available to ``color``, regardless of whose turn it is.
+
+    Uses the same turn-flip trick as ``_calculate_forward`` to get a
+    color-specific move count out of python-chess.
+    """
+    original_turn = board.turn
+    board.turn = color
+    count = len(list(board.legal_moves))
+    board.turn = original_turn
+    return count
+
+
+def _evaluate_position(
     board: chess.Board,
-    move: chess.Move,
     *,
     legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
     material_score_weight: float = MATERIAL_SCORE_WEIGHT,
     forward_score_weight: float = FORWARD_SCORE_WEIGHT,
     checkmate_weight: float = CHECKMATE_WEIGHT,
-) -> tuple[int, float]:
-    mover = board.turn
-    board.push(move)
-    try:
-        if board.is_checkmate():
-            return (1_000_000 if mover == chess.WHITE else -1_000_000), 1_000_000.0
-        legal_moves = len(list(board.legal_moves))
-        f1, f2 = _calculate_forward(board)
-        material = _calculate_material(board)
-        forward_score = (f1["White"] + f2["White"]) - (f1["Black"] + f2["Black"])
-        material_score = material["White"] - material["Black"]
-        total_score = _calculate_total_score(
-            legal_moves,
-            material_score,
-            forward_score,
+) -> float:
+    """White-perspective static evaluation used at search leaves.
+
+    Blends material, first-order forward control, and mobility -- each as a
+    White-minus-Black differential so the value is well-defined at any node
+    of a multi-ply search -- plus the "goal is checkmate" king-pressure term.
+    Uses only ``get_board_control`` (not ``_calculate_forward``'s pricier
+    second-order term, which itself generates a full ply of moves) since
+    this runs at every leaf of the search tree.
+    """
+    material = _calculate_material(board)
+    control = get_board_control(board)
+    mobility_score = _color_mobility(board, chess.WHITE) - _color_mobility(board, chess.BLACK)
+    material_score = material["White"] - material["Black"]
+    forward_score = control["White"] - control["Black"]
+    return round(
+        legal_moves_weight * mobility_score
+        + material_score_weight * material_score
+        + forward_score_weight * forward_score
+        + checkmate_weight * _mate_pressure(board),
+        2,
+    )
+
+
+def _order_moves(board: chess.Board) -> list[chess.Move]:
+    """Order legal moves so alpha-beta pruning cuts more of the tree.
+
+    Captures first (most valuable capture first), then checks, then
+    everything else.
+    """
+
+    def move_key(move: chess.Move) -> tuple[int, int]:
+        if board.is_capture(move):
+            if board.is_en_passant(move):
+                captured_value = PIECE_POINTS[chess.PAWN]
+            else:
+                captured_piece = board.piece_at(move.to_square)
+                captured_value = PIECE_POINTS[captured_piece.piece_type] if captured_piece else 0
+            return (2, captured_value)
+        if board.gives_check(move):
+            return (1, 0)
+        return (0, 0)
+
+    return sorted(board.legal_moves, key=move_key, reverse=True)
+
+
+MATE_SCORE = 1_000_000.0
+
+
+def _negamax(
+    board: chess.Board,
+    depth: int,
+    alpha: float,
+    beta: float,
+    *,
+    legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
+    material_score_weight: float = MATERIAL_SCORE_WEIGHT,
+    forward_score_weight: float = FORWARD_SCORE_WEIGHT,
+    checkmate_weight: float = CHECKMATE_WEIGHT,
+) -> float:
+    """Negamax search with alpha-beta pruning, from the side-to-move's view.
+
+    Terminal nodes score mate distance-adjusted (a mate found with more
+    depth left to search is closer to the root, so it scores higher) and
+    draws as 0. Leaves are scored by ``_evaluate_position``.
+    """
+    if board.is_checkmate():
+        return -(MATE_SCORE + depth)
+    if board.is_stalemate() or board.is_insufficient_material():
+        return 0.0
+    if depth <= 0:
+        score = _evaluate_position(
+            board,
             legal_moves_weight=legal_moves_weight,
             material_score_weight=material_score_weight,
             forward_score_weight=forward_score_weight,
+            checkmate_weight=checkmate_weight,
         )
-        # Add the "goal is checkmate" term so the engine actively herds the
-        # enemy king toward mate instead of stalling on a won position.
-        total_score = round(total_score + checkmate_weight * _mate_pressure(board), 2)
-        utility = total_score if mover == chess.WHITE else -total_score
-        return utility, total_score
-    finally:
-        board.pop()
+        return score if board.turn == chess.WHITE else -score
+
+    best = -math.inf
+    for move in _order_moves(board):
+        board.push(move)
+        try:
+            score = -_negamax(
+                board,
+                depth - 1,
+                -beta,
+                -alpha,
+                legal_moves_weight=legal_moves_weight,
+                material_score_weight=material_score_weight,
+                forward_score_weight=forward_score_weight,
+                checkmate_weight=checkmate_weight,
+            )
+        finally:
+            board.pop()
+        if score > best:
+            best = score
+        if best > alpha:
+            alpha = best
+        if alpha >= beta:
+            break
+    return best
 
 
 def choose_engine_move(
@@ -484,26 +574,34 @@ def choose_engine_move(
     material_score_weight: float = MATERIAL_SCORE_WEIGHT,
     forward_score_weight: float = FORWARD_SCORE_WEIGHT,
     checkmate_weight: float = CHECKMATE_WEIGHT,
+    depth: int = 3,
 ) -> tuple[chess.Move, float]:
     rng = rng or random.Random()
-    scored_moves: list[tuple[int, float, chess.Move]] = []
-    for move in board.legal_moves:
-        utility, score = _move_utility(
-            board,
-            move,
-            legal_moves_weight=legal_moves_weight,
-            material_score_weight=material_score_weight,
-            forward_score_weight=forward_score_weight,
-            checkmate_weight=checkmate_weight,
-        )
-        scored_moves.append((utility, score, move))
+    depth = max(1, depth)
+    scored_moves: list[tuple[float, chess.Move]] = []
+    for move in _order_moves(board):
+        board.push(move)
+        try:
+            value = -_negamax(
+                board,
+                depth - 1,
+                -math.inf,
+                math.inf,
+                legal_moves_weight=legal_moves_weight,
+                material_score_weight=material_score_weight,
+                forward_score_weight=forward_score_weight,
+                checkmate_weight=checkmate_weight,
+            )
+        finally:
+            board.pop()
+        scored_moves.append((value, move))
 
     if not scored_moves:
         raise ValueError("No legal moves available")
 
-    scored_moves.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    scored_moves.sort(key=lambda item: item[0], reverse=True)
     top_n = scored_moves[: max(1, min(top_k, len(scored_moves)))]
-    _, score, move = rng.choice(top_n)
+    score, move = rng.choice(top_n)
     return move, score
 
 

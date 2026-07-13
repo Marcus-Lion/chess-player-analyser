@@ -177,6 +177,10 @@ def _job_request_path(job_id: str) -> Path:
     return SELF_PLAY_JOBS_DIR / f"{job_id}.request.json"
 
 
+def _job_log_path(job_id: str) -> Path:
+    return SELF_PLAY_JOBS_DIR / f"{job_id}.log"
+
+
 def _write_job_status(status: SelfPlayJobStatus) -> None:
     payload = asdict(status)
     path = _job_path(status.job_id)
@@ -649,10 +653,15 @@ def start_self_play_job(config: SelfPlayConfig) -> dict:
     _write_job_status(status)
 
     request_path = _write_job_request(job_id, run_id, config)
+    # Launch by file path rather than ``-m app.self_play_worker``. The ``-m``
+    # form resolves the module against sys.path *before any code runs*, which
+    # fails under a debugger (PyCharm/pydevd) that rewrites the launch and drops
+    # the project root -> "No module named app.self_play_worker". A file-path
+    # launch has no module-resolution step; the worker fixes sys.path itself.
+    worker_path = Path(__file__).resolve().parent / "self_play_worker.py"
     cmd = [
         sys.executable,
-        "-m",
-        "app.self_play_worker",
+        str(worker_path),
         "--job-id",
         job_id,
         "--request-path",
@@ -661,15 +670,42 @@ def start_self_play_job(config: SelfPlayConfig) -> dict:
     creationflags = 0
     if os.name == "nt":
         creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-    subprocess.Popen(
-        cmd,
-        cwd=str(BASE_DIR),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL,
-        creationflags=creationflags,
-        close_fds=True,
+
+    # Ensure the worker can import the ``app`` package regardless of how the
+    # subprocess is launched. ``python -m`` normally relies on the current
+    # working directory being on sys.path, but that breaks when a debugger
+    # (e.g. PyCharm/pydevd auto-attaching to subprocesses) rewrites the launch
+    # machinery, yielding "No module named app.self_play_worker". Putting the
+    # project root on PYTHONPATH makes the import robust in every environment.
+    env = dict(os.environ)
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        str(BASE_DIR) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
     )
+
+    # Capture the worker's stdout/stderr to a per-job log file instead of
+    # discarding it. If the detached worker fails to start (e.g. the server's
+    # interpreter can't import the app package), the traceback lands here
+    # instead of vanishing and leaving the job stuck at "queued".
+    log_path = _job_log_path(job_id)
+    log_handle = open(log_path, "w", encoding="utf-8")
+    try:
+        log_handle.write(f"launching worker: {cmd}\ncwd={BASE_DIR}\nexecutable={sys.executable}\n")
+        log_handle.flush()
+        subprocess.Popen(
+            cmd,
+            cwd=str(BASE_DIR),
+            env=env,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            creationflags=creationflags,
+            close_fds=True,
+        )
+    finally:
+        # The child has inherited its own copy of the handle; the parent no
+        # longer needs it.
+        log_handle.close()
     return asdict(status)
 
 

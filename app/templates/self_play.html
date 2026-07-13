@@ -1,0 +1,457 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Self-play harness</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 1100px; }
+    input, button, textarea { font-size: 1rem; padding: .55rem; margin: .25rem 0; }
+    label { display: block; margin-top: 1rem; font-weight: 600; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid #eee; padding: .5rem .4rem; text-align: left; vertical-align: top; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #fafafa; padding: .75rem; border-radius: 8px; }
+    .muted { color: #666; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: .75rem; }
+    .metric { border: 1px solid #eee; border-radius: 10px; padding: .75rem; }
+    .metric b { display: block; font-size: 1.1rem; }
+    .progress-wrap { display: none; margin-top: 1rem; }
+    .progress-bar {
+      width: 100%;
+      height: 18px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: #eee;
+      border: 1px solid #ddd;
+    }
+    .progress-fill {
+      width: 0%;
+      height: 100%;
+
+      background: #3b82f6;
+      transition: width 0.2s ease;
+    }
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: end;
+      gap: .75rem;
+      margin-bottom: 1rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid #eee;
+    }
+    .filters label {
+      display: flex;
+      flex-direction: column;
+      margin-top: 0;
+      font-weight: 600;
+      font-size: .8rem;
+      gap: .2rem;
+    }
+    .filters input, .filters select {
+      font-size: .9rem;
+      padding: .35rem;
+      margin: 0;
+    }
+    .filters .range { flex-direction: row; align-items: center; gap: .35rem; }
+    .filters .range input { width: 5.5rem; }
+    .filters button { align-self: flex-end; }
+    #filter_count { margin-bottom: .5rem; }
+  </style>
+</head>
+<body>
+  <p><a href="/">← Back home</a></p>
+  <h1>Self-play harness</h1>
+  <p class="muted">Run the current scoring engine against itself, save each game, and review recent results below.</p>
+
+  <div class="card">
+    <form method="post" action="/self-play">
+      <div class="grid">
+        <div>
+          <label>Games</label>
+          <input name="games" type="number" min="1" value="{{ config.games if config else 3 }}" required />
+        </div>
+        <div>
+          <label>Max turns</label>
+          <input name="max_plies" type="number" min="1" value="{{ config.max_plies if config else 100 }}" required />
+        </div>
+        <div>
+          <label>Top K</label>
+          <input name="top_k" type="number" min="1" value="{{ config.top_k if config else 3 }}" required />
+        </div>
+        <div>
+          <label>Seed</label>
+          <input name="seed" type="number" value="{{ config.seed if config and config.seed is not none else '' }}" />
+        </div>
+      </div>
+
+      <label>Optional starting FEN</label>
+      <textarea name="fen" rows="3" placeholder="Leave blank for the standard starting position">{{ config.fen if config and config.fen else '' }}</textarea>
+
+      <button type="submit">Run self-play</button>
+    </form>
+
+    <div id="progress_wrap" class="progress-wrap">
+      <p id="progress_text" class="muted">Starting...</p>
+      <div class="progress-bar" aria-label="Self-play progress">
+        <div id="progress_fill" class="progress-fill"></div>
+      </div>
+    </div>
+  </div>
+
+  {% if recent_games %}
+    <div class="card">
+      <h2>Most recent run</h2>
+      {% for game in recent_games %}
+        <div class="metric">
+          <b><a href="/self-play/view/{{ game.run_id }}/{{ game.index }}">Game {{ game.index }} · {{ game.result }} · {{ game.plies }} turns</a></b>
+          <div>Outcome: {{ game.outcome }}{% if game.winner %} · Winner: {{ game.winner }}{% endif %}{% if game.loser %} · Loser: {{ game.loser }}{% endif %}</div>
+          <div>Termination: {{ game.termination }}</div>
+          <div>Final score: {{ "%.2f"|format(game.final_score) }}</div>
+          {% if game.white_weights and game.black_weights %}
+            <div>White weights: lm={{ "%.3f"|format(game.white_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(game.white_weights.material_score_weight) }}, fwd={{ "%.3f"|format(game.white_weights.forward_score_weight) }}</div>
+            <div>Black weights: lm={{ "%.3f"|format(game.black_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(game.black_weights.material_score_weight) }}, fwd={{ "%.3f"|format(game.black_weights.forward_score_weight) }}</div>
+          {% endif %}
+          <div>Start: {{ game.start_fen }}</div>
+          <details>
+            <summary>PGN</summary>
+            <pre>{{ game.pgn }}</pre>
+          </details>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <div class="card">
+    <h2>Recent saved self-play results</h2>
+    <p><a href="/self-play/analysis">Analyse results →</a></p>
+    {% if results %}
+      <div class="filters">
+        <label>Result
+          <select id="filter_result"><option value="">All</option></select>
+        </label>
+        <label>Outcome
+          <select id="filter_outcome"><option value="">All</option></select>
+        </label>
+        <label>Termination
+          <select id="filter_termination"><option value="">All</option></select>
+        </label>
+        <label>|Final score|
+          <span class="range">
+            <select id="filter_score_cmp">
+              <option value="gt">&gt;</option>
+              <option value="lt">&lt;</option>
+            </select>
+            <input type="number" step="0.01" min="0" id="filter_score_value" placeholder="value" />
+          </span>
+        </label>
+        <label>Played at
+          <span class="range">
+            <input type="date" id="filter_played_from" />
+            <span>–</span>
+            <input type="date" id="filter_played_to" />
+          </span>
+        </label>
+        <button type="button" id="filter_reset">Reset filters</button>
+      </div>
+      <p id="filter_count" class="muted"></p>
+      <table id="results_table">
+        <thead>
+          <tr>
+            <th>Played at</th>
+            <th>Result</th>
+            <th>Turns</th>
+            <th>Outcome</th>
+            <th>Termination</th>
+            <th>Final score</th>
+            <th>Weights</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in results|reverse %}
+            <tr class="result-row"
+                data-played-at="{{ row.played_at }}"
+                data-result="{{ row.result }}"
+                data-outcome="{{ row.outcome }}"
+                data-termination="{{ row.termination }}"
+                data-plies="{{ row.plies }}"
+                data-final-score="{{ row.final_score }}">
+              <td>{{ row.played_at_display if row.played_at_display else row.played_at }}</td>
+              <td><a href="/self-play/view/{{ row.run_id }}/{{ row.index }}">{{ row.result }}</a></td>
+              <td>{{ row.plies }}</td>
+              <td>{{ row.outcome }}{% if row.winner %} · {{ row.winner }}{% endif %}{% if row.loser %} / {{ row.loser }}{% endif %}</td>
+              <td>{{ row.termination }}</td>
+              <td>{{ "%.2f"|format(row.final_score) }}</td>
+              <td>
+                {% if row.white_weights and row.black_weights %}
+                  W: lm={{ "%.3f"|format(row.white_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(row.white_weights.material_score_weight) }}, fwd={{ "%.3f"|format(row.white_weights.forward_score_weight) }}<br/>
+                  B: lm={{ "%.3f"|format(row.black_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(row.black_weights.material_score_weight) }}, fwd={{ "%.3f"|format(row.black_weights.forward_score_weight) }}
+                {% else %}
+                  (weights unavailable)
+                {% endif %}
+              </td>
+            </tr>
+            <tr class="detail-row">
+              <td colspan="7">
+                <details>
+                  <summary>PGN / FEN</summary>
+                  <div class="muted">FEN: {{ row.final_fen }}</div>
+                  <pre>{{ row.pgn }}</pre>
+                </details>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p id="filter_empty" class="muted" style="display:none;">No results match the current filters.</p>
+  {% else %}
+    <p class="muted">No self-play results saved yet.</p>
+  {% endif %}
+  </div>
+  
+  <script>
+    const form = document.querySelector('form[action="/self-play"]');
+    const progressWrap = document.getElementById('progress_wrap');
+    const progressText = document.getElementById('progress_text');
+    const progressFill = document.getElementById('progress_fill');
+    const submitButton = form.querySelector('button[type="submit"]');
+    const gamesInput = form.querySelector('input[name="games"]');
+    const activeJobKey = 'selfPlayActiveJobId';
+    const POLL_INTERVAL_MS = 200;
+    // A self-play run finishes in seconds. If a job we're tracking makes no
+    // forward progress for this long it's an orphan (its worker died), so we
+    // stop waiting and free the UI instead of locking the button forever.
+    const NO_PROGRESS_TIMEOUT_MS = 30000;
+
+    function releaseJob() {
+      // Stop tracking whatever job was active and re-enable the form so the
+      // user is never stuck behind a dead/stale job.
+      progressWrap.style.display = 'none';
+      submitButton.disabled = false;
+      localStorage.removeItem(activeJobKey);
+    }
+
+    function setProgress(completed, total, text) {
+      const safeTotal = Math.max(1, Number(total) || 1);
+      const safeCompleted = Math.min(safeTotal, Math.max(0, Number(completed) || 0));
+      const pct = Math.round((safeCompleted / safeTotal) * 100);
+      progressWrap.style.display = 'block';
+      progressFill.style.width = `${pct}%`;
+      progressText.textContent = text || `${safeCompleted} / ${safeTotal} games complete`;
+    }
+
+    async function pollJob(jobId, tracker) {
+      // tracker carries the last progress value and the time it last advanced,
+      // so we can detect an orphaned job that will never finish.
+      tracker = tracker || { lastCompleted: -1, lastProgressAt: Date.now() };
+
+      const response = await fetch(`/self-play/status/${jobId}`, { cache: 'no-store' });
+      if (response.status === 404) {
+        // The job no longer exists (finished in a prior session, cache
+        // cleared, etc.). Stop polling so we don't spam 404s forever.
+        releaseJob();
+        return;
+      }
+      if (!response.ok) {
+        setProgress(0, 1, 'Waiting for job status...');
+        window.setTimeout(() => pollJob(jobId, tracker), POLL_INTERVAL_MS);
+        return;
+      }
+      const job = await response.json();
+      setProgress(job.completed || 0, job.total || 1, job.message || job.state || 'Running');
+      if (job.state === 'completed') {
+        progressText.textContent = 'Complete. Refreshing...';
+        progressFill.style.width = '100%';
+        localStorage.removeItem(activeJobKey);
+        // Hold on the full bar briefly so the completed state is visible
+        // before the page reloads (jobs can finish in well under a second).
+        window.setTimeout(() => window.location.reload(), 500);
+        return;
+      }
+      if (job.state === 'failed') {
+        progressText.textContent = `Failed: ${job.error || 'Unknown error'}`;
+        submitButton.disabled = false;
+        localStorage.removeItem(activeJobKey);
+        return;
+      }
+
+      // Watchdog: if the job hasn't advanced for too long, its worker is dead.
+      // Give up and re-enable the form rather than polling forever.
+      const completed = Number(job.completed) || 0;
+      if (completed > tracker.lastCompleted) {
+        tracker.lastCompleted = completed;
+        tracker.lastProgressAt = Date.now();
+      } else if (Date.now() - tracker.lastProgressAt > NO_PROGRESS_TIMEOUT_MS) {
+        progressText.textContent = 'Self-play job stalled and was cancelled. You can run again.';
+        submitButton.disabled = false;
+        localStorage.removeItem(activeJobKey);
+        return;
+      }
+
+      // Poll frequently: games run in parallel across all cores, so a run
+      // can complete in a fraction of a second. A coarse (1s) interval would
+      // miss every intermediate value and make the bar appear frozen.
+      window.setTimeout(() => pollJob(jobId, tracker), POLL_INTERVAL_MS);
+    }
+
+    async function resumeActiveJob() {
+      const jobId = localStorage.getItem(activeJobKey);
+      if (!jobId) {
+        return;
+      }
+      // Probe once before locking the UI. Only a job that is genuinely still
+      // running should disable the button; anything missing, finished, failed,
+      // or already stalled just gets cleared so the form stays usable.
+      let job = null;
+      try {
+        const response = await fetch(`/self-play/status/${jobId}`, { cache: 'no-store' });
+        if (response.ok) {
+          job = await response.json();
+        }
+      } catch (err) {
+        job = null;
+      }
+      if (!job || job.state === 'completed' || job.state === 'failed' || job.state === 'missing') {
+        localStorage.removeItem(activeJobKey);
+        return;
+      }
+      const startedAt = Date.parse(job.played_at || '');
+      const isStale = Number.isFinite(startedAt)
+        && (Date.now() - startedAt) > NO_PROGRESS_TIMEOUT_MS
+        && (Number(job.completed) || 0) === 0;
+      if (isStale) {
+        // Queued/running but untouched well past when it should have run:
+        // its worker never made progress, so don't trap the button.
+        localStorage.removeItem(activeJobKey);
+        return;
+      }
+      progressWrap.style.display = 'block';
+      progressText.textContent = 'Resuming active job...';
+      submitButton.disabled = true;
+      pollJob(jobId);
+    }
+
+    form.addEventListener('submit', async (event) => {
+      const games = Number(gamesInput.value || '1');
+      if (!(games > 1)) {
+        return;
+      }
+
+      event.preventDefault();
+      submitButton.disabled = true;
+      setProgress(0, games, 'Starting...');
+
+      const response = await fetch('/self-play/start', {
+        method: 'POST',
+        body: new FormData(form),
+      });
+      if (!response.ok) {
+        progressText.textContent = 'Failed to start self-play.';
+        submitButton.disabled = false;
+        return;
+      }
+      const job = await response.json();
+      localStorage.setItem(activeJobKey, job.job_id);
+      pollJob(job.job_id);
+    });
+
+    resumeActiveJob();
+
+    function setupResultsFilters() {
+      const rows = Array.from(document.querySelectorAll('#results_table tr.result-row'));
+      if (!rows.length) {
+        return;
+      }
+
+      const resultSelect = document.getElementById('filter_result');
+      const outcomeSelect = document.getElementById('filter_outcome');
+      const terminationSelect = document.getElementById('filter_termination');
+      const scoreCmp = document.getElementById('filter_score_cmp');
+      const scoreValue = document.getElementById('filter_score_value');
+      const playedFrom = document.getElementById('filter_played_from');
+      const playedTo = document.getElementById('filter_played_to');
+      const resetButton = document.getElementById('filter_reset');
+      const countEl = document.getElementById('filter_count');
+      const emptyEl = document.getElementById('filter_empty');
+
+      function populateSelect(select, key) {
+        const values = Array.from(new Set(rows.map((row) => row.dataset[key]).filter(Boolean))).sort();
+        values.forEach((value) => {
+          const option = document.createElement('option');
+          option.value = value;
+          option.textContent = value;
+          select.appendChild(option);
+        });
+      }
+      populateSelect(resultSelect, 'result');
+      populateSelect(outcomeSelect, 'outcome');
+      populateSelect(terminationSelect, 'termination');
+
+      const anyWinOption = document.createElement('option');
+      anyWinOption.value = '__any_win__';
+      anyWinOption.textContent = 'Anyone wins';
+      outcomeSelect.insertBefore(anyWinOption, outcomeSelect.firstChild.nextSibling);
+
+      function applyFilters() {
+        const result = resultSelect.value;
+        const outcome = outcomeSelect.value;
+        const termination = terminationSelect.value;
+        const scoreThreshold = scoreValue.value === '' ? null : Number(scoreValue.value);
+        const from = playedFrom.value || null;
+        const to = playedTo.value || null;
+
+        let visibleCount = 0;
+        rows.forEach((row) => {
+          const detail = row.nextElementSibling;
+          let visible = true;
+
+          if (result && row.dataset.result !== result) visible = false;
+          if (outcome === '__any_win__') {
+            if (!/wins$/.test(row.dataset.outcome || '')) visible = false;
+          } else if (outcome && row.dataset.outcome !== outcome) {
+            visible = false;
+          }
+          if (termination && row.dataset.termination !== termination) visible = false;
+
+          if (scoreThreshold !== null) {
+            const absScore = Math.abs(Number(row.dataset.finalScore));
+            if (scoreCmp.value === 'gt' && !(absScore > scoreThreshold)) visible = false;
+            if (scoreCmp.value === 'lt' && !(absScore < scoreThreshold)) visible = false;
+          }
+
+          const playedDate = (row.dataset.playedAt || '').slice(0, 10);
+          if (from && playedDate && playedDate < from) visible = false;
+          if (to && playedDate && playedDate > to) visible = false;
+
+          row.style.display = visible ? '' : 'none';
+          if (detail && detail.classList.contains('detail-row')) {
+            detail.style.display = visible ? '' : 'none';
+          }
+          if (visible) visibleCount += 1;
+        });
+
+        countEl.textContent = `Showing ${visibleCount} of ${rows.length} results`;
+        emptyEl.style.display = visibleCount === 0 ? 'block' : 'none';
+      }
+
+      [resultSelect, outcomeSelect, terminationSelect, scoreCmp].forEach((el) => el.addEventListener('change', applyFilters));
+      [scoreValue, playedFrom, playedTo].forEach((el) => el.addEventListener('input', applyFilters));
+
+      resetButton.addEventListener('click', () => {
+        resultSelect.value = '';
+        outcomeSelect.value = '';
+        terminationSelect.value = '';
+        scoreCmp.value = 'gt';
+        scoreValue.value = '';
+        playedFrom.value = '';
+        playedTo.value = '';
+        applyFilters();
+      });
+
+      applyFilters();
+    }
+
+    setupResultsFilters();
+  </script>
+</body>
+</html>

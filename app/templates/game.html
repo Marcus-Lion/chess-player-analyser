@@ -1,0 +1,197 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>{{ username }} - Game {{ index }}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; }
+    .layout { display: grid; grid-template-columns: 440px 1fr; gap: 1.5rem; align-items: start; }
+    .panel { border: 1px solid #ddd; border-radius: 12px; padding: 1rem; }
+    .metrics { display: grid; grid-template-columns: repeat(2, minmax(120px, 1fr)); gap: .75rem; margin: 1rem 0; }
+    .metric { border: 1px solid #eee; border-radius: 10px; padding: .75rem; }
+    .metric b { display: block; font-size: 1.1rem; }
+    .forward-list { list-style: none; padding: 0; margin: .25rem 0 0; font-size: 1.1rem; }
+    .controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .75rem 0; }
+    .controls button { padding: .35rem .6rem; }
+    .controls input[type="range"] { width: 100%; }
+    .positions { display: inline-grid; grid-template-columns: max-content max-content; gap: .2rem .75rem; padding: 0; margin: 0; }
+    .positions .position-row { display: contents; }
+    .positions .move-start { grid-column: 1 / -1; }
+    .positions a { text-decoration: none; }
+    .positions a.active { font-weight: 700; }
+    .muted { color: #666; }
+    .board-wrap svg { max-width: 100%; height: auto; display: block; }
+  </style>
+</head>
+<body>
+  <p><a href="{{ back_url if back_url else '/games?username=' ~ username }}">{{ back_label if back_label else '← Back to games' }}</a></p>
+  <h1>{{ username }} — game {{ index }} / {{ total }}</h1>
+
+  {% if game_summary %}
+    <p><strong>Outcome:</strong> {{ game_summary.status }}{% if game_summary.winner %} · Winner: {{ game_summary.winner }}{% endif %}{% if game_summary.loser %} · Loser: {{ game_summary.loser }}{% endif %}</p>
+    {% if game_summary.white_weights and game_summary.black_weights %}
+      <p class="muted">
+        White weights: lm={{ "%.3f"|format(game_summary.white_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(game_summary.white_weights.material_score_weight) }}, fwd={{ "%.3f"|format(game_summary.white_weights.forward_score_weight) }} ·
+        Black weights: lm={{ "%.3f"|format(game_summary.black_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(game_summary.black_weights.material_score_weight) }}, fwd={{ "%.3f"|format(game_summary.black_weights.forward_score_weight) }}
+      </p>
+    {% endif %}
+  {% endif %}
+
+  {% if detail %}
+    <p>
+      {{ detail.white }} vs {{ detail.black }} · Result {{ detail.result }} ·
+      ECO {{ detail.eco }} {{ detail.eco_name }} · {{ detail.date }} · {{ detail.time_control }}
+    </p>
+
+    <div class="layout">
+      <div class="panel">
+        <div class="metrics">
+          <div class="metric">
+            Forward
+            <ul id="forward_list" class="forward-list">
+              <li>1st order: White {{ detail.positions[0].forward_1.White }} / Black {{ detail.positions[0].forward_1.Black }}</li>
+              <li>2nd order: White {{ detail.positions[0].forward_2.White }} / Black {{ detail.positions[0].forward_2.Black }}</li>
+              <li>3rd order: White {{ detail.positions[0].forward_3.White }} / Black {{ detail.positions[0].forward_3.Black }}</li>
+            </ul>
+          </div>
+          <div class="metric">Material <b id="material">{{ detail.positions[0].material.White }} / {{ detail.positions[0].material.Black }}</b></div>
+          <div class="metric">Legal Moves <b id="legal_score">{{ detail.positions[0].score }}</b></div>
+          <div class="metric">Score <b id="score">{{ "%.2f"|format(detail.positions[0].total_score) }}</b></div>
+        </div>
+        <div class="controls">
+          <button type="button" id="first_btn">⏮</button>
+          <button type="button" id="prev_btn">◀</button>
+          <button type="button" id="next_btn">▶</button>
+          <button type="button" id="last_btn">⏭</button>
+          <label><input type="checkbox" id="arrows_toggle" checked /> Show move arrows</label>
+          <span id="position_label" class="muted">Start position</span>
+        </div>
+
+        <input id="position_slider" type="range" min="0" max="{{ detail.positions|length - 1 }}" value="0" step="1" />
+
+        <div id="board-wrap" class="board-wrap">
+          {{ detail.positions[0].svg_moves | safe }}
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Positions</h2>
+        <p class="muted">Use the buttons, slider, or click a position to step through the game.</p>
+        <div class="positions" id="positions_list">
+          <div class="position-row">
+            <a id="ply-0" href="#ply-0" data-index="0" class="move-start active">
+              Start position
+              <span class="muted"> · Score: {{ "%.2f"|format(detail.positions[0].total_score) }}</span>
+            </a>
+          </div>
+          {% for move_number, moves in detail.positions[1:]|groupby('move_number') %}
+            {% set white_pos = moves|selectattr('side', 'equalto', 'White')|first %}
+            {% set black_pos = moves|selectattr('side', 'equalto', 'Black')|first %}
+            <div class="position-row">
+              {% if white_pos %}
+                <a id="ply-{{ white_pos.ply }}" href="#ply-{{ white_pos.ply }}" data-index="{{ white_pos.ply }}" class="move-white">
+                  {{ white_pos.ply }}. {{ white_pos.san }}<span class="muted"> · {{ "%.2f"|format(white_pos.total_score) }}</span>
+                </a>
+              {% else %}
+                <span class="move-white"></span>
+              {% endif %}
+              {% if black_pos %}
+                <a id="ply-{{ black_pos.ply }}" href="#ply-{{ black_pos.ply }}" data-index="{{ black_pos.ply }}" class="move-black">
+                  {{ black_pos.ply }}. {{ black_pos.san }}<span class="muted"> · {{ "%.2f"|format(black_pos.total_score) }}</span>
+                </a>
+              {% else %}
+                <span class="move-black"></span>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const positions = {{ positions_data | tojson }};
+      const boardWrap = document.getElementById('board-wrap');
+      const slider = document.getElementById('position_slider');
+      const label = document.getElementById('position_label');
+      const forwardList = document.getElementById('forward_list');
+      const material = document.getElementById('material');
+      const score = document.getElementById('score');
+      const legalScore = document.getElementById('legal_score');
+      const links = Array.from(document.querySelectorAll('#positions_list a[data-index]'));
+      const arrowsToggle = document.getElementById('arrows_toggle');
+      const firstBtn = document.getElementById('first_btn');
+      const prevBtn = document.getElementById('prev_btn');
+      const nextBtn = document.getElementById('next_btn');
+      const lastBtn = document.getElementById('last_btn');
+
+      function indexFromHash() {
+        const match = window.location.hash.match(/^#ply-(\d+)$/);
+        if (!match) return 0;
+        const ply = Number(match[1]);
+        const idx = positions.findIndex(pos => pos.ply === ply);
+        return idx >= 0 ? idx : 0;
+      }
+
+      let current = indexFromHash();
+
+      function setActiveLink(index) {
+        links.forEach(link => {
+          link.classList.toggle('active', Number(link.dataset.index) === index);
+        });
+      }
+
+      function describePosition(pos) {
+        if (pos.ply === 0) return 'Start position';
+        return `${pos.ply}. ${pos.side} ${pos.san}`;
+      }
+
+      function render(index) {
+        const pos = positions[index];
+        current = index;
+        slider.value = String(index);
+        boardWrap.innerHTML = arrowsToggle.checked ? pos.svg_moves : pos.svg;
+        forwardList.innerHTML = `
+          <li>1st order: White ${pos.forward_1.White} / Black ${pos.forward_1.Black}</li>
+          <li>2nd order: White ${pos.forward_2.White} / Black ${pos.forward_2.Black}</li>
+          <li>3rd order: White ${pos.forward_3.White} / Black ${pos.forward_3.Black}</li>
+        `;
+        material.textContent = `${pos.material.White} / ${pos.material.Black}`;
+        score.textContent = Number(pos.total_score).toFixed(2);
+        legalScore.textContent = String(pos.score);
+        label.textContent = describePosition(pos);
+        setActiveLink(index);
+        const hash = `#ply-${pos.ply}`;
+        if (window.location.hash !== hash) {
+          history.replaceState(null, '', hash);
+        }
+      }
+
+      firstBtn.addEventListener('click', () => render(0));
+      prevBtn.addEventListener('click', () => render(Math.max(0, current - 1)));
+      nextBtn.addEventListener('click', () => render(Math.min(positions.length - 1, current + 1)));
+      lastBtn.addEventListener('click', () => render(positions.length - 1));
+      slider.addEventListener('input', (event) => render(Number(event.target.value)));
+      arrowsToggle.addEventListener('change', () => render(current));
+      links.forEach(link => {
+        link.addEventListener('click', (event) => {
+          event.preventDefault();
+          render(Number(link.dataset.index));
+        });
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowLeft') render(Math.max(0, current - 1));
+        if (event.key === 'ArrowRight') render(Math.min(positions.length - 1, current + 1));
+      });
+
+      window.addEventListener('hashchange', () => {
+        render(indexFromHash());
+      });
+
+      render(current);
+    </script>
+  {% else %}
+    <p>Game not found.</p>
+  {% endif %}
+</body>
+</html>

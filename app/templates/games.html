@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>{{ username }} - Games</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; }
+    table { border-collapse: collapse; margin-top: 1rem; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: .55rem .75rem; text-align: left; }
+    th { background: #f7f7f7; }
+  </style>
+</head>
+<body>
+  <p><a href="/">← New analysis</a></p>
+  <h1>{{ username }} — games</h1>
+
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>White</th>
+        <th>Black</th>
+        <th>Result</th>
+        <th>Your result</th>
+        <th>Date</th>
+        <th>Time control</th>
+        <th>ECO</th>
+        <th>Open</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for game in games %}
+        <tr>
+          <td>{{ game.index }}</td>
+          <td>{{ game.white }}</td>
+          <td>{{ game.black }}</td>
+          <td>{{ game.result }}</td>
+          <td>{{ game.user_result }}</td>
+          <td>{{ game.date }}</td>
+          <td>{{ game.time_control }}</td>
+          <td>{{ game.eco }} {{ game.eco_name }}</td>
+          <td><a href="/games/{{ username }}/{{ game.index }}">View</a></td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

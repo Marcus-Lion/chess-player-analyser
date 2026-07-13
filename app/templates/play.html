@@ -1,0 +1,220 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Play chess</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 1200px; }
+    .layout { display: grid; grid-template-columns: 460px 1fr; gap: 1.5rem; align-items: start; }
+    .panel { border: 1px solid #ddd; border-radius: 12px; padding: 1rem; margin-bottom: 1rem; }
+    .board {
+      display: grid;
+      grid-template-columns: repeat(8, minmax(0, 1fr));
+      grid-template-rows: repeat(8, minmax(0, 1fr));
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      border: 1px solid #999;
+      overflow: hidden;
+      user-select: none;
+    }
+    .square {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 0;
+      min-height: 0;
+      box-sizing: border-box;
+      font-size: clamp(2rem, 6vw, 3.4rem);
+      line-height: 1;
+      position: relative;
+    }
+    .square.light { background: #f0d9b5; }
+    .square.dark { background: #b58863; }
+    .square.drop-target { outline: 3px solid rgba(255, 215, 0, 0.9); outline-offset: -3px; }
+    .piece { cursor: grab; }
+    .piece:active { cursor: grabbing; }
+    .piece.white { color: #fafafa; text-shadow: 0 0 2px #000, 0 0 2px #000; }
+    .piece.black { color: #111; text-shadow: 0 0 2px #fff; }
+    .muted { color: #666; }
+    .error { color: #b00020; }
+    .message { color: #0b6; }
+    .moves { display: flex; flex-wrap: wrap; gap: .4rem; }
+    .moves button { padding: .35rem .55rem; }
+    .history { margin: 0; padding-left: 1.2rem; }
+    .history li { margin: .2rem 0; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: .75rem; }
+    input, select, button { font-size: 1rem; padding: .45rem; }
+    label { display: block; margin-top: .75rem; font-weight: 600; }
+    .summary { border: 1px solid #eee; border-radius: 10px; padding: .75rem; background: #fafafa; }
+  </style>
+</head>
+<body>
+  <p><a href="/">← Back home</a></p>
+  <h1>Play chess</h1>
+  <p class="muted">Human vs the current scoring engine. The engine replies automatically after each move.</p>
+
+  <div class="panel">
+    <form method="get" action="/play">
+      <div class="grid">
+        <div>
+          <label>Your side</label>
+          <select name="human_color">
+            <option value="white" {% if human_color == "White" %}selected{% endif %}>White</option>
+            <option value="black" {% if human_color == "Black" %}selected{% endif %}>Black</option>
+          </select>
+        </div>
+        <div>
+          <label>Top K</label>
+          <input name="top_k" type="number" min="1" value="{{ top_k }}" />
+        </div>
+        <div>
+          <label>Seed</label>
+          <input name="seed" type="number" value="{{ seed if seed is not none else '' }}" />
+        </div>
+        <div style="display:flex; align-items:end;">
+          <button type="submit">New game</button>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <div class="layout">
+    <div>
+      <div class="panel">
+        <div class="board" id="board">
+          {% for row in board_grid %}
+            {% for sq in row %}
+              <div class="square {% if sq.is_light %}light{% else %}dark{% endif %}" data-square="{{ sq.square }}" title="{{ sq.square }}">
+                {% if sq.piece %}
+                  <span
+                    class="piece {{ sq.piece_color }}"
+                    data-square="{{ sq.square }}"
+                    {% if sq.draggable %}draggable="true"{% endif %}
+                  >{{ sq.piece }}</span>
+                {% endif %}
+              </div>
+            {% endfor %}
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="summary">
+          <div><strong>Turn:</strong> {{ side_to_move }}</div>
+          <div><strong>You:</strong> {{ human_label }}</div>
+          <div><strong>Engine:</strong> {{ engine_label }}</div>
+          {% if message %}<div class="message">{{ message }}</div>{% endif %}
+          {% if error %}<div class="error">{{ error }}</div>{% endif %}
+        </div>
+
+        {% if result_summary %}
+          <p><strong>Game over:</strong> {{ result_summary.status }}{% if result_summary.winner %} · Winner: {{ result_summary.winner }}{% endif %}{% if result_summary.loser %} · Loser: {{ result_summary.loser }}{% endif %}</p>
+        {% endif %}
+      </div>
+
+      {% if can_move %}
+        <form id="moveForm" method="post" action="/play">
+          <input type="hidden" name="current_fen" value="{{ current_fen }}" />
+          <input type="hidden" name="history_json" value="{{ history_json | e }}" />
+          <input type="hidden" name="human_color" value="{{ human_color|lower }}" />
+          <input type="hidden" name="top_k" value="{{ top_k }}" />
+          <input type="hidden" name="seed" value="{{ seed if seed is not none else '' }}" />
+          <input type="hidden" name="move_uci" id="move_uci" value="" />
+
+          <label>Drag a piece or click a move</label>
+          <div class="moves">
+            {% for move in legal_move_options %}
+              <button type="submit" name="move_san" value="{{ move.san }}">{{ move.san }}</button>
+            {% endfor %}
+          </div>
+        </form>
+      {% endif %}
+    </div>
+
+    <div class="panel">
+      <h2>Move history</h2>
+      {% if history %}
+        <ol class="history">
+          {% for item in history %}
+            <li>{{ item.move_number }}. {{ item.side }} {{ item.san }}</li>
+          {% endfor %}
+        </ol>
+      {% else %}
+        <p class="muted">No moves yet.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if can_move %}
+    <script>
+      const legalMoves = {{ legal_move_options | tojson }};
+      const board = document.getElementById('board');
+      const moveForm = document.getElementById('moveForm');
+      const moveUci = document.getElementById('move_uci');
+      let draggedSquare = null;
+
+      function keyFor(from, to) {
+        return `${from}:${to}`;
+      }
+
+      const moveMap = {};
+      for (const move of legalMoves) {
+        const key = keyFor(move.from, move.to);
+        if (!moveMap[key]) moveMap[key] = [];
+        moveMap[key].push(move);
+      }
+
+      function chooseMove(from, to) {
+        const candidates = moveMap[keyFor(from, to)] || [];
+        if (!candidates.length) return null;
+        return candidates.find(m => m.uci.endsWith('q')) || candidates[0];
+      }
+
+      function submitMove(move) {
+        moveUci.value = move.uci;
+        moveForm.submit();
+      }
+
+      board.addEventListener('dragstart', (event) => {
+        const piece = event.target.closest('.piece');
+        if (!piece || !piece.draggable) {
+          event.preventDefault();
+          return;
+        }
+        draggedSquare = piece.dataset.square;
+        event.dataTransfer.setData('text/plain', draggedSquare);
+        event.dataTransfer.effectAllowed = 'move';
+      });
+
+      board.addEventListener('dragover', (event) => {
+        if (event.target.closest('.square')) {
+          event.preventDefault();
+        }
+      });
+
+      board.addEventListener('dragenter', (event) => {
+        const square = event.target.closest('.square');
+        if (square) square.classList.add('drop-target');
+      });
+
+      board.addEventListener('dragleave', (event) => {
+        const square = event.target.closest('.square');
+        if (square) square.classList.remove('drop-target');
+      });
+
+      board.addEventListener('drop', (event) => {
+        const square = event.target.closest('.square');
+        if (!square) return;
+        event.preventDefault();
+        board.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+        const from = event.dataTransfer.getData('text/plain') || draggedSquare;
+        const to = square.dataset.square;
+        const move = chooseMove(from, to);
+        if (move) {
+          submitMove(move);
+        }
+      });
+    </script>
+  {% endif %}
+</body>
+</html>

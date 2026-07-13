@@ -85,6 +85,40 @@
         </div>
       </div>
 
+      <p class="muted" style="margin-bottom: 0;">Weights are fixed for each side at the start of the game (no per-game randomization).</p>
+
+      <label style="margin-bottom: .25rem;">White weights</label>
+      <div class="grid" style="grid-template-columns: repeat(3, minmax(120px, 1fr));">
+        <div>
+          <label>Legal-moves weight</label>
+          <input name="white_legal_moves_weight" type="number" step="any" value="{{ config.white_legal_moves_weight if config and config.white_legal_moves_weight is not none else 0.212 }}" required />
+        </div>
+        <div>
+          <label>Material weight</label>
+          <input name="white_material_score_weight" type="number" step="any" value="{{ config.white_material_score_weight if config and config.white_material_score_weight is not none else 5.576 }}" required />
+        </div>
+        <div>
+          <label>Forward weight</label>
+          <input name="white_forward_score_weight" type="number" step="any" value="{{ config.white_forward_score_weight if config and config.white_forward_score_weight is not none else 4.008 }}" required />
+        </div>
+      </div>
+
+      <label style="margin-bottom: .25rem;">Black weights</label>
+      <div class="grid" style="grid-template-columns: repeat(3, minmax(120px, 1fr));">
+        <div>
+          <label>Legal-moves weight</label>
+          <input name="black_legal_moves_weight" type="number" step="any" value="{{ config.black_legal_moves_weight if config and config.black_legal_moves_weight is not none else 0.305 }}" required />
+        </div>
+        <div>
+          <label>Material weight</label>
+          <input name="black_material_score_weight" type="number" step="any" value="{{ config.black_material_score_weight if config and config.black_material_score_weight is not none else 3.381 }}" required />
+        </div>
+        <div>
+          <label>Forward weight</label>
+          <input name="black_forward_score_weight" type="number" step="any" value="{{ config.black_forward_score_weight if config and config.black_forward_score_weight is not none else 2.661 }}" required />
+        </div>
+      </div>
+
       <label>Optional starting FEN</label>
       <textarea name="fen" rows="3" placeholder="Leave blank for the standard starting position">{{ config.fen if config and config.fen else '' }}</textarea>
 

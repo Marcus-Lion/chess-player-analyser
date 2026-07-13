@@ -407,6 +407,12 @@ def self_play_run(
     top_k: int = Form(3),
     seed: str | None = Form(None),
     fen: str | None = Form(None),
+    white_legal_moves_weight: float = Form(...),
+    white_material_score_weight: float = Form(...),
+    white_forward_score_weight: float = Form(...),
+    black_legal_moves_weight: float = Form(...),
+    black_material_score_weight: float = Form(...),
+    black_forward_score_weight: float = Form(...),
 ):
     fen = fen.strip() if fen and fen.strip() else None
     try:
@@ -419,6 +425,12 @@ def self_play_run(
         top_k=max(1, top_k),
         seed=seed_value,
         fen=fen,
+        white_legal_moves_weight=white_legal_moves_weight,
+        white_material_score_weight=white_material_score_weight,
+        white_forward_score_weight=white_forward_score_weight,
+        black_legal_moves_weight=black_legal_moves_weight,
+        black_material_score_weight=black_material_score_weight,
+        black_forward_score_weight=black_forward_score_weight,
     )
     recent_games = run_self_play(config)
     save_self_play_results(recent_games)
@@ -438,6 +450,12 @@ def self_play_start(
     top_k: int = Form(3),
     seed: str | None = Form(None),
     fen: str | None = Form(None),
+    white_legal_moves_weight: float = Form(...),
+    white_material_score_weight: float = Form(...),
+    white_forward_score_weight: float = Form(...),
+    black_legal_moves_weight: float = Form(...),
+    black_material_score_weight: float = Form(...),
+    black_forward_score_weight: float = Form(...),
 ):
     fen = fen.strip() if fen and fen.strip() else None
     try:
@@ -450,6 +468,12 @@ def self_play_start(
         top_k=max(1, top_k),
         seed=seed_value,
         fen=fen,
+        white_legal_moves_weight=white_legal_moves_weight,
+        white_material_score_weight=white_material_score_weight,
+        white_forward_score_weight=white_forward_score_weight,
+        black_legal_moves_weight=black_legal_moves_weight,
+        black_material_score_weight=black_material_score_weight,
+        black_forward_score_weight=black_forward_score_weight,
     )
     return JSONResponse(start_self_play_job(config))
 

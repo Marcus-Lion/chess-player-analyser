@@ -87,6 +87,14 @@ class SelfPlayConfig:
     randomize_player_weights: bool = True
     player_weight_min_multiplier: float = 0.5
     player_weight_max_multiplier: float = 1.5
+    # Fixed per-side overrides: when all three are set for a side, that
+    # side skips randomization and always uses these exact weights.
+    white_legal_moves_weight: float | None = None
+    white_material_score_weight: float | None = None
+    white_forward_score_weight: float | None = None
+    black_legal_moves_weight: float | None = None
+    black_material_score_weight: float | None = None
+    black_forward_score_weight: float | None = None
 
 
 @dataclass
@@ -132,13 +140,30 @@ def _randomize_weight_triplet(
     )
 
 
+def _fixed_side_weights(
+    config: SelfPlayConfig, side: str
+) -> dict[str, float] | None:
+    lm = getattr(config, f"{side}_legal_moves_weight")
+    mat = getattr(config, f"{side}_material_score_weight")
+    fwd = getattr(config, f"{side}_forward_score_weight")
+    if lm is None or mat is None or fwd is None:
+        return None
+    return _weight_triplet_to_dict((lm, mat, fwd))
+
+
 def _player_weight_sets(config: SelfPlayConfig, rng: random.Random) -> tuple[dict[str, float], dict[str, float]]:
     base = _score_weights(config)
+    fixed_white = _fixed_side_weights(config, "white")
+    fixed_black = _fixed_side_weights(config, "black")
+
+    if fixed_white is not None and fixed_black is not None:
+        return fixed_white, fixed_black
+
     if not config.randomize_player_weights:
         shared = _weight_triplet_to_dict(base)
-        return shared, shared.copy()
+        return fixed_white or shared, fixed_black or shared.copy()
 
-    white = _weight_triplet_to_dict(
+    white = fixed_white or _weight_triplet_to_dict(
         _randomize_weight_triplet(
             base,
             rng,
@@ -146,7 +171,7 @@ def _player_weight_sets(config: SelfPlayConfig, rng: random.Random) -> tuple[dic
             max_multiplier=config.player_weight_max_multiplier,
         )
     )
-    black = _weight_triplet_to_dict(
+    black = fixed_black or _weight_triplet_to_dict(
         _randomize_weight_triplet(
             base,
             rng,
@@ -177,6 +202,12 @@ def _config_for_game(config: SelfPlayConfig, game_index: int) -> SelfPlayConfig:
         randomize_player_weights=config.randomize_player_weights,
         player_weight_min_multiplier=config.player_weight_min_multiplier,
         player_weight_max_multiplier=config.player_weight_max_multiplier,
+        white_legal_moves_weight=config.white_legal_moves_weight,
+        white_material_score_weight=config.white_material_score_weight,
+        white_forward_score_weight=config.white_forward_score_weight,
+        black_legal_moves_weight=config.black_legal_moves_weight,
+        black_material_score_weight=config.black_material_score_weight,
+        black_forward_score_weight=config.black_forward_score_weight,
     )
 
 

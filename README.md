@@ -57,6 +57,10 @@ Multi-game self-play now runs in a detached worker process and the browser
 remembers the active job id, so if the dev server reloads while a job is
 running, reopening the page resumes the progress bar from the saved job id.
 
+The web form sets White's and Black's legal-moves/material/forward weights
+independently (no randomization when run from the form), so you can pit two
+fixed weight profiles against each other directly.
+
 Games end on checkmate, stalemate, insufficient material, threefold
 repetition, or the fifty-move rule (the fivefold repetition and 75-move
 rules also apply as automatic backstops). Since self-play has no player to

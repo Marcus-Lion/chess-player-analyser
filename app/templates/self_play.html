@@ -248,10 +248,10 @@
     const submitButton = form.querySelector('button[type="submit"]');
     const gamesInput = form.querySelector('input[name="games"]');
     const activeJobKey = 'selfPlayActiveJobId';
-    // A self-play run finishes in seconds. If a job we're tracking makes no
-    // forward progress for this long it's an orphan (its worker died), so we
-    // stop waiting and free the UI instead of waiting on the socket forever.
-    const NO_PROGRESS_TIMEOUT_MS = 30000;
+    // If a job we're tracking makes no forward progress for this long it's an
+    // orphan (its worker died), so we stop waiting and free the UI instead of
+    // waiting on the socket forever.
+    const NO_PROGRESS_TIMEOUT_MS = 1000000;
 
     function releaseJob() {
       // Stop tracking whatever job was active and re-enable the form so the

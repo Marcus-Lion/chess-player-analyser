@@ -22,6 +22,8 @@ import chess.pgn
 
 import random
 
+import dotenv
+
 from app.games import (
     CENTER_CONTROL_WEIGHT,
     CHECKMATE_WEIGHT,
@@ -68,7 +70,7 @@ class SelfPlayGame:
     played_at: str = ""
     seed: int | None = None
     top_k: int = 3
-    max_plies: int = 100
+    max_turns: int = 100
     start_fen: str = "startpos"
     white_weights: dict[str, float] | None = None
     black_weights: dict[str, float] | None = None
@@ -80,7 +82,7 @@ class SelfPlayGame:
 @dataclass
 class SelfPlayConfig:
     games: int = 3
-    max_plies: int = 100
+    max_turns: int = 100
     top_k: int = 3
     # Negamax search depth. None (the default) auto-derives depth per move
     # from remaining material via ``_auto_search_depth`` -- shallow while the
@@ -211,7 +213,7 @@ def _seed_for_game(config: SelfPlayConfig, game_index: int) -> int | None:
 def _config_for_game(config: SelfPlayConfig, game_index: int) -> SelfPlayConfig:
     return SelfPlayConfig(
         games=1,
-        max_plies=config.max_plies,
+        max_turns=config.max_turns,
         top_k=config.top_k,
         depth=config.depth,
         seed=_seed_for_game(config, game_index),
@@ -678,7 +680,7 @@ def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random |
 
     start_time = time.perf_counter()
     result, termination = _terminal_reason(board)
-    while plies < config.max_plies and not result:
+    while plies < config.max_turns and not result:
         active_weights = white_weights if board.turn == chess.WHITE else black_weights
         depth = config.depth if config.depth is not None else _auto_search_depth(board)
         move, _ = choose_engine_move(
@@ -751,7 +753,7 @@ def run_self_play(
         game.played_at = played_at
         game.seed = game_config.seed
         game.top_k = config.top_k
-        game.max_plies = config.max_plies
+        game.max_turns = config.max_turns
         game.start_fen = start_fen
         games.append(game)
         if progress_callback is not None:
@@ -776,7 +778,7 @@ def run_self_play(
             game.played_at = played_at
             game.seed = _seed_for_game(config, index)
             game.top_k = config.top_k
-            game.max_plies = config.max_plies
+            game.max_turns = config.max_turns
             game.start_fen = start_fen
             completed_games[index] = game
             completed_count += 1
@@ -798,7 +800,7 @@ def save_self_play_results(games: list[SelfPlayGame]) -> None:
             "index": game.index,
             "seed": game.seed,
             "top_k": game.top_k,
-            "max_plies": game.max_plies,
+            "max_turns": game.max_turns,
             "start_fen": game.start_fen,
             "result": game.result,
             "termination": game.termination,
@@ -1020,7 +1022,7 @@ def start_self_play_job(config: SelfPlayConfig) -> dict:
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the position scorer against itself.")
     parser.add_argument("--games", type=int, default=3, help="Number of self-play games to run.")
-    parser.add_argument("--max-plies", type=int, default=100, help="Stop each game after this many plies.")
+    parser.add_argument("--max-turns", type=int, default=100, help="Stop each game after this many plies.")
     parser.add_argument("--top-k", type=int, default=3, help="Randomly choose among the top K evaluated moves.")
     parser.add_argument(
         "--depth",
@@ -1061,7 +1063,7 @@ def main(argv: list[str] | None = None) -> int:
 
     config = SelfPlayConfig(
         games=max(1, args.games),
-        max_plies=max(2, args.max_plies),
+        max_turns=max(2, args.max_turns),
         top_k=max(1, args.top_k),
         depth=(max(1, args.depth) if args.depth is not None else None),
         workers=(max(1, int(args.workers)) if args.workers else None),
@@ -1113,7 +1115,7 @@ def main(argv: list[str] | None = None) -> int:
         white = game.white_weights or {}
         black = game.black_weights or {}
         print(
-            f"Game {game.index}: {game.result} after {game.plies} plies ({game.termination}); "
+            f"Game {game.index}: {game.result} after {game.plies} turns ({game.termination}); "
             f"final score {game.final_score}; "
             f"took {game.duration_seconds:.2f}s, {game.evaluations_per_move:.0f} evals/move; "
             f"W[lm={white.get('legal_moves_weight', 0):.6f}, mat={white.get('material_score_weight', 0):.6f}, fwd={white.get('forward_score_weight', 0):.6f}] "
@@ -1124,4 +1126,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    dotenv.load_dotenv()
     raise SystemExit(main())

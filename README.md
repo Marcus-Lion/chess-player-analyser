@@ -44,13 +44,13 @@ the separate, opt-in export of real chess.com games from `/analyse`. See
 schema.
 
 ```bash
-uv run python -m app.self_play --games 10 --max-plies 55 --top-k 3 --seed 1
+uv run python -m app.self_play --games 10 --max-turns 55 --top-k 3 --seed 1
 ```
 
 To control how many games run in parallel (processes), add `--workers`:
 
 ```bash
-uv run python -m app.self_play --games 20 --workers 8 --max-plies 55 --top-k 3 --seed 1
+uv run python -m app.self_play --games 20 --workers 8 --max-turns 55 --top-k 3 --seed 1
 ```
 
 Each move is chosen by a negamax search. By default the search **depth is
@@ -62,7 +62,7 @@ search matters most for endgame precision). Pass `--depth` to pin a fixed
 depth for the whole game instead (higher is slower but stronger):
 
 ```bash
-uv run python -m app.self_play --games 10 --depth 2 --max-plies 55 --top-k 3 --seed 1
+uv run python -m app.self_play --games 10 --depth 2 --max-turns 55 --top-k 3 --seed 1
 ```
 
 The web form has the same knob as a **Parallel workers** field; leave it
@@ -109,7 +109,7 @@ repetition, or the fifty-move rule (the fivefold repetition and 75-move
 rules also apply as automatic backstops). Since self-play has no player to
 claim a draw, threefold repetition and the fifty-move rule are adjudicated
 automatically as soon as they become claimable. If none of these trigger,
-the game is called a draw once `--max-plies` is reached (labelled **Max
+the game is called a draw once `--max-turns` is reached (labelled **Max
 turns** in the web form and reported as "max turns reached"; the count
 itself covers every half-move, i.e. both White's and Black's turns).
 

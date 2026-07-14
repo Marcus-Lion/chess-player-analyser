@@ -37,6 +37,7 @@ from app.self_play import (
 )
 from app.self_play_metrics import (
     OUTCOME_ORDER,
+    WEIGHT_DIMENSIONS,
     final_score_by_outcome,
     outcome_counts,
     plies_by_termination,
@@ -44,6 +45,7 @@ from app.self_play_metrics import (
     summary as self_play_summary,
     termination_counts,
     to_dataframe as self_play_to_dataframe,
+    weight_diff_scores,
     win_rate_by_weight_advantage_all,
 )
 from app.metrics import (
@@ -206,6 +208,17 @@ def _make_self_play_charts(df: pd.DataFrame) -> dict[str, str]:
         fig = px.box(score_by_outcome, x="outcome", y="final_score", title="Final score spread by outcome",
                      category_orders={"outcome": OUTCOME_ORDER})
         charts["score_by_outcome"] = _fig_html(fig)
+
+    weight_scores = weight_diff_scores(df)
+    for dim in WEIGHT_DIMENSIONS:
+        points = weight_scores[weight_scores["weight_dim"] == dim]
+        if points.empty:
+            continue
+        label = dim.replace("_", " ")
+        fig = px.scatter(points, x="weight_diff", y="final_score", color="outcome",
+                          category_orders={"outcome": OUTCOME_ORDER}, opacity=0.6,
+                          title=f"Final score vs (white − black) {label} advantage")
+        charts[f"weight_scatter_{dim}"] = _fig_html(fig)
 
     return charts
 
@@ -417,7 +430,7 @@ def self_play_page(request: Request):
 def self_play_run(
     request: Request,
     games: int = Form(3),
-    max_plies: int = Form(100),
+    max_turns: int = Form(100),
     top_k: int = Form(3),
     workers: str | None = Form(None),
     seed: str | None = Form(None),
@@ -442,7 +455,7 @@ def self_play_run(
         seed_value = None
     config = SelfPlayConfig(
         games=max(1, games),
-        max_plies=max(2, max_plies),
+        max_turns=max(2, max_turns),
         top_k=max(1, top_k),
         workers=(max(1, workers_value) if workers_value else None),
         seed=seed_value,
@@ -470,7 +483,7 @@ def self_play_run(
 @app.post("/self-play/start")
 def self_play_start(
     games: int = Form(3),
-    max_plies: int = Form(100),
+    max_turns: int = Form(100),
     top_k: int = Form(3),
     workers: str | None = Form(None),
     seed: str | None = Form(None),
@@ -495,7 +508,7 @@ def self_play_start(
         seed_value = None
     config = SelfPlayConfig(
         games=max(1, games),
-        max_plies=max(2, max_plies),
+        max_turns=max(2, max_turns),
         top_k=max(1, top_k),
         workers=(max(1, workers_value) if workers_value else None),
         seed=seed_value,

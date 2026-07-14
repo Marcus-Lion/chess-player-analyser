@@ -3,7 +3,12 @@ from __future__ import annotations
 import pandas as pd
 
 OUTCOME_ORDER = ["White wins", "Black wins", "Draw"]
-WEIGHT_DIMENSIONS = ["legal_moves_weight", "material_score_weight", "forward_score_weight"]
+WEIGHT_DIMENSIONS = [
+    "legal_moves_weight",
+    "material_score_weight",
+    "forward_score_weight",
+    "center_control_weight",
+]
 
 
 def to_dataframe(rows: list[dict]) -> pd.DataFrame:
@@ -109,3 +114,19 @@ def win_rate_by_weight_advantage_all(df: pd.DataFrame, bins: int = 8) -> pd.Data
 
 def final_score_by_outcome(df: pd.DataFrame) -> pd.DataFrame:
     return df[["outcome", "final_score"]].dropna()
+
+
+def weight_diff_scores(df: pd.DataFrame) -> pd.DataFrame:
+    """Per-game (weight advantage, final score) points, long-form across all weight dims."""
+    frames = []
+    for dim in WEIGHT_DIMENSIONS:
+        diff_col = f"weight_diff_{dim}"
+        if diff_col not in df.columns:
+            continue
+        frame = df[[diff_col, "final_score", "outcome"]].dropna(subset=[diff_col, "final_score"]).copy()
+        frame = frame.rename(columns={diff_col: "weight_diff"})
+        frame["weight_dim"] = dim
+        frames.append(frame)
+    if not frames:
+        return pd.DataFrame(columns=["weight_diff", "final_score", "outcome", "weight_dim"])
+    return pd.concat(frames, ignore_index=True)

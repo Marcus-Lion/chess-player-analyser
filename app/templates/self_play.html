@@ -296,6 +296,12 @@
       let lastCompleted = -1;
       let watchdog = null;
       let sawFirstMessage = false;
+      // Set right before every close() we trigger ourselves after reaching a
+      // terminal state, so the 'close' listener can tell that apart from the
+      // socket dying underneath us (server process killed/restarted, job hub
+      // gone) -- in which case the client must release the UI itself instead
+      // of waiting on messages that will now never arrive.
+      let terminated = false;
 
       function resetWatchdog() {
         if (watchdog) window.clearTimeout(watchdog);
@@ -303,6 +309,7 @@
           progressText.textContent = 'Self-play job stalled and was cancelled. You can run again.';
           submitButton.disabled = false;
           localStorage.removeItem(activeJobKey);
+          terminated = true;
           socket.close();
         }, NO_PROGRESS_TIMEOUT_MS);
       }
@@ -320,6 +327,7 @@
             if (!resuming) {
               setProgress(job.completed || 0, job.total || 1, job.message || job.state || 'Running');
             }
+            terminated = true;
             socket.close();
             return;
           }
@@ -332,6 +340,7 @@
               // Queued/running but untouched well past when it should have
               // run: its worker never made progress, don't trap the button.
               localStorage.removeItem(activeJobKey);
+              terminated = true;
               socket.close();
               return;
             }
@@ -345,6 +354,7 @@
         if (job.state === 'missing') {
           window.clearTimeout(watchdog);
           releaseJob();
+          terminated = true;
           socket.close();
           return;
         }
@@ -367,6 +377,7 @@
           // Hold on the full bar briefly so the completed state is visible
           // before the page reloads (jobs can finish in well under a second).
           window.setTimeout(() => window.location.reload(), 500);
+          terminated = true;
           socket.close();
           return;
         }
@@ -375,12 +386,24 @@
           progressText.textContent = `Failed: ${job.error || 'Unknown error'}`;
           submitButton.disabled = false;
           localStorage.removeItem(activeJobKey);
+          terminated = true;
           socket.close();
         }
       });
 
       socket.addEventListener('close', () => {
         if (watchdog) window.clearTimeout(watchdog);
+        if (terminated) {
+          return;
+        }
+        // The socket died without us ever reaching a terminal state -- the
+        // server process (and its in-memory job hub) is gone or restarted.
+        // Terminate tracking here rather than leaving the form disabled and
+        // the progress bar stuck with no more messages ever coming.
+        terminated = true;
+        progressText.textContent = 'Lost connection to the server. You can run again.';
+        submitButton.disabled = false;
+        localStorage.removeItem(activeJobKey);
       });
     }
 

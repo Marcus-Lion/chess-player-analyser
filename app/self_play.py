@@ -28,6 +28,7 @@ from app.games import (
     FORWARD_SCORE_WEIGHT,
     LEGAL_MOVES_WEIGHT,
     MATERIAL_SCORE_WEIGHT,
+    _auto_search_depth,
     _calculate_center_control,
     _calculate_forward,
     _calculate_material,
@@ -82,6 +83,11 @@ class SelfPlayConfig:
     games: int = 3
     max_plies: int = 100
     top_k: int = 3
+    # Negamax search depth. None (the default) auto-derives depth per move
+    # from remaining material via ``_auto_search_depth`` -- shallow while the
+    # board is full, deeper once material has thinned out. Set an explicit
+    # depth (e.g. 1 or 2) to pin it for the whole game instead.
+    depth: int | None = None
     # Max parallel worker processes used when running more than one game.
     # If None, defaults to DEFAULT_SELF_PLAY_WORKERS (usually CPU count).
     workers: int | None = None
@@ -208,6 +214,7 @@ def _config_for_game(config: SelfPlayConfig, game_index: int) -> SelfPlayConfig:
         games=1,
         max_plies=config.max_plies,
         top_k=config.top_k,
+        depth=config.depth,
         seed=_seed_for_game(config, game_index),
         fen=config.fen,
         legal_moves_weight=config.legal_moves_weight,
@@ -674,6 +681,7 @@ def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random |
     result, termination = _terminal_reason(board)
     while plies < config.max_plies and not result:
         active_weights = white_weights if board.turn == chess.WHITE else black_weights
+        depth = config.depth if config.depth is not None else _auto_search_depth(board)
         move, _ = choose_engine_move(
             board,
             rng,
@@ -683,6 +691,7 @@ def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random |
             forward_score_weight=active_weights["forward_score_weight"],
             center_control_weight=active_weights["center_control_weight"],
             checkmate_weight=config.checkmate_weight,
+            depth=depth,
             eval_counter=eval_counter,
         )
         san = board.san(move)
@@ -1043,6 +1052,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-plies", type=int, default=100, help="Stop each game after this many plies.")
     parser.add_argument("--top-k", type=int, default=3, help="Randomly choose among the top K evaluated moves.")
     parser.add_argument(
+        "--depth",
+        type=int,
+        default=None,
+        help="Fixed negamax search depth (1, 2, 3, ...). Omit to auto-derive "
+        "depth per move from remaining material (full board=1, some trades=2, "
+        "thinned-out material=3).",
+    )
+    parser.add_argument(
         "--workers",
         type=int,
         default=None,
@@ -1075,6 +1092,7 @@ def main(argv: list[str] | None = None) -> int:
         games=max(1, args.games),
         max_plies=max(1, args.max_plies),
         top_k=max(1, args.top_k),
+        depth=(max(1, args.depth) if args.depth is not None else None),
         workers=(max(1, int(args.workers)) if args.workers else None),
         seed=args.seed,
         fen=args.fen,

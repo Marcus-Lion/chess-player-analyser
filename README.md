@@ -44,6 +44,18 @@ To control how many games run in parallel (processes), add `--workers`:
 uv run python -m app.self_play --games 20 --workers 8 --max-plies 55 --top-k 3 --seed 1
 ```
 
+Each move is chosen by a negamax search. By default the search **depth is
+inversely proportional to the material remaining on the board**, scaled
+linearly from depth 1 at a full board (material 39, the starting value for
+one side -- biggest branching factor, most expensive to search) up to depth
+7 once a side is down to material 0 (smallest branching factor, and deeper
+search matters most for endgame precision). Pass `--depth` to pin a fixed
+depth for the whole game instead (higher is slower but stronger):
+
+```bash
+uv run python -m app.self_play --games 10 --depth 2 --max-plies 55 --top-k 3 --seed 1
+```
+
 The web form has the same knob as a **Parallel workers** field; leave it
 blank for the "auto" default (CPU count).
 
@@ -70,7 +82,12 @@ instead of polling on a timer. The browser remembers the active job id, so
 if the dev server reloads while a job is running, reopening the page
 resumes the progress bar from the saved job id -- unless the server itself
 restarted, since job status lives in memory and a worker whose connection
-drops is reported as failed rather than tracked further.
+drops is reported as failed rather than tracked further. If that WebSocket
+itself drops without ever reporting a terminal state -- the server process
+died or restarted out from under it -- the browser treats the connection
+loss itself as the terminal signal: it stops tracking the job, re-enables
+the form, and tells the user to run again instead of leaving the progress
+bar and submit button stuck forever.
 
 Every game gets its own independently randomized set of weights by default,
 for both the CLI and the web form. If you want to pit two fixed weight

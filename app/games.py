@@ -433,6 +433,29 @@ def _calculate_material(board: chess.Board) -> dict[str, int]:
     return {"White": white, "Black": black}
 
 
+MAX_STARTING_MATERIAL = 39
+MIN_AUTO_SEARCH_DEPTH = 1
+MAX_AUTO_SEARCH_DEPTH = 7
+
+
+def _auto_search_depth(board: chess.Board) -> int:
+    """Derive negamax search depth, inversely proportional to material left.
+
+    A full board (material 39, the starting value for one side) has the
+    largest branching factor and is the most expensive to search deeply, so
+    it gets the shallowest depth (1); as material is traded off the board
+    thins out (fewer legal replies per ply) and depth scales linearly up to
+    7 at material 0, where deeper search is both affordable and needed for
+    endgame precision.
+    """
+    material = _calculate_material(board)
+    remaining = min(material["White"], material["Black"])
+    remaining = max(0, min(MAX_STARTING_MATERIAL, remaining))
+    depth_span = MAX_AUTO_SEARCH_DEPTH - MIN_AUTO_SEARCH_DEPTH
+    depth = MIN_AUTO_SEARCH_DEPTH + round((MAX_STARTING_MATERIAL - remaining) / MAX_STARTING_MATERIAL * depth_span)
+    return depth
+
+
 def _calculate_center_control(board: chess.Board) -> dict[str, int]:
     """Count control of the 4 central squares (d4, e4, d5, e5)."""
     center_squares = {chess.D4, chess.E4, chess.D5, chess.E5}

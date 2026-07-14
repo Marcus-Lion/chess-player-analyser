@@ -9,9 +9,12 @@ from pathlib import Path
 import pandas as pd
 import chess
 import plotly.express as px
+from dotenv import load_dotenv
 from fastapi import FastAPI, Form, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+
+load_dotenv()
 
 from app.chesscom import ChessComClient
 from app.games import (

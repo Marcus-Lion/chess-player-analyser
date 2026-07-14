@@ -13,4 +13,5 @@ dependencies = [
     "python-multipart==0.0.20",
     "neo4j==5.28.1",
     "pandas-stubs~=2.3.3",
+    "python-dotenv==1.0.1",
 ]

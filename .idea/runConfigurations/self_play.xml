@@ -17,7 +17,7 @@
     <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
     <option name="RUN_TOOL" value="true" />
     <option name="SCRIPT_NAME" value="$PROJECT_DIR$/app/self_play.py" />
-    <option name="PARAMETERS" value="--games 100 --max-turns 50 --top-k 2 --seed 1" />
+    <option name="PARAMETERS" value="--games 3 --max-turns 50" />
     <option name="SHOW_COMMAND_LINE" value="false" />
     <option name="EMULATE_TERMINAL" value="false" />
     <option name="MODULE_MODE" value="false" />

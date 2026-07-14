@@ -1022,7 +1022,7 @@ def start_self_play_job(config: SelfPlayConfig) -> dict:
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the position scorer against itself.")
     parser.add_argument("--games", type=int, default=3, help="Number of self-play games to run.")
-    parser.add_argument("--max-turns", type=int, default=100, help="Stop each game after this many plies.")
+    parser.add_argument("--max-turns", type=int, default=100, help="Stop each game after this many turns.")
     parser.add_argument("--top-k", type=int, default=3, help="Randomly choose among the top K evaluated moves.")
     parser.add_argument(
         "--depth",
@@ -1046,8 +1046,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--center-control-weight", type=float, default=CENTER_CONTROL_WEIGHT, help="Weight for center control.")
     parser.add_argument("--checkmate-weight", type=float, default=CHECKMATE_WEIGHT, help="Weight for the mate-pressure heuristic (drive the enemy king toward checkmate).")
     parser.add_argument("--fixed-player-weights", action="store_true", help="Use the same weights for both sides.")
-    parser.add_argument("--player-weight-min-multiplier", type=float, default=0.5, help="Lower bound for per-player randomization.")
-    parser.add_argument("--player-weight-max-multiplier", type=float, default=1.5, help="Upper bound for per-player randomization.")
+    parser.add_argument("--player-weight-min-multiplier", type=float, default=0.1, help="Lower bound for per-player randomization.")
+    parser.add_argument("--player-weight-max-multiplier", type=float, default=3.5, help="Upper bound for per-player randomization.")
     parser.add_argument("--tune-weights", action="store_true", help="Search for better score weights before playing.")
     parser.add_argument("--tune-iterations", type=int, default=100, help="Number of random weight candidates to test.")
     parser.add_argument("--tune-corpus-size", type=int, default=50, help="How many recent self-play games to use as tuning data.")

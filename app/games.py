@@ -435,7 +435,7 @@ def _calculate_material(board: chess.Board) -> dict[str, int]:
 
 MAX_STARTING_MATERIAL = 39
 MIN_AUTO_SEARCH_DEPTH = 1
-MAX_AUTO_SEARCH_DEPTH = 7
+MAX_AUTO_SEARCH_DEPTH = 5
 
 
 def _auto_search_depth(board: chess.Board) -> int:
@@ -444,8 +444,8 @@ def _auto_search_depth(board: chess.Board) -> int:
     A full board (material 39, the starting value for one side) has the
     largest branching factor and is the most expensive to search deeply, so
     it gets the shallowest depth (1); as material is traded off the board
-    thins out (fewer legal replies per ply) and depth scales linearly up to
-    7 at material 0, where deeper search is both affordable and needed for
+    thins out (fewer legal replies per turn) and depth scales linearly up to
+    5 at material 0, where deeper search is both affordable and needed for
     endgame precision.
     """
     material = _calculate_material(board)
@@ -453,6 +453,7 @@ def _auto_search_depth(board: chess.Board) -> int:
     remaining = max(0, min(MAX_STARTING_MATERIAL, remaining))
     depth_span = MAX_AUTO_SEARCH_DEPTH - MIN_AUTO_SEARCH_DEPTH
     depth = MIN_AUTO_SEARCH_DEPTH + round((MAX_STARTING_MATERIAL - remaining) / MAX_STARTING_MATERIAL * depth_span)
+    print(f"material: {material} -> depth: {depth}")
     return depth
 
 

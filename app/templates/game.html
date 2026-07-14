@@ -19,6 +19,7 @@
     .positions .move-start { grid-column: 1 / -1; }
     .positions a { text-decoration: none; }
     .positions a.active { font-weight: 700; }
+    .positions a.blunder { color: #c0392b; }
     .muted { color: #666; }
     .board-wrap svg { max-width: 100%; height: auto; display: block; }
   </style>
@@ -101,15 +102,15 @@
             {% set black_pos = moves|selectattr('side', 'equalto', 'Black')|first %}
             <div class="position-row">
               {% if white_pos %}
-                <a id="ply-{{ white_pos.ply }}" href="#ply-{{ white_pos.ply }}" data-index="{{ white_pos.ply }}" class="move-white">
-                  {{ white_pos.ply }}. {{ white_pos.san }}<span class="muted"> · {{ "%.2f"|format(white_pos.total_score) }}</span>
+                <a id="ply-{{ white_pos.ply }}" href="#ply-{{ white_pos.ply }}" data-index="{{ white_pos.ply }}" class="move-white{% if white_pos.is_blunder %} blunder{% endif %}">
+                  {{ white_pos.ply }}. {{ white_pos.san }}{% if white_pos.is_blunder %} ⚠️{% endif %}<span class="muted"> · {{ "%.2f"|format(white_pos.total_score) }}</span>
                 </a>
               {% else %}
                 <span class="move-white"></span>
               {% endif %}
               {% if black_pos %}
-                <a id="ply-{{ black_pos.ply }}" href="#ply-{{ black_pos.ply }}" data-index="{{ black_pos.ply }}" class="move-black">
-                  {{ black_pos.ply }}. {{ black_pos.san }}<span class="muted"> · {{ "%.2f"|format(black_pos.total_score) }}</span>
+                <a id="ply-{{ black_pos.ply }}" href="#ply-{{ black_pos.ply }}" data-index="{{ black_pos.ply }}" class="move-black{% if black_pos.is_blunder %} blunder{% endif %}">
+                  {{ black_pos.ply }}. {{ black_pos.san }}{% if black_pos.is_blunder %} ⚠️{% endif %}<span class="muted"> · {{ "%.2f"|format(black_pos.total_score) }}</span>
                 </a>
               {% else %}
                 <span class="move-black"></span>
@@ -155,7 +156,7 @@
 
       function describePosition(pos) {
         if (pos.ply === 0) return 'Start position';
-        return `${pos.ply}. ${pos.side} ${pos.san}`;
+        return `${pos.ply}. ${pos.side} ${pos.san}${pos.is_blunder ? ' ⚠️ Blunder' : ''}`;
       }
 
       function render(index) {

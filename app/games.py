@@ -49,6 +49,8 @@ class GamePosition:
     center_score: int  # White center - Black center
     score: int  # Legal move count for the side to move
     total_score: float  # Weighted blend of legal moves, material, forward, and center
+    blunder_score: float  # Eval swing in the mover's favor lost to the opponent's best reply
+    is_blunder: bool  # blunder_score >= BLUNDER_THRESHOLD
 
 
 @dataclass
@@ -434,27 +436,37 @@ def _calculate_material(board: chess.Board) -> dict[str, int]:
 
 
 MAX_STARTING_MATERIAL = 39
+MAX_TOTAL_MATERIAL = MAX_STARTING_MATERIAL * 2
 MIN_AUTO_SEARCH_DEPTH = 1
-MAX_AUTO_SEARCH_DEPTH = 5
+MAX_AUTO_SEARCH_DEPTH = 6
+# Exponent applied to the traded-material fraction before the exponential
+# curve. Below 1, it front-loads the ramp so depth climbs early, well before
+# the endgame, instead of hugging the minimum until material is nearly gone.
+AUTO_SEARCH_DEPTH_CURVE_EXPONENT = 0.55
 
 
 def _auto_search_depth(board: chess.Board) -> int:
     """Derive negamax search depth, inversely proportional to material left.
 
-    A full board (material 39, the starting value for one side) has the
-    largest branching factor and is the most expensive to search deeply, so
-    it gets the shallowest depth (1); as material is traded off the board
-    thins out (fewer legal replies per turn) and depth scales linearly up to
-    5 at material 0, where deeper search is both affordable and needed for
-    endgame precision.
+    A full board (combined material 78, both sides at their starting value)
+    has the largest branching factor and is the most expensive to search
+    deeply, so it gets the shallowest depth (1); as material is traded off
+    the board thins out (fewer legal replies per turn) and depth scales
+    exponentially up to 6 at material 0, where deeper search is both
+    affordable and needed for endgame precision. The traded fraction is
+    root-scaled (``AUTO_SEARCH_DEPTH_CURVE_EXPONENT``) so depth ramps up
+    quickly as soon as trades start, rather than waiting until the endgame.
     """
     material = _calculate_material(board)
-    remaining = min(material["White"], material["Black"])
-    remaining = max(0, min(MAX_STARTING_MATERIAL, remaining))
-    depth_span = MAX_AUTO_SEARCH_DEPTH - MIN_AUTO_SEARCH_DEPTH
-    depth = MIN_AUTO_SEARCH_DEPTH + round((MAX_STARTING_MATERIAL - remaining) / MAX_STARTING_MATERIAL * depth_span)
-    print(f"material: {material} -> depth: {depth}")
-    return depth
+    remaining = material["White"] + material["Black"]
+    remaining = max(0, min(MAX_TOTAL_MATERIAL, remaining))
+    fraction_traded = (MAX_TOTAL_MATERIAL - remaining) / MAX_TOTAL_MATERIAL
+    scaled_fraction = fraction_traded ** AUTO_SEARCH_DEPTH_CURVE_EXPONENT
+    depth_ratio = MAX_AUTO_SEARCH_DEPTH / MIN_AUTO_SEARCH_DEPTH
+    depth = MIN_AUTO_SEARCH_DEPTH * depth_ratio ** scaled_fraction
+    depth_int = max(MIN_AUTO_SEARCH_DEPTH, min(MAX_AUTO_SEARCH_DEPTH, round(depth)))
+    print(f"{board.fullmove_number}. material: {material} -> depth: {round(depth,2)} -> {depth_int}")
+    return depth_int
 
 
 def _calculate_center_control(board: chess.Board) -> dict[str, int]:
@@ -558,6 +570,55 @@ def _evaluate_position(
         + checkmate_weight * _mate_pressure(board),
         2,
     )
+
+
+# Roughly "lost a piece for a pawn": material_score_weight scales evaluation
+# points per point of material, so this threshold is worth about
+# BLUNDER_MATERIAL_PAWNS pawns of unjustified swing after the opponent's best
+# reply.
+BLUNDER_MATERIAL_PAWNS = 2.5
+BLUNDER_THRESHOLD = MATERIAL_SCORE_WEIGHT * BLUNDER_MATERIAL_PAWNS
+
+
+def _blunder_score(board: chess.Board, move: chess.Move) -> float:
+    """How much ``move`` costs its mover once the opponent replies optimally.
+
+    A 1-ply lookahead, not a search: it evaluates the position right after
+    ``move``, then again after every opponent reply, and returns how far the
+    worst of those replies drags the evaluation down from before the move
+    (from the mover's perspective). This only catches immediate tactical
+    blunders such as hanging a piece -- deeper tactics need a real search.
+    """
+    mover = board.turn
+    before_for_mover = _evaluate_position(board)
+    if mover == chess.BLACK:
+        before_for_mover = -before_for_mover
+
+    board.push(move)
+    try:
+        replies = list(board.legal_moves)
+        if not replies:
+            worst_for_mover = _evaluate_position(board)
+            if mover == chess.BLACK:
+                worst_for_mover = -worst_for_mover
+        else:
+            worst_for_mover = math.inf
+            for reply in replies:
+                board.push(reply)
+                try:
+                    after = _evaluate_position(board)
+                finally:
+                    board.pop()
+                after_for_mover = -after if mover == chess.BLACK else after
+                worst_for_mover = min(worst_for_mover, after_for_mover)
+    finally:
+        board.pop()
+
+    return round(before_for_mover - worst_for_mover, 2)
+
+
+def _is_blunder(blunder_score: float, threshold: float = BLUNDER_THRESHOLD) -> bool:
+    return blunder_score >= threshold
 
 
 def _order_moves(board: chess.Board) -> list[chess.Move]:
@@ -803,6 +864,8 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
             center_score=start_center_score,
             score=start_score,
             total_score=start_total_score,
+            blunder_score=0.0,
+            is_blunder=False,
         )
     ]
 
@@ -812,6 +875,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
         side = "White" if board.turn == chess.WHITE else "Black"
         move_number = board.fullmove_number
         san = board.san(move)
+        blunder_score = _blunder_score(board, move)
         board.push(move)
         moves_svg, legal, tree, f1, f2, f3, material, center, forward_score, material_score, center_score, score, total_score, scores = _legal_moves_and_tree(board, lastmove=move)
         positions.append(
@@ -836,6 +900,8 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
                 center_score=center_score,
                 score=score,
                 total_score=total_score,
+                blunder_score=blunder_score,
+                is_blunder=_is_blunder(blunder_score),
             )
         )
 

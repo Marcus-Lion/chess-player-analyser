@@ -15,13 +15,15 @@ _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from app.self_play import _run_self_play_job
+from app.self_play import SelfPlayJobClient, SelfPlayJobStatus, _run_self_play_job
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run a single self-play job in a detached worker process.")
     parser.add_argument("--job-id", required=True, help="Self-play job id.")
-    parser.add_argument("--request-path", required=True, type=Path, help="Path to the job request JSON file.")
+    parser.add_argument("--run-id", required=True, help="Self-play run id.")
+    parser.add_argument("--host", required=True, help="Host of the main process's job-status socket server.")
+    parser.add_argument("--port", required=True, type=int, help="Port of the main process's job-status socket server.")
     return parser
 
 
@@ -29,34 +31,31 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
 
+    # The job request (config dict) travels over stdin rather than a request
+    # file, so nothing about this job touches disk except its log file.
+    client = SelfPlayJobClient(args.host, args.port)
     try:
-        request = json.loads(args.request_path.read_text(encoding="utf-8"))
-        job_id = request.get("job_id") or args.job_id
-        run_id = request["run_id"]
-        config_data = request["config"]
-
-        _run_self_play_job(job_id, run_id, config_data)
+        config_data = json.loads(sys.stdin.read())
+        _run_self_play_job(args.job_id, args.run_id, config_data, client)
     except Exception as exc:  # pragma: no cover - defensive worker guard
-        # Never exit silently: record the failure so the UI can surface it
-        # instead of the job appearing to hang forever.
+        # Never exit silently: report the failure over the socket so the UI
+        # can surface it instead of the job appearing to hang forever. If the
+        # main process is gone, SelfPlayJobClient.send() drops this quietly.
         import traceback
 
         traceback.print_exc()
-        try:
-            from app.self_play import SelfPlayJobStatus, _write_job_status
-
-            _write_job_status(
-                SelfPlayJobStatus(
-                    job_id=args.job_id,
-                    state="failed",
-                    total=1,
-                    message="Worker crashed",
-                    error=str(exc),
-                )
+        client.send(
+            SelfPlayJobStatus(
+                job_id=args.job_id,
+                state="failed",
+                total=1,
+                message="Worker crashed",
+                error=str(exc),
             )
-        except Exception:
-            pass
+        )
         return 1
+    finally:
+        client.close()
     return 0
 
 

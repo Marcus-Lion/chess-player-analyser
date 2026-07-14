@@ -38,6 +38,15 @@ engine against itself from the starting position, or from a supplied FEN.
 uv run python -m app.self_play --games 10 --max-plies 55 --top-k 3 --seed 1
 ```
 
+To control how many games run in parallel (processes), add `--workers`:
+
+```bash
+uv run python -m app.self_play --games 20 --workers 8 --max-plies 55 --top-k 3 --seed 1
+```
+
+The web form has the same knob as a **Parallel workers** field; leave it
+blank for the "auto" default (CPU count).
+
 You can also write PGN output to a file:
 
 ```bash
@@ -53,13 +62,21 @@ uv run python -m app.self_play --tune-weights --tune-iterations 200 --tune-corpu
 That prints the best weights found, then runs self-play with them. Use
 `--tune-output weights.json` if you want the search result saved as JSON.
 
-Multi-game self-play now runs in a detached worker process and the browser
-remembers the active job id, so if the dev server reloads while a job is
-running, reopening the page resumes the progress bar from the saved job id.
+Multi-game self-play runs in a detached worker process that reports its
+progress back to the main process over a local socket (a small in-process
+job-status server, not a job-queue file). The browser gets those updates
+pushed the instant they arrive over a `/self-play/ws/<job_id>` WebSocket,
+instead of polling on a timer. The browser remembers the active job id, so
+if the dev server reloads while a job is running, reopening the page
+resumes the progress bar from the saved job id -- unless the server itself
+restarted, since job status lives in memory and a worker whose connection
+drops is reported as failed rather than tracked further.
 
-The web form sets White's and Black's legal-moves/material/forward weights
-independently (no randomization when run from the form), so you can pit two
-fixed weight profiles against each other directly.
+Every game gets its own independently randomized set of weights by default,
+for both the CLI and the web form. If you want to pit two fixed weight
+profiles against each other instead, set all four weights (legal-moves,
+material, forward, center) for a side — the web form's weight fields are
+optional and only take effect once a side's full set is filled in.
 
 Games end on checkmate, stalemate, insufficient material, threefold
 repetition, or the fifty-move rule (the fivefold repetition and 75-move
@@ -80,6 +97,11 @@ The "Recent saved self-play results" table on `/self-play` can be filtered
 by Result, Outcome (including an "Anyone wins" option that matches either
 color winning), Termination, an absolute-value comparison (`>`/`<`) on
 final score, and a Played-at date range.
+
+Each saved game also records how long it took to play (wall-clock seconds
+for the whole game) and how many leaf positions the search evaluated per
+move on average -- both shown in the results table and on each game's
+detail page.
 
 ## Hostinger VPS deployment
 
@@ -132,10 +154,12 @@ Beyond the analytics dashboard you can inspect individual games move by move:
   with a dark border so they stay readable even when many overlap.
   The viewer also displays **Forward (1st and 2nd order)** metrics,
   a **Material** score that counts each side’s piece points
-  (pawn=1, knight/bishop=3, rook=5, queen=9), and a **Legal-move Score** that
-  counts how many legal moves are available to the side to move. The forward
-  score tracks how many squares each side attacks on its forward two ranks; the
-  material score tracks who is ahead on raw piece value.
+  (pawn=1, knight/bishop=3, rook=5, queen=9), a **Center** score that counts
+  each side's attackers on the four central squares (d4/e4/d5/e5), and a
+  **Legal-move Score** that counts how many legal moves are available to the
+  side to move. The forward score tracks how many squares each side attacks
+  on its forward two ranks; the material score tracks who is ahead on raw
+  piece value.
   Based on the forward score, the viewer also **suggests the best 3 moves** for
   the current player (the legal moves leading to the best 1st order control
   balance).

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import random
@@ -8,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 import chess
 import plotly.express as px
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
@@ -22,6 +23,7 @@ from app.games import (
 from app.parser import parse_pgn_to_dataframe
 from app.self_play import (
     SelfPlayConfig,
+    get_job_hub,
     load_self_play_job,
     load_self_play_result,
     load_self_play_results,
@@ -72,6 +74,15 @@ PIECE_UNICODE = {
 
 app = FastAPI(title="Marcus Lion Chess Player Analyser")
 templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
+
+
+def _parse_optional_float(value: str | None) -> float | None:
+    if value is None or not value.strip():
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
 
 def _cached_paths(username: str) -> tuple[Path, Path]:
@@ -405,16 +416,23 @@ def self_play_run(
     games: int = Form(3),
     max_plies: int = Form(100),
     top_k: int = Form(3),
+    workers: str | None = Form(None),
     seed: str | None = Form(None),
     fen: str | None = Form(None),
-    white_legal_moves_weight: float = Form(...),
-    white_material_score_weight: float = Form(...),
-    white_forward_score_weight: float = Form(...),
-    black_legal_moves_weight: float = Form(...),
-    black_material_score_weight: float = Form(...),
-    black_forward_score_weight: float = Form(...),
+    white_legal_moves_weight: str | None = Form(None),
+    white_material_score_weight: str | None = Form(None),
+    white_forward_score_weight: str | None = Form(None),
+    white_center_control_weight: str | None = Form(None),
+    black_legal_moves_weight: str | None = Form(None),
+    black_material_score_weight: str | None = Form(None),
+    black_forward_score_weight: str | None = Form(None),
+    black_center_control_weight: str | None = Form(None),
 ):
     fen = fen.strip() if fen and fen.strip() else None
+    try:
+        workers_value = int(workers) if workers and workers.strip() else None
+    except ValueError:
+        workers_value = None
     try:
         seed_value = int(seed) if seed and seed.strip() else None
     except ValueError:
@@ -423,14 +441,17 @@ def self_play_run(
         games=max(1, games),
         max_plies=max(1, max_plies),
         top_k=max(1, top_k),
+        workers=(max(1, workers_value) if workers_value else None),
         seed=seed_value,
         fen=fen,
-        white_legal_moves_weight=white_legal_moves_weight,
-        white_material_score_weight=white_material_score_weight,
-        white_forward_score_weight=white_forward_score_weight,
-        black_legal_moves_weight=black_legal_moves_weight,
-        black_material_score_weight=black_material_score_weight,
-        black_forward_score_weight=black_forward_score_weight,
+        white_legal_moves_weight=_parse_optional_float(white_legal_moves_weight),
+        white_material_score_weight=_parse_optional_float(white_material_score_weight),
+        white_forward_score_weight=_parse_optional_float(white_forward_score_weight),
+        white_center_control_weight=_parse_optional_float(white_center_control_weight),
+        black_legal_moves_weight=_parse_optional_float(black_legal_moves_weight),
+        black_material_score_weight=_parse_optional_float(black_material_score_weight),
+        black_forward_score_weight=_parse_optional_float(black_forward_score_weight),
+        black_center_control_weight=_parse_optional_float(black_center_control_weight),
     )
     recent_games = run_self_play(config)
     save_self_play_results(recent_games)
@@ -448,16 +469,23 @@ def self_play_start(
     games: int = Form(3),
     max_plies: int = Form(100),
     top_k: int = Form(3),
+    workers: str | None = Form(None),
     seed: str | None = Form(None),
     fen: str | None = Form(None),
-    white_legal_moves_weight: float = Form(...),
-    white_material_score_weight: float = Form(...),
-    white_forward_score_weight: float = Form(...),
-    black_legal_moves_weight: float = Form(...),
-    black_material_score_weight: float = Form(...),
-    black_forward_score_weight: float = Form(...),
+    white_legal_moves_weight: str | None = Form(None),
+    white_material_score_weight: str | None = Form(None),
+    white_forward_score_weight: str | None = Form(None),
+    white_center_control_weight: str | None = Form(None),
+    black_legal_moves_weight: str | None = Form(None),
+    black_material_score_weight: str | None = Form(None),
+    black_forward_score_weight: str | None = Form(None),
+    black_center_control_weight: str | None = Form(None),
 ):
     fen = fen.strip() if fen and fen.strip() else None
+    try:
+        workers_value = int(workers) if workers and workers.strip() else None
+    except ValueError:
+        workers_value = None
     try:
         seed_value = int(seed) if seed and seed.strip() else None
     except ValueError:
@@ -466,14 +494,17 @@ def self_play_start(
         games=max(1, games),
         max_plies=max(1, max_plies),
         top_k=max(1, top_k),
+        workers=(max(1, workers_value) if workers_value else None),
         seed=seed_value,
         fen=fen,
-        white_legal_moves_weight=white_legal_moves_weight,
-        white_material_score_weight=white_material_score_weight,
-        white_forward_score_weight=white_forward_score_weight,
-        black_legal_moves_weight=black_legal_moves_weight,
-        black_material_score_weight=black_material_score_weight,
-        black_forward_score_weight=black_forward_score_weight,
+        white_legal_moves_weight=_parse_optional_float(white_legal_moves_weight),
+        white_material_score_weight=_parse_optional_float(white_material_score_weight),
+        white_forward_score_weight=_parse_optional_float(white_forward_score_weight),
+        white_center_control_weight=_parse_optional_float(white_center_control_weight),
+        black_legal_moves_weight=_parse_optional_float(black_legal_moves_weight),
+        black_material_score_weight=_parse_optional_float(black_material_score_weight),
+        black_forward_score_weight=_parse_optional_float(black_forward_score_weight),
+        black_center_control_weight=_parse_optional_float(black_center_control_weight),
     )
     return JSONResponse(start_self_play_job(config))
 
@@ -488,6 +519,43 @@ def self_play_status(job_id: str):
             {"job_id": job_id, "state": "missing"}, status_code=404, headers=headers
         )
     return JSONResponse(job, headers=headers)
+
+
+@app.websocket("/self-play/ws/{job_id}")
+async def self_play_ws(websocket: WebSocket, job_id: str) -> None:
+    """Push job status the instant a worker reports it, instead of the
+    browser polling /self-play/status on a timer -- we already have a live
+    socket connection carrying every update into the job hub."""
+    await websocket.accept()
+    hub = get_job_hub()
+    loop = asyncio.get_event_loop()
+
+    job, version = hub.get_job_version(job_id)
+    if job is None:
+        await websocket.send_json({"job_id": job_id, "state": "missing"})
+        await websocket.close()
+        return
+
+    try:
+        await websocket.send_json(job)
+        while job.get("state") not in ("completed", "failed"):
+            job, new_version = await loop.run_in_executor(
+                None, hub.wait_for_update, job_id, version, 30.0
+            )
+            if job is None:
+                await websocket.send_json({"job_id": job_id, "state": "missing"})
+                break
+            if new_version == version:
+                continue  # wait_for_update timed out with no change; keep waiting
+            version = new_version
+            await websocket.send_json(job)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
 
 
 @app.get("/self-play/analysis", response_class=HTMLResponse)
@@ -554,6 +622,9 @@ def view_self_play_game(request: Request, run_id: str, index: int):
         "loser": row.get("loser") or "",
         "white_weights": row.get("white_weights"),
         "black_weights": row.get("black_weights"),
+        "duration_seconds": row.get("duration_seconds"),
+        "evaluations": row.get("evaluations"),
+        "evaluations_per_move": row.get("evaluations_per_move"),
     }
     return templates.TemplateResponse("game.html", {
         "request": request,

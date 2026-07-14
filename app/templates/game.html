@@ -29,11 +29,9 @@
 
   {% if game_summary %}
     <p><strong>Outcome:</strong> {{ game_summary.status }}{% if game_summary.winner %} · Winner: {{ game_summary.winner }}{% endif %}{% if game_summary.loser %} · Loser: {{ game_summary.loser }}{% endif %}</p>
-    {% if game_summary.white_weights and game_summary.black_weights %}
-      <p class="muted">
-        White weights: lm={{ "%.3f"|format(game_summary.white_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(game_summary.white_weights.material_score_weight) }}, fwd={{ "%.3f"|format(game_summary.white_weights.forward_score_weight) }} ·
-        Black weights: lm={{ "%.3f"|format(game_summary.black_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(game_summary.black_weights.material_score_weight) }}, fwd={{ "%.3f"|format(game_summary.black_weights.forward_score_weight) }}
-      </p>
+    {% if game_summary.duration_seconds is not none %}
+      <p><strong>Time to play:</strong> {{ "%.2f"|format(game_summary.duration_seconds) }}s ·
+        <strong>Evaluations:</strong> {{ game_summary.evaluations }} total, {{ "%.0f"|format(game_summary.evaluations_per_move) }} per move</p>
     {% endif %}
   {% endif %}
 
@@ -55,8 +53,22 @@
             </ul>
           </div>
           <div class="metric">Material <b id="material">{{ detail.positions[0].material.White }} / {{ detail.positions[0].material.Black }}</b></div>
+          <div class="metric">Center <b id="center">{{ detail.positions[0].center.White }} / {{ detail.positions[0].center.Black }}</b></div>
           <div class="metric">Legal Moves <b id="legal_score">{{ detail.positions[0].score }}</b></div>
           <div class="metric">Score <b id="score">{{ "%.2f"|format(detail.positions[0].total_score) }}</b></div>
+          {% if game_summary and game_summary.white_weights and game_summary.black_weights %}
+            <div class="metric">
+              Weights
+              <ul id="weights_list" class="forward-list">
+                {% if game_summary.white_weights.legal_moves_weight == game_summary.black_weights.legal_moves_weight and game_summary.white_weights.material_score_weight == game_summary.black_weights.material_score_weight and game_summary.white_weights.forward_score_weight == game_summary.black_weights.forward_score_weight and game_summary.white_weights.get('center_control_weight') == game_summary.black_weights.get('center_control_weight') %}
+                  <li>lm={{ "%.3f"|format(game_summary.white_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(game_summary.white_weights.material_score_weight) }}, fwd={{ "%.3f"|format(game_summary.white_weights.forward_score_weight) }}{% if game_summary.white_weights.get('center_control_weight') %}, cc={{ "%.3f"|format(game_summary.white_weights.center_control_weight) }}{% endif %}</li>
+                {% else %}
+                  <li>W: lm={{ "%.3f"|format(game_summary.white_weights.legal_moves_weight) }} mat={{ "%.3f"|format(game_summary.white_weights.material_score_weight) }} fwd={{ "%.3f"|format(game_summary.white_weights.forward_score_weight) }}{% if game_summary.white_weights.get('center_control_weight') %} cc={{ "%.3f"|format(game_summary.white_weights.center_control_weight) }}{% endif %}</li>
+                  <li>B: lm={{ "%.3f"|format(game_summary.black_weights.legal_moves_weight) }} mat={{ "%.3f"|format(game_summary.black_weights.material_score_weight) }} fwd={{ "%.3f"|format(game_summary.black_weights.forward_score_weight) }}{% if game_summary.black_weights.get('center_control_weight') %} cc={{ "%.3f"|format(game_summary.black_weights.center_control_weight) }}{% endif %}</li>
+                {% endif %}
+              </ul>
+            </div>
+          {% endif %}
         </div>
         <div class="controls">
           <button type="button" id="first_btn">⏮</button>
@@ -115,6 +127,7 @@
       const label = document.getElementById('position_label');
       const forwardList = document.getElementById('forward_list');
       const material = document.getElementById('material');
+      const center = document.getElementById('center');
       const score = document.getElementById('score');
       const legalScore = document.getElementById('legal_score');
       const links = Array.from(document.querySelectorAll('#positions_list a[data-index]'));
@@ -156,6 +169,7 @@
           <li>3rd order: White ${pos.forward_3.White} / Black ${pos.forward_3.Black}</li>
         `;
         material.textContent = `${pos.material.White} / ${pos.material.Black}`;
+        center.textContent = `${pos.center.White} / ${pos.center.Black}`;
         score.textContent = Number(pos.total_score).toFixed(2);
         legalScore.textContent = String(pos.score);
         label.textContent = describePosition(pos);

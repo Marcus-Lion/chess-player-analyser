@@ -43,10 +43,12 @@ class GamePosition:
     forward_2: dict[str, int]
     forward_3: dict[str, int]
     material: dict[str, int]  # {"White": points, "Black": points}
+    center: dict[str, int]  # {"White": count, "Black": count}
     forward_score: int  # (W_f1 + W_f2) - (B_f1 + B_f2)
     material_score: int  # White material - Black material
+    center_score: int  # White center - Black center
     score: int  # Legal move count for the side to move
-    total_score: float  # Weighted blend of legal moves, material, and forward
+    total_score: float  # Weighted blend of legal moves, material, forward, and center
 
 
 @dataclass
@@ -180,6 +182,7 @@ PIECE_POINTS = {
 LEGAL_MOVES_WEIGHT:float = 0.3
 MATERIAL_SCORE_WEIGHT:float = 4.0
 FORWARD_SCORE_WEIGHT:float = 3.0
+CENTER_CONTROL_WEIGHT:float = 2.0
 # Weight for the "goal is checkmate" heuristic: how hard the engine leans on
 # driving the enemy king to the edge and cutting off its escape squares. Kept
 # small relative to material so it only breaks ties between otherwise-similar
@@ -430,6 +433,14 @@ def _calculate_material(board: chess.Board) -> dict[str, int]:
     return {"White": white, "Black": black}
 
 
+def _calculate_center_control(board: chess.Board) -> dict[str, int]:
+    """Count control of the 4 central squares (d4, e4, d5, e5)."""
+    center_squares = {chess.D4, chess.E4, chess.D5, chess.E5}
+    white_control = sum(1 for sq in center_squares if board.is_attacked_by(chess.WHITE, sq))
+    black_control = sum(1 for sq in center_squares if board.is_attacked_by(chess.BLACK, sq))
+    return {"White": white_control, "Black": black_control}
+
+
 def _king_escape_squares(board: chess.Board, king_color: chess.Color) -> int:
     """Count squares the ``king_color`` king could flee to.
 
@@ -496,11 +507,12 @@ def _evaluate_position(
     legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
     material_score_weight: float = MATERIAL_SCORE_WEIGHT,
     forward_score_weight: float = FORWARD_SCORE_WEIGHT,
+    center_control_weight: float = CENTER_CONTROL_WEIGHT,
     checkmate_weight: float = CHECKMATE_WEIGHT,
 ) -> float:
     """White-perspective static evaluation used at search leaves.
 
-    Blends material, first-order forward control, and mobility -- each as a
+    Blends material, first-order forward control, center control, and mobility -- each as a
     White-minus-Black differential so the value is well-defined at any node
     of a multi-ply search -- plus the "goal is checkmate" king-pressure term.
     Uses only ``get_board_control`` (not ``_calculate_forward``'s pricier
@@ -509,13 +521,16 @@ def _evaluate_position(
     """
     material = _calculate_material(board)
     control = get_board_control(board)
+    center = _calculate_center_control(board)
     mobility_score = _color_mobility(board, chess.WHITE) - _color_mobility(board, chess.BLACK)
     material_score = material["White"] - material["Black"]
     forward_score = control["White"] - control["Black"]
+    center_score = center["White"] - center["Black"]
     return round(
         legal_moves_weight * mobility_score
         + material_score_weight * material_score
         + forward_score_weight * forward_score
+        + center_control_weight * center_score
         + checkmate_weight * _mate_pressure(board),
         2,
     )
@@ -555,7 +570,9 @@ def _negamax(
     legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
     material_score_weight: float = MATERIAL_SCORE_WEIGHT,
     forward_score_weight: float = FORWARD_SCORE_WEIGHT,
+    center_control_weight: float = CENTER_CONTROL_WEIGHT,
     checkmate_weight: float = CHECKMATE_WEIGHT,
+    eval_counter: list[int] | None = None,
 ) -> float:
     """Negamax search with alpha-beta pruning, from the side-to-move's view.
 
@@ -568,11 +585,14 @@ def _negamax(
     if board.is_stalemate() or board.is_insufficient_material():
         return 0.0
     if depth <= 0:
+        if eval_counter is not None:
+            eval_counter[0] += 1
         score = _evaluate_position(
             board,
             legal_moves_weight=legal_moves_weight,
             material_score_weight=material_score_weight,
             forward_score_weight=forward_score_weight,
+            center_control_weight=center_control_weight,
             checkmate_weight=checkmate_weight,
         )
         return score if board.turn == chess.WHITE else -score
@@ -589,7 +609,9 @@ def _negamax(
                 legal_moves_weight=legal_moves_weight,
                 material_score_weight=material_score_weight,
                 forward_score_weight=forward_score_weight,
+                center_control_weight=center_control_weight,
                 checkmate_weight=checkmate_weight,
+                eval_counter=eval_counter,
             )
         finally:
             board.pop()
@@ -610,9 +632,18 @@ def choose_engine_move(
     legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
     material_score_weight: float = MATERIAL_SCORE_WEIGHT,
     forward_score_weight: float = FORWARD_SCORE_WEIGHT,
+    center_control_weight: float = CENTER_CONTROL_WEIGHT,
     checkmate_weight: float = CHECKMATE_WEIGHT,
     depth: int = 3,
+    eval_counter: list[int] | None = None,
 ) -> tuple[chess.Move, float]:
+    """Pick a move via negamax search.
+
+    ``eval_counter``, if given, is a single-element ``[count]`` list that
+    accumulates one increment per leaf position statically evaluated during
+    the search -- callers use this to report how many evaluations a move
+    (or a whole game) cost.
+    """
     rng = rng or random.Random()
     depth = max(1, depth)
     scored_moves: list[tuple[float, chess.Move]] = []
@@ -627,7 +658,9 @@ def choose_engine_move(
                 legal_moves_weight=legal_moves_weight,
                 material_score_weight=material_score_weight,
                 forward_score_weight=forward_score_weight,
+                center_control_weight=center_control_weight,
                 checkmate_weight=checkmate_weight,
+                eval_counter=eval_counter,
             )
         finally:
             board.pop()
@@ -646,29 +679,33 @@ def _calculate_total_score(
     legal_moves: int,
     material_score: int,
     forward_score: int,
+    center_score: int = 0,
     *,
     legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
     material_score_weight: float = MATERIAL_SCORE_WEIGHT,
     forward_score_weight: float = FORWARD_SCORE_WEIGHT,
+    center_control_weight: float = CENTER_CONTROL_WEIGHT,
 ) -> float:
-    """Blend mobility, material, and forward into one position score.
+    """Blend mobility, material, forward, and center control into one position score.
 
     Formula:
         total_score = legal_moves_weight * legal_moves
                     + material_score_weight * material_score
                     + forward_score_weight * forward_score
+                    + center_control_weight * center_score
 
     The weights keep material as the strongest signal, while still letting
-    mobility and forward move the score in a visible way.
+    other factors move the score in a visible way.
     """
     return round(
         legal_moves_weight * legal_moves
         + material_score_weight * material_score
         + forward_score_weight * forward_score
+        + center_control_weight * center_score
     , 2)
 
 
-def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None) -> tuple[str, list[str], dict[str, list[str]], dict[str, int], dict[str, int], dict[str, int], dict[str, int], int, int, int, int, dict[str, int]]:
+def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None) -> tuple[str, list[str], dict[str, list[str]], dict[str, int], dict[str, int], dict[str, int], dict[str, int], dict[str, int], int, int, int, int, int, dict[str, int]]:
     """Render board with legal moves arrows, and return SAN list, 2-ply move tree, control metrics, material metrics, scores and move scores."""
     arrows = []
     tree = {}
@@ -679,10 +716,12 @@ def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None
     f1, f2 = _calculate_forward(board)
     f3 = _calculate_forward_3(board)
     material = _calculate_material(board)
+    center = _calculate_center_control(board)
     forward_score = (f1["White"] + f2["White"]) - (f1["Black"] + f2["Black"])
     material_score = material["White"] - material["Black"]
+    center_score = center["White"] - center["Black"]
     score = len(legal_moves)
-    total_score = _calculate_total_score(score, material_score, forward_score)
+    total_score = _calculate_total_score(score, material_score, forward_score, center_score)
 
     for move in legal_moves:
         san = board.san(move)
@@ -705,7 +744,7 @@ def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None
 
     sans = [board.san(move) for move in legal_moves]
     svg = chess.svg.board(board, size=420, lastmove=lastmove, arrows=arrows)
-    return _style_arrows(svg), sans, tree, f1, f2, f3, material, forward_score, material_score, score, total_score, move_scores
+    return _style_arrows(svg), sans, tree, f1, f2, f3, material, center, forward_score, material_score, center_score, score, total_score, move_scores
 
 
 def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
@@ -717,7 +756,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
     headers = game.headers
     board = game.board()
 
-    start_moves_svg, start_legal, start_tree, start_f1, start_f2, start_f3, start_material, start_forward_score, start_material_score, start_score, start_total_score, start_scores = _legal_moves_and_tree(board)
+    start_moves_svg, start_legal, start_tree, start_f1, start_f2, start_f3, start_material, start_center, start_forward_score, start_material_score, start_center_score, start_score, start_total_score, start_scores = _legal_moves_and_tree(board)
     positions: list[GamePosition] = [
         GamePosition(
             ply=0,
@@ -734,8 +773,10 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
             forward_2=start_f2,
             forward_3=start_f3,
             material=start_material,
+            center=start_center,
             forward_score=start_forward_score,
             material_score=start_material_score,
+            center_score=start_center_score,
             score=start_score,
             total_score=start_total_score,
         )
@@ -748,7 +789,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
         move_number = board.fullmove_number
         san = board.san(move)
         board.push(move)
-        moves_svg, legal, tree, f1, f2, f3, material, forward_score, material_score, score, total_score, scores = _legal_moves_and_tree(board, lastmove=move)
+        moves_svg, legal, tree, f1, f2, f3, material, center, forward_score, material_score, center_score, score, total_score, scores = _legal_moves_and_tree(board, lastmove=move)
         positions.append(
             GamePosition(
                 ply=ply,
@@ -765,8 +806,10 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
                 forward_2=f2,
                 forward_3=f3,
                 material=material,
+                center=center,
                 forward_score=forward_score,
                 material_score=material_score,
+                center_score=center_score,
                 score=score,
                 total_score=total_score,
             )

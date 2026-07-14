@@ -80,42 +80,54 @@
           <input name="top_k" type="number" min="1" value="{{ config.top_k if config else 3 }}" required />
         </div>
         <div>
+          <label>Parallel workers</label>
+          <input name="workers" type="number" min="1" placeholder="auto" value="{{ config.workers if config and config.workers is not none else '' }}" />
+        </div>
+        <div>
           <label>Seed</label>
           <input name="seed" type="number" value="{{ config.seed if config and config.seed is not none else '' }}" />
         </div>
       </div>
 
-      <p class="muted" style="margin-bottom: 0;">Weights are fixed for each side at the start of the game (no per-game randomization).</p>
+      <p class="muted" style="margin-bottom: 0;">Weights are randomized independently for every game by default. Fill in a side's weights below only if you want to pin that side to a fixed profile instead.</p>
 
-      <label style="margin-bottom: .25rem;">White weights</label>
-      <div class="grid" style="grid-template-columns: repeat(3, minmax(120px, 1fr));">
+      <label style="margin-bottom: .25rem;">White weights (optional)</label>
+      <div class="grid" style="grid-template-columns: repeat(4, minmax(120px, 1fr));">
         <div>
           <label>Legal-moves weight</label>
-          <input name="white_legal_moves_weight" type="number" step="any" value="{{ config.white_legal_moves_weight if config and config.white_legal_moves_weight is not none else 0.212 }}" required />
+          <input name="white_legal_moves_weight" type="number" step="any" value="{{ config.white_legal_moves_weight if config and config.white_legal_moves_weight is not none else '' }}" />
         </div>
         <div>
           <label>Material weight</label>
-          <input name="white_material_score_weight" type="number" step="any" value="{{ config.white_material_score_weight if config and config.white_material_score_weight is not none else 5.576 }}" required />
+          <input name="white_material_score_weight" type="number" step="any" value="{{ config.white_material_score_weight if config and config.white_material_score_weight is not none else '' }}" />
         </div>
         <div>
           <label>Forward weight</label>
-          <input name="white_forward_score_weight" type="number" step="any" value="{{ config.white_forward_score_weight if config and config.white_forward_score_weight is not none else 4.008 }}" required />
+          <input name="white_forward_score_weight" type="number" step="any" value="{{ config.white_forward_score_weight if config and config.white_forward_score_weight is not none else '' }}" />
+        </div>
+        <div>
+          <label>Center weight</label>
+          <input name="white_center_control_weight" type="number" step="any" value="{{ config.white_center_control_weight if config and config.white_center_control_weight is not none else '' }}" />
         </div>
       </div>
 
-      <label style="margin-bottom: .25rem;">Black weights</label>
-      <div class="grid" style="grid-template-columns: repeat(3, minmax(120px, 1fr));">
+      <label style="margin-bottom: .25rem;">Black weights (optional)</label>
+      <div class="grid" style="grid-template-columns: repeat(4, minmax(120px, 1fr));">
         <div>
           <label>Legal-moves weight</label>
-          <input name="black_legal_moves_weight" type="number" step="any" value="{{ config.black_legal_moves_weight if config and config.black_legal_moves_weight is not none else 0.305 }}" required />
+          <input name="black_legal_moves_weight" type="number" step="any" value="{{ config.black_legal_moves_weight if config and config.black_legal_moves_weight is not none else '' }}" />
         </div>
         <div>
           <label>Material weight</label>
-          <input name="black_material_score_weight" type="number" step="any" value="{{ config.black_material_score_weight if config and config.black_material_score_weight is not none else 3.381 }}" required />
+          <input name="black_material_score_weight" type="number" step="any" value="{{ config.black_material_score_weight if config and config.black_material_score_weight is not none else '' }}" />
         </div>
         <div>
           <label>Forward weight</label>
-          <input name="black_forward_score_weight" type="number" step="any" value="{{ config.black_forward_score_weight if config and config.black_forward_score_weight is not none else 2.661 }}" required />
+          <input name="black_forward_score_weight" type="number" step="any" value="{{ config.black_forward_score_weight if config and config.black_forward_score_weight is not none else '' }}" />
+        </div>
+        <div>
+          <label>Center weight</label>
+          <input name="black_center_control_weight" type="number" step="any" value="{{ config.black_center_control_weight if config and config.black_center_control_weight is not none else '' }}" />
         </div>
       </div>
 
@@ -142,9 +154,10 @@
           <div>Outcome: {{ game.outcome }}{% if game.winner %} · Winner: {{ game.winner }}{% endif %}{% if game.loser %} · Loser: {{ game.loser }}{% endif %}</div>
           <div>Termination: {{ game.termination }}</div>
           <div>Final score: {{ "%.2f"|format(game.final_score) }}</div>
+          <div>Time to play: {{ "%.2f"|format(game.duration_seconds) }}s · Evaluations: {{ game.evaluations }} total, {{ "%.0f"|format(game.evaluations_per_move) }} per move</div>
           {% if game.white_weights and game.black_weights %}
-            <div>White weights: lm={{ "%.3f"|format(game.white_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(game.white_weights.material_score_weight) }}, fwd={{ "%.3f"|format(game.white_weights.forward_score_weight) }}</div>
-            <div>Black weights: lm={{ "%.3f"|format(game.black_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(game.black_weights.material_score_weight) }}, fwd={{ "%.3f"|format(game.black_weights.forward_score_weight) }}</div>
+            <div>White weights: lm={{ "%.3f"|format(game.white_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(game.white_weights.material_score_weight) }}, fwd={{ "%.3f"|format(game.white_weights.forward_score_weight) }}{% if game.white_weights.center_control_weight %}, cc={{ "%.3f"|format(game.white_weights.center_control_weight) }}{% endif %}</div>
+            <div>Black weights: lm={{ "%.3f"|format(game.black_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(game.black_weights.material_score_weight) }}, fwd={{ "%.3f"|format(game.black_weights.forward_score_weight) }}{% if game.black_weights.center_control_weight %}, cc={{ "%.3f"|format(game.black_weights.center_control_weight) }}{% endif %}</div>
           {% endif %}
           <div>Start: {{ game.start_fen }}</div>
           <details>
@@ -198,6 +211,8 @@
             <th>Outcome</th>
             <th>Termination</th>
             <th>Final score</th>
+            <th>Duration</th>
+            <th>Evals/move</th>
             <th>Weights</th>
           </tr>
         </thead>
@@ -216,17 +231,19 @@
               <td>{{ row.outcome }}{% if row.winner %} · {{ row.winner }}{% endif %}{% if row.loser %} / {{ row.loser }}{% endif %}</td>
               <td>{{ row.termination }}</td>
               <td>{{ "%.2f"|format(row.final_score) }}</td>
+              <td>{{ "%.2f"|format(row.duration_seconds) }}s</td>
+              <td>{{ "%.0f"|format(row.evaluations_per_move) }}</td>
               <td>
                 {% if row.white_weights and row.black_weights %}
-                  W: lm={{ "%.3f"|format(row.white_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(row.white_weights.material_score_weight) }}, fwd={{ "%.3f"|format(row.white_weights.forward_score_weight) }}<br/>
-                  B: lm={{ "%.3f"|format(row.black_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(row.black_weights.material_score_weight) }}, fwd={{ "%.3f"|format(row.black_weights.forward_score_weight) }}
+                  W: lm={{ "%.3f"|format(row.white_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(row.white_weights.material_score_weight) }}, fwd={{ "%.3f"|format(row.white_weights.forward_score_weight) }}{% if row.white_weights.center_control_weight %}, cc={{ "%.3f"|format(row.white_weights.center_control_weight) }}{% endif %}<br/>
+                  B: lm={{ "%.3f"|format(row.black_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(row.black_weights.material_score_weight) }}, fwd={{ "%.3f"|format(row.black_weights.forward_score_weight) }}{% if row.black_weights.center_control_weight %}, cc={{ "%.3f"|format(row.black_weights.center_control_weight) }}{% endif %}
                 {% else %}
                   (weights unavailable)
                 {% endif %}
               </td>
             </tr>
             <tr class="detail-row">
-              <td colspan="7">
+              <td colspan="9">
                 <details>
                   <summary>PGN / FEN</summary>
                   <div class="muted">FEN: {{ row.final_fen }}</div>
@@ -251,10 +268,9 @@
     const submitButton = form.querySelector('button[type="submit"]');
     const gamesInput = form.querySelector('input[name="games"]');
     const activeJobKey = 'selfPlayActiveJobId';
-    const POLL_INTERVAL_MS = 200;
     // A self-play run finishes in seconds. If a job we're tracking makes no
     // forward progress for this long it's an orphan (its worker died), so we
-    // stop waiting and free the UI instead of locking the button forever.
+    // stop waiting and free the UI instead of waiting on the socket forever.
     const NO_PROGRESS_TIMEOUT_MS = 30000;
 
     function releaseJob() {
@@ -274,95 +290,106 @@
       progressText.textContent = text || `${safeCompleted} / ${safeTotal} games complete`;
     }
 
-    async function pollJob(jobId, tracker) {
-      // tracker carries the last progress value and the time it last advanced,
-      // so we can detect an orphaned job that will never finish.
-      tracker = tracker || { lastCompleted: -1, lastProgressAt: Date.now() };
+    // The server pushes every status change over a websocket the moment a
+    // worker reports it, instead of the browser polling on a timer.
+    function trackJob(jobId, { resuming } = {}) {
+      let lastCompleted = -1;
+      let watchdog = null;
+      let sawFirstMessage = false;
 
-      const response = await fetch(`/self-play/status/${jobId}`, { cache: 'no-store' });
-      if (response.status === 404) {
-        // The job no longer exists (finished in a prior session, cache
-        // cleared, etc.). Stop polling so we don't spam 404s forever.
-        releaseJob();
-        return;
-      }
-      if (!response.ok) {
-        setProgress(0, 1, 'Waiting for job status...');
-        window.setTimeout(() => pollJob(jobId, tracker), POLL_INTERVAL_MS);
-        return;
-      }
-      const job = await response.json();
-      setProgress(job.completed || 0, job.total || 1, job.message || job.state || 'Running');
-      if (job.state === 'completed') {
-        progressText.textContent = 'Complete. Refreshing...';
-        progressFill.style.width = '100%';
-        localStorage.removeItem(activeJobKey);
-        // Hold on the full bar briefly so the completed state is visible
-        // before the page reloads (jobs can finish in well under a second).
-        window.setTimeout(() => window.location.reload(), 500);
-        return;
-      }
-      if (job.state === 'failed') {
-        progressText.textContent = `Failed: ${job.error || 'Unknown error'}`;
-        submitButton.disabled = false;
-        localStorage.removeItem(activeJobKey);
-        return;
+      function resetWatchdog() {
+        if (watchdog) window.clearTimeout(watchdog);
+        watchdog = window.setTimeout(() => {
+          progressText.textContent = 'Self-play job stalled and was cancelled. You can run again.';
+          submitButton.disabled = false;
+          localStorage.removeItem(activeJobKey);
+          socket.close();
+        }, NO_PROGRESS_TIMEOUT_MS);
       }
 
-      // Watchdog: if the job hasn't advanced for too long, its worker is dead.
-      // Give up and re-enable the form rather than polling forever.
-      const completed = Number(job.completed) || 0;
-      if (completed > tracker.lastCompleted) {
-        tracker.lastCompleted = completed;
-        tracker.lastProgressAt = Date.now();
-      } else if (Date.now() - tracker.lastProgressAt > NO_PROGRESS_TIMEOUT_MS) {
-        progressText.textContent = 'Self-play job stalled and was cancelled. You can run again.';
-        submitButton.disabled = false;
-        localStorage.removeItem(activeJobKey);
-        return;
-      }
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const socket = new WebSocket(`${protocol}//${window.location.host}/self-play/ws/${jobId}`);
 
-      // Poll frequently: games run in parallel across all cores, so a run
-      // can complete in a fraction of a second. A coarse (1s) interval would
-      // miss every intermediate value and make the bar appear frozen.
-      window.setTimeout(() => pollJob(jobId, tracker), POLL_INTERVAL_MS);
+      socket.addEventListener('message', (event) => {
+        const job = JSON.parse(event.data);
+
+        if (!sawFirstMessage) {
+          sawFirstMessage = true;
+          if (job.state === 'missing' || job.state === 'completed' || job.state === 'failed') {
+            localStorage.removeItem(activeJobKey);
+            if (!resuming) {
+              setProgress(job.completed || 0, job.total || 1, job.message || job.state || 'Running');
+            }
+            socket.close();
+            return;
+          }
+          if (resuming) {
+            const startedAt = Date.parse(job.played_at || '');
+            const isStale = Number.isFinite(startedAt)
+              && (Date.now() - startedAt) > NO_PROGRESS_TIMEOUT_MS
+              && (Number(job.completed) || 0) === 0;
+            if (isStale) {
+              // Queued/running but untouched well past when it should have
+              // run: its worker never made progress, don't trap the button.
+              localStorage.removeItem(activeJobKey);
+              socket.close();
+              return;
+            }
+            progressWrap.style.display = 'block';
+            progressText.textContent = 'Resuming active job...';
+            submitButton.disabled = true;
+          }
+          resetWatchdog();
+        }
+
+        if (job.state === 'missing') {
+          window.clearTimeout(watchdog);
+          releaseJob();
+          socket.close();
+          return;
+        }
+
+        setProgress(job.completed || 0, job.total || 1, job.message || job.state || 'Running');
+
+        if (job.state !== 'completed' && job.state !== 'failed' && job.state !== 'missing') {
+          // Any fresh message means the job is alive (even if no full game has
+          // finished yet), so keep the watchdog from firing.
+          resetWatchdog();
+        }
+        const completed = Number(job.completed) || 0;
+        if (completed > lastCompleted) lastCompleted = completed;
+
+        if (job.state === 'completed') {
+          window.clearTimeout(watchdog);
+          progressText.textContent = 'Complete. Refreshing...';
+          progressFill.style.width = '100%';
+          localStorage.removeItem(activeJobKey);
+          // Hold on the full bar briefly so the completed state is visible
+          // before the page reloads (jobs can finish in well under a second).
+          window.setTimeout(() => window.location.reload(), 500);
+          socket.close();
+          return;
+        }
+        if (job.state === 'failed') {
+          window.clearTimeout(watchdog);
+          progressText.textContent = `Failed: ${job.error || 'Unknown error'}`;
+          submitButton.disabled = false;
+          localStorage.removeItem(activeJobKey);
+          socket.close();
+        }
+      });
+
+      socket.addEventListener('close', () => {
+        if (watchdog) window.clearTimeout(watchdog);
+      });
     }
 
-    async function resumeActiveJob() {
+    function resumeActiveJob() {
       const jobId = localStorage.getItem(activeJobKey);
       if (!jobId) {
         return;
       }
-      // Probe once before locking the UI. Only a job that is genuinely still
-      // running should disable the button; anything missing, finished, failed,
-      // or already stalled just gets cleared so the form stays usable.
-      let job = null;
-      try {
-        const response = await fetch(`/self-play/status/${jobId}`, { cache: 'no-store' });
-        if (response.ok) {
-          job = await response.json();
-        }
-      } catch (err) {
-        job = null;
-      }
-      if (!job || job.state === 'completed' || job.state === 'failed' || job.state === 'missing') {
-        localStorage.removeItem(activeJobKey);
-        return;
-      }
-      const startedAt = Date.parse(job.played_at || '');
-      const isStale = Number.isFinite(startedAt)
-        && (Date.now() - startedAt) > NO_PROGRESS_TIMEOUT_MS
-        && (Number(job.completed) || 0) === 0;
-      if (isStale) {
-        // Queued/running but untouched well past when it should have run:
-        // its worker never made progress, so don't trap the button.
-        localStorage.removeItem(activeJobKey);
-        return;
-      }
-      progressWrap.style.display = 'block';
-      progressText.textContent = 'Resuming active job...';
-      submitButton.disabled = true;
-      pollJob(jobId);
+      trackJob(jobId, { resuming: true });
     }
 
     form.addEventListener('submit', async (event) => {
@@ -386,7 +413,7 @@
       }
       const job = await response.json();
       localStorage.setItem(activeJobKey, job.job_id);
-      pollJob(job.job_id);
+      trackJob(job.job_id);
     });
 
     resumeActiveJob();

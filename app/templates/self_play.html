@@ -208,12 +208,10 @@
             <th>Played at</th>
             <th>Result</th>
             <th>Turns</th>
-            <th>Outcome</th>
             <th>Termination</th>
             <th>Final score</th>
             <th>Duration</th>
             <th>Evals/move</th>
-            <th>Weights</th>
           </tr>
         </thead>
         <tbody>
@@ -228,28 +226,10 @@
               <td>{{ row.played_at_display if row.played_at_display else row.played_at }}</td>
               <td><a href="/self-play/view/{{ row.run_id }}/{{ row.index }}">{{ row.result }}</a></td>
               <td>{{ row.plies }}</td>
-              <td>{{ row.outcome }}{% if row.winner %} · {{ row.winner }}{% endif %}{% if row.loser %} / {{ row.loser }}{% endif %}</td>
               <td>{{ row.termination }}</td>
               <td>{{ "%.2f"|format(row.final_score) }}</td>
               <td>{{ "%.2f"|format(row.duration_seconds) }}s</td>
               <td>{{ "%.0f"|format(row.evaluations_per_move) }}</td>
-              <td>
-                {% if row.white_weights and row.black_weights %}
-                  W: lm={{ "%.3f"|format(row.white_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(row.white_weights.material_score_weight) }}, fwd={{ "%.3f"|format(row.white_weights.forward_score_weight) }}{% if row.white_weights.center_control_weight %}, cc={{ "%.3f"|format(row.white_weights.center_control_weight) }}{% endif %}<br/>
-                  B: lm={{ "%.3f"|format(row.black_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(row.black_weights.material_score_weight) }}, fwd={{ "%.3f"|format(row.black_weights.forward_score_weight) }}{% if row.black_weights.center_control_weight %}, cc={{ "%.3f"|format(row.black_weights.center_control_weight) }}{% endif %}
-                {% else %}
-                  (weights unavailable)
-                {% endif %}
-              </td>
-            </tr>
-            <tr class="detail-row">
-              <td colspan="9">
-                <details>
-                  <summary>PGN / FEN</summary>
-                  <div class="muted">FEN: {{ row.final_fen }}</div>
-                  <pre>{{ row.pgn }}</pre>
-                </details>
-              </td>
             </tr>
           {% endfor %}
         </tbody>

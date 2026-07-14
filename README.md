@@ -34,6 +34,15 @@ http://127.0.0.1:8134
 The repo also includes a headless harness that plays the current scoring
 engine against itself from the starting position, or from a supplied FEN.
 
+Self-play results are stored in Neo4j (not a local cache file), so a running
+Neo4j instance is required for `/self-play`, the CLI, and `--tune-weights`.
+This reuses the same `NEO4J_URI`/`NEO4J_USER`/`NEO4J_PASSWORD`/`NEO4J_DATABASE`
+environment variables as the [Neo4j option](#neo4j-option) below (same
+defaults), but is **not** gated by `NEO4J_ENABLED` — that flag only controls
+the separate, opt-in export of real chess.com games from `/analyse`. See
+[`neo4j_notes.md`](neo4j_notes.md) for local setup and the `:SelfPlayGame`
+schema.
+
 ```bash
 uv run python -m app.self_play --games 10 --max-plies 55 --top-k 3 --seed 1
 ```

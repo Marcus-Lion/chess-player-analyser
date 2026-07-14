@@ -37,15 +37,14 @@ from app.games import (
     _result_summary,
     choose_engine_move,
 )
+from app.neo4j_store import Neo4jStore
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = BASE_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
-SELF_PLAY_RESULTS_PATH = CACHE_DIR / "self_play_results.jsonl"
 SELF_PLAY_JOBS_DIR = CACHE_DIR / "self_play_jobs"
 SELF_PLAY_JOBS_DIR.mkdir(parents=True, exist_ok=True)
-SELF_PLAY_RESULTS_LOCK = threading.Lock()
 DEFAULT_SELF_PLAY_WORKERS = max(1, os.cpu_count() or 1)
 # Job status lives in memory (see SelfPlayJobHub); only each job's worker log
 # file is on disk. Delete a job's status/log once it has been idle for this
@@ -792,78 +791,50 @@ def save_self_play_results(games: list[SelfPlayGame]) -> None:
     if not games:
         return
 
-    with SELF_PLAY_RESULTS_LOCK:
-        with SELF_PLAY_RESULTS_PATH.open("a", encoding="utf-8") as handle:
-            for game in games:
-                payload = {
-                    "played_at": game.played_at or datetime.now(timezone.utc).isoformat(),
-                    "run_id": game.run_id,
-                    "index": game.index,
-                    "seed": game.seed,
-                    "top_k": game.top_k,
-                    "max_plies": game.max_plies,
-                    "start_fen": game.start_fen,
-                    "result": game.result,
-                    "termination": game.termination,
-                    "plies": game.plies,
-                    "final_fen": game.final_fen,
-                    "final_score": game.final_score,
-                    "outcome": game.outcome,
-                    "winner": game.winner,
-                    "loser": game.loser,
-                    "white_weights": game.white_weights,
-                    "black_weights": game.black_weights,
-                    "duration_seconds": game.duration_seconds,
-                    "evaluations": game.evaluations,
-                    "evaluations_per_move": game.evaluations_per_move,
-                    "pgn": game.pgn,
-                }
-                handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    payloads = [
+        {
+            "played_at": game.played_at or datetime.now(timezone.utc).isoformat(),
+            "run_id": game.run_id,
+            "index": game.index,
+            "seed": game.seed,
+            "top_k": game.top_k,
+            "max_plies": game.max_plies,
+            "start_fen": game.start_fen,
+            "result": game.result,
+            "termination": game.termination,
+            "plies": game.plies,
+            "final_fen": game.final_fen,
+            "final_score": game.final_score,
+            "outcome": game.outcome,
+            "winner": game.winner,
+            "loser": game.loser,
+            "white_weights": game.white_weights,
+            "black_weights": game.black_weights,
+            "duration_seconds": game.duration_seconds,
+            "evaluations": game.evaluations,
+            "evaluations_per_move": game.evaluations_per_move,
+            "pgn": game.pgn,
+        }
+        for game in games
+    ]
+
+    with Neo4jStore() as store:
+        store.save_self_play_games(payloads)
 
 
 def load_self_play_results(limit: int | None = 50) -> list[dict]:
-    if not SELF_PLAY_RESULTS_PATH.exists():
-        return []
-
-    rows: list[dict] = []
-    with SELF_PLAY_RESULTS_PATH.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rows.append(_normalize_result(json.loads(line)))
-            except json.JSONDecodeError:
-                continue
-
-    return rows if limit is None else rows[-limit:]
+    with Neo4jStore() as store:
+        rows = store.load_self_play_games(limit)
+    return [_normalize_result(row) for row in rows]
 
 
 def load_self_play_result(run_id: str, index: int) -> dict | None:
-    if not SELF_PLAY_RESULTS_PATH.exists():
-        return None
-
-    with SELF_PLAY_RESULTS_PATH.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if row.get("run_id") == run_id and int(row.get("index", 0)) == index:
-                return _normalize_result(row)
-    return None
+    with Neo4jStore() as store:
+        row = store.load_self_play_game(run_id, index)
+    return _normalize_result(row) if row is not None else None
 
 
 def _normalize_result(row: dict) -> dict:
-    if "forward_1" not in row and "control_1" in row:
-        row["forward_1"] = row.pop("control_1")
-    if "forward_2" not in row and "control_2" in row:
-        row["forward_2"] = row.pop("control_2")
-    if "forward_score" not in row and "control_score" in row:
-        row["forward_score"] = row.pop("control_score")
     row.setdefault("duration_seconds", 0.0)
     row.setdefault("evaluations", 0)
     row.setdefault("evaluations_per_move", 0.0)

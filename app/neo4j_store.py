@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from contextlib import contextmanager
 from typing import Iterator
@@ -114,6 +115,71 @@ class Neo4jStore:
         with self._driver.session(database=self.database) as session:
             session.run(query, rows=rows, username=username)
         return len(rows)
+
+    def ensure_self_play_constraints(self) -> None:
+        statement = (
+            "CREATE CONSTRAINT self_play_game_key IF NOT EXISTS "
+            "FOR (g:SelfPlayGame) REQUIRE g.game_key IS UNIQUE"
+        )
+        with self._driver.session(database=self.database) as session:
+            session.run(statement)
+
+    @staticmethod
+    def _encode_self_play_row(game: dict) -> dict:
+        row = dict(game)
+        row["game_key"] = f"{row.get('run_id')}:{row.get('index')}"
+        row["white_weights_json"] = json.dumps(row.pop("white_weights", None))
+        row["black_weights_json"] = json.dumps(row.pop("black_weights", None))
+        return row
+
+    @staticmethod
+    def _decode_self_play_row(props: dict) -> dict:
+        row = dict(props)
+        row.pop("game_key", None)
+        row["white_weights"] = json.loads(row.pop("white_weights_json", "null") or "null")
+        row["black_weights"] = json.loads(row.pop("black_weights_json", "null") or "null")
+        return row
+
+    def save_self_play_games(self, games: list[dict]) -> int:
+        """Upsert self-play game results, keyed on ``run_id``+``index``."""
+        if not games:
+            return 0
+
+        rows = [self._encode_self_play_row(game) for game in games]
+
+        query = """
+        UNWIND $rows AS row
+        MERGE (g:SelfPlayGame {game_key: row.game_key})
+        SET g += row
+        """
+
+        self.ensure_self_play_constraints()
+        with self._driver.session(database=self.database) as session:
+            session.run(query, rows=rows)
+        return len(rows)
+
+    def load_self_play_games(self, limit: int | None = 50) -> list[dict]:
+        """Load self-play games, oldest first (matches the old JSONL append order)."""
+        query = "MATCH (g:SelfPlayGame) RETURN g ORDER BY g.played_at DESC"
+        params: dict = {}
+        if limit is not None:
+            query += " LIMIT $limit"
+            params["limit"] = limit
+
+        with self._driver.session(database=self.database) as session:
+            records = list(session.run(query, **params))
+
+        rows = [self._decode_self_play_row(dict(record["g"])) for record in records]
+        rows.reverse()
+        return rows
+
+    def load_self_play_game(self, run_id: str, index: int) -> dict | None:
+        query = "MATCH (g:SelfPlayGame {game_key: $game_key}) RETURN g LIMIT 1"
+        with self._driver.session(database=self.database) as session:
+            record = session.run(query, game_key=f"{run_id}:{index}").single()
+        if record is None:
+            return None
+        return self._decode_self_play_row(dict(record["g"]))
 
 
 @contextmanager

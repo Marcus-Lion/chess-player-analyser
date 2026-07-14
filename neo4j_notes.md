@@ -16,6 +16,29 @@ Each `Game` node carries the parsed properties: `utc_datetime`,
 `score`, `opponent_rating`, `user_rating`, `result`, `termination`,
 `time_control`, `moves`, and `clock_count`.
 
+### Self-play games
+
+Self-play results (the `/self-play` harness) use a separate label and are
+**not** gated by `NEO4J_ENABLED` — Neo4j is the mandatory, sole store for
+self-play games (there is no file cache fallback):
+
+```text
+(:SelfPlayGame {
+  game_key,          // "<run_id>:<index>", unique
+  run_id, index, played_at,
+  seed, top_k, max_plies, start_fen,
+  result, termination, plies,
+  final_fen, final_score, outcome, winner, loser,
+  white_weights_json, black_weights_json,   // JSON-encoded score weights
+  duration_seconds, evaluations, evaluations_per_move,
+  pgn
+})
+```
+
+`white_weights_json`/`black_weights_json` are JSON-encoded strings (Neo4j
+node properties can't store nested maps); `Neo4jStore` decodes them back into
+`white_weights`/`black_weights` dicts on read.
+
 ## Package
 
 ```bash

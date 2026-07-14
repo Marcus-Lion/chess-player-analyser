@@ -1061,7 +1061,7 @@ def main(argv: list[str] | None = None) -> int:
 
     config = SelfPlayConfig(
         games=max(1, args.games),
-        max_plies=max(1, args.max_plies),
+        max_plies=max(2, args.max_plies),
         top_k=max(1, args.top_k),
         depth=(max(1, args.depth) if args.depth is not None else None),
         workers=(max(1, int(args.workers)) if args.workers else None),

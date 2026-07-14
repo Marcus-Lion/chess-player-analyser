@@ -442,7 +442,7 @@ def self_play_run(
         seed_value = None
     config = SelfPlayConfig(
         games=max(1, games),
-        max_plies=max(1, max_plies),
+        max_plies=max(2, max_plies),
         top_k=max(1, top_k),
         workers=(max(1, workers_value) if workers_value else None),
         seed=seed_value,
@@ -495,7 +495,7 @@ def self_play_start(
         seed_value = None
     config = SelfPlayConfig(
         games=max(1, games),
-        max_plies=max(1, max_plies),
+        max_plies=max(2, max_plies),
         top_k=max(1, top_k),
         workers=(max(1, workers_value) if workers_value else None),
         seed=seed_value,

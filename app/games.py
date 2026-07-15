@@ -182,9 +182,9 @@ PIECE_POINTS = {
 }
 
 LEGAL_MOVES_WEIGHT:float = 0.3
-MATERIAL_SCORE_WEIGHT:float = 4.0
-FORWARD_SCORE_WEIGHT:float = 3.0
-CENTER_CONTROL_WEIGHT:float = 2.0
+MATERIAL_SCORE_WEIGHT:float = 0.35
+FORWARD_SCORE_WEIGHT:float = 0.20
+CENTER_CONTROL_WEIGHT:float = 0.125
 # Weight for the "goal is checkmate" heuristic: how hard the engine leans on
 # driving the enemy king to the edge and cutting off its escape squares. Kept
 # small relative to material so it only breaks ties between otherwise-similar

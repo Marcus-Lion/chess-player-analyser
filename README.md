@@ -44,13 +44,13 @@ the separate, opt-in export of real chess.com games from `/analyse`. See
 schema.
 
 ```bash
-uv run python -m app.self_play --games 10 --max-turns 55 --top-k 3 --seed 1
+uv run python -m app.self_play --games 10 --max-turns 55
 ```
 
 To control how many games run in parallel (processes), add `--workers`:
 
 ```bash
-uv run python -m app.self_play --games 20 --workers 8 --max-turns 55 --top-k 3 --seed 1
+uv run python -m app.self_play --games 20 --workers 20 --max-turns 55
 ```
 
 Each move is chosen by a negamax search. By default the search **depth is

@@ -93,12 +93,6 @@
         <h2>Positions</h2>
         <p class="muted">Use the buttons, slider, or click a position to step through the game.</p>
         <div class="positions" id="positions_list">
-          <div class="position-row">
-            <a id="ply-0" href="#ply-0" data-index="0" class="move-start active">
-              Start position
-              <span class="muted"> · Score: {{ "%.2f"|format(detail.positions[0].total_score) }}</span>
-            </a>
-          </div>
           {% macro severity_suffix(severity) %}{% if severity == 'Blunder' %} ??{% elif severity == 'Mistake' %} ?{% elif severity == 'Inaccuracy' %} ?!{% endif %}{% endmacro %}
           {% for move_number, moves in detail.positions[1:]|groupby('move_number') %}
             {% set white_pos = moves|selectattr('side', 'equalto', 'White')|first %}
@@ -106,14 +100,14 @@
             <div class="position-row">
               {% if white_pos %}
                 <a id="ply-{{ white_pos.ply }}" href="#ply-{{ white_pos.ply }}" data-index="{{ white_pos.ply }}" class="move-white{% if white_pos.severity %} {{ white_pos.severity|lower }}{% endif %}">
-                  {{ white_pos.ply }}. {{ white_pos.san }}{{ severity_suffix(white_pos.severity) }}<span class="muted"> · {{ "%.2f"|format(white_pos.total_score) }}</span>
+                  {{ white_pos.ply }}. {{ white_pos.san }}{{ severity_suffix(white_pos.severity) }}<span class="muted"> {{ "%.2f"|format(white_pos.total_score) }}</span>
                 </a>
               {% else %}
                 <span class="move-white"></span>
               {% endif %}
               {% if black_pos %}
                 <a id="ply-{{ black_pos.ply }}" href="#ply-{{ black_pos.ply }}" data-index="{{ black_pos.ply }}" class="move-black{% if black_pos.severity %} {{ black_pos.severity|lower }}{% endif %}">
-                  {{ black_pos.ply }}. {{ black_pos.san }}{{ severity_suffix(black_pos.severity) }}<span class="muted"> · {{ "%.2f"|format(black_pos.total_score) }}</span>
+                  {{ black_pos.ply }}. {{ black_pos.san }}{{ severity_suffix(black_pos.severity) }}<span class="muted"> {{ "%.2f"|format(black_pos.total_score) }}</span>
                 </a>
               {% else %}
                 <span class="move-black"></span>

@@ -437,7 +437,7 @@ def _calculate_material(board: chess.Board) -> dict[str, int]:
 
 MAX_STARTING_MATERIAL = 39
 MAX_TOTAL_MATERIAL = MAX_STARTING_MATERIAL * 2
-MIN_AUTO_SEARCH_DEPTH = 1
+MIN_AUTO_SEARCH_DEPTH = 3
 MAX_AUTO_SEARCH_DEPTH = 6
 # Exponent applied to the traded-material fraction before the exponential
 # curve. Below 1, it front-loads the ramp so depth climbs early, well before

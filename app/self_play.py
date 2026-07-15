@@ -1023,7 +1023,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the position scorer against itself.")
     parser.add_argument("--games", type=int, default=5, help="Number of self-play games to run.")
     parser.add_argument("--max-turns", type=int, default=100, help="Stop each game after this many turns.")
-    parser.add_argument("--top-k", type=int, default=2, help="Randomly choose among the top K evaluated moves.")
+    parser.add_argument("--top-k", type=int, default=1, help="Randomly choose among the top K evaluated moves.")
     parser.add_argument(
         "--depth",
         type=int,

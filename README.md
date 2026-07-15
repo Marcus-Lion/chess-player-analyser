@@ -62,7 +62,7 @@ search matters most for endgame precision). Pass `--depth` to pin a fixed
 depth for the whole game instead (higher is slower but stronger):
 
 ```bash
-uv run python -m app.self_play --games 10 --depth 2 --max-turns 55 --top-k 3 --seed 1
+uv run python -m app.self_play --games 10 --depth 2 --max-turns 55 --top-k 1 --seed 1
 ```
 
 The web form has the same knob as a **Parallel workers** field; leave it

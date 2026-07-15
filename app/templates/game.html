@@ -78,14 +78,14 @@
           <button type="button" id="prev_btn">◀</button>
           <button type="button" id="next_btn">▶</button>
           <button type="button" id="last_btn">⏭</button>
-          <label><input type="checkbox" id="arrows_toggle" checked /> Show move arrows</label>
+          <label><input type="checkbox" id="arrows_toggle" /> Show move arrows</label>
           <span id="position_label" class="muted">Start position</span>
         </div>
 
         <input id="position_slider" type="range" min="0" max="{{ detail.positions|length - 1 }}" value="0" step="1" />
 
         <div id="board-wrap" class="board-wrap">
-          {{ detail.positions[0].svg_moves | safe }}
+          {{ detail.positions[0].svg | safe }}
         </div>
       </div>
 

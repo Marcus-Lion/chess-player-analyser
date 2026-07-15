@@ -826,12 +826,35 @@ def _calculate_total_score(
     , 2)
 
 
+def _legal_move_arrows(board: chess.Board) -> list[chess.svg.Arrow]:
+    """One color-by-piece arrow per legal move, for the "show all valid moves" board style."""
+    arrows = []
+    for move in board.legal_moves:
+        piece = board.piece_at(move.from_square)
+        color_hex = PIECE_COLORS.get(piece.piece_type, "#15781B") if piece else "#15781B"
+        arrows.append(chess.svg.Arrow(move.from_square, move.to_square, color=color_hex))
+    return arrows
+
+
+def render_board_svgs(board: chess.Board, lastmove: chess.Move | None = None) -> tuple[str, str]:
+    """Render a board's plain SVG and its legal-move-arrows SVG.
+
+    Shared by the game viewer and the play page so every board in the app
+    uses the same visual style (piece-colored, thin-bordered arrows).
+    """
+    svg = chess.svg.board(board, size=420, lastmove=lastmove)
+    svg_moves = _style_arrows(
+        chess.svg.board(board, size=420, lastmove=lastmove, arrows=_legal_move_arrows(board))
+    )
+    return svg, svg_moves
+
+
 def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None) -> tuple[str, list[str], dict[str, list[str]], dict[str, int], dict[str, int], dict[str, int], dict[str, int], dict[str, int], int, int, int, int, int, dict[str, int]]:
     """Render board with legal moves arrows, and return SAN list, 2-ply move tree, control metrics, material metrics, scores and move scores."""
-    arrows = []
     tree = {}
     move_scores = {}
     legal_moves = list(board.legal_moves)
+    arrows = _legal_move_arrows(board)
 
     # Pre-calculate current control and material
     f1, f2 = _calculate_forward(board)
@@ -846,21 +869,18 @@ def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None
 
     for move in legal_moves:
         san = board.san(move)
-        piece = board.piece_at(move.from_square)
-        color_hex = PIECE_COLORS.get(piece.piece_type, "#15781B") if piece else "#15781B"
-        arrows.append(chess.svg.Arrow(move.from_square, move.to_square, color=color_hex))
-        
+
         # 1-ply deep lookahead for the tree and scores
         board.push(move)
         tree[san] = [board.san(m) for m in board.legal_moves]
-        
+
         # Optimization: for move suggestions, use 1st order control ONLY to save time
         # 2nd order control is expensive to calculate for every legal move (O(N^2))
         sc1 = get_board_control(board)
-        
+
         # Move score is simplified to 1st order difference after the move
         move_scores[san] = sc1["White"] - sc1["Black"]
-        
+
         board.pop()
 
     sans = [board.san(move) for move in legal_moves]

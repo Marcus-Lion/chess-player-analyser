@@ -22,6 +22,7 @@ from app.games import (
     choose_engine_move,
     load_game_summaries,
     load_game_detail,
+    render_board_svgs,
 )
 from app.parser import parse_pgn_to_dataframe
 from app.self_play import (
@@ -61,21 +62,6 @@ from app.metrics import (
 BASE_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = BASE_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-PIECE_UNICODE = {
-    (chess.PAWN, chess.WHITE): "♙",
-    (chess.KNIGHT, chess.WHITE): "♘",
-    (chess.BISHOP, chess.WHITE): "♗",
-    (chess.ROOK, chess.WHITE): "♖",
-    (chess.QUEEN, chess.WHITE): "♕",
-    (chess.KING, chess.WHITE): "♔",
-    (chess.PAWN, chess.BLACK): "♟",
-    (chess.KNIGHT, chess.BLACK): "♞",
-    (chess.BISHOP, chess.BLACK): "♝",
-    (chess.ROOK, chess.BLACK): "♜",
-    (chess.QUEEN, chess.BLACK): "♛",
-    (chess.KING, chess.BLACK): "♚",
-}
 
 app = FastAPI(title="Marcus Lion Chess Player Analyser")
 templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
@@ -254,40 +240,8 @@ def _play_labels(human_color: str) -> tuple[str, str]:
     return "Engine (White)", "Human (Black)"
 
 
-def _piece_unicode(piece: chess.Piece | None) -> str:
-    if piece is None:
-        return ""
-    return PIECE_UNICODE[(piece.piece_type, piece.color)]
-
-
-def _board_grid(board: chess.Board, can_drag: bool) -> list[list[dict]]:
-    grid: list[list[dict]] = []
-    for rank in range(7, -1, -1):
-        row: list[dict] = []
-        for file in range(8):
-            square = chess.square(file, rank)
-            piece = board.piece_at(square)
-            row.append({
-                "square": chess.square_name(square),
-                "is_light": (file + rank) % 2 == 0,
-                "piece": _piece_unicode(piece),
-                "piece_color": "white" if piece and piece.color == chess.WHITE else "black" if piece else "",
-                "draggable": bool(piece and can_drag and piece.color == board.turn),
-            })
-        grid.append(row)
-    return grid
-
-
-def _legal_move_options(board: chess.Board) -> list[dict]:
-    options: list[dict] = []
-    for move in board.legal_moves:
-        options.append({
-            "uci": move.uci(),
-            "san": board.san(move),
-            "from": chess.square_name(move.from_square),
-            "to": chess.square_name(move.to_square),
-        })
-    return options
+def _legal_move_options(board: chess.Board) -> list[str]:
+    return [board.san(move) for move in board.legal_moves]
 
 
 def _append_history(history: list[dict], board: chess.Board, move: chess.Move) -> None:
@@ -329,8 +283,11 @@ def _play_context(
         black_label = engine_label if human_color == "White" else human_label
         result_summary = _result_summary(board.result(claim_draw=False), white=white_label, black=black_label)
 
+    svg, svg_moves = render_board_svgs(board, lastmove=last_move)
+
     return {
-        "board_grid": _board_grid(board, can_move),
+        "board_svg": svg,
+        "board_svg_moves": svg_moves,
         "legal_move_options": legal_move_options,
         "history": history,
         "history_json": json.dumps(history, ensure_ascii=False),

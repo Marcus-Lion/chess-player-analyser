@@ -249,20 +249,29 @@
           if (!dragActive) return;
           dragActive = false;
           const from = dragFrom;
-          if (dragEl) {
-            dragEl.setAttribute('transform', `translate(${dragOrigin.x}, ${dragOrigin.y})`);
-            dragEl.removeAttribute('pointer-events');
-            dragEl = null;
-          }
+          const el = dragEl;
+          dragEl = null;
           if (boardWrap.hasPointerCapture(evt.pointerId)) {
             boardWrap.releasePointerCapture(evt.pointerId);
           }
           const svg = currentSvg();
-          if (!svg) return;
-          const pt = svgPointFromEvent(evt, svg);
-          const to = squareFromPoint(pt);
+          const pt = svg ? svgPointFromEvent(evt, svg) : null;
+          const to = pt ? squareFromPoint(pt) : null;
+
           if (to && to !== from) {
+            if (el) {
+              const col = to.charCodeAt(0) - 97;
+              const row = 8 - parseInt(to[1], 10);
+              el.setAttribute('transform', `translate(${15 + col * 45}, ${15 + row * 45})`);
+              el.removeAttribute('pointer-events');
+            }
             attemptMove(from, to);
+            return;
+          }
+
+          if (el) {
+            el.setAttribute('transform', `translate(${dragOrigin.x}, ${dragOrigin.y})`);
+            el.removeAttribute('pointer-events');
           }
         });
       }

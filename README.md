@@ -192,6 +192,15 @@ Beyond the analytics dashboard you can inspect individual games move by move:
   A **Position sub-graph** is shown on the right, next to the board: it draws
   the current position as a central node linked to the previous position and to
   every legal move (the move actually played is highlighted and clickable).
+  Each played move is also checked for **blunders**: a 1-ply lookahead compares
+  the position's evaluation right after the move to the worst case after every
+  reply the opponent could make, and flags moves whose eval swing crosses one
+  of three thresholds -- **Inaccuracy** (`?!`), **Mistake** (`?`), or **Blunder**
+  (`??`), color-coded from amber through orange to red in the moves list. A
+  forced stalemate is always scored as a draw rather than by raw material (so
+  a stalemate escape from a losing position isn't flagged as a further
+  mistake), and a reply that delivers checkmate is scored as an outright loss
+  regardless of material on the board.
 
 The results page also links straight to the browser via
 "Browse all games and step through positions".

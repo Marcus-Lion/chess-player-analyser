@@ -50,7 +50,7 @@ class GamePosition:
     score: int  # Legal move count for the side to move
     total_score: float  # Weighted blend of legal moves, material, forward, and center
     blunder_score: float  # Eval swing in the mover's favor lost to the opponent's best reply
-    is_blunder: bool  # blunder_score >= BLUNDER_THRESHOLD
+    severity: str  # "" | "Inaccuracy" | "Mistake" | "Blunder", from _move_severity(blunder_score)
 
 
 @dataclass
@@ -572,11 +572,39 @@ def _evaluate_position(
     )
 
 
-# Roughly "lost a piece for a pawn": material_score_weight scales evaluation
-# points per point of material, so this threshold is worth about
-# BLUNDER_MATERIAL_PAWNS pawns of unjustified swing after the opponent's best
-# reply.
+MATE_SCORE = 1_000_000.0
+
+
+def _terminal_aware_evaluate(board: chess.Board) -> float:
+    """Like ``_evaluate_position``, but scores checkmate/stalemate by their
+    actual game value instead of raw material.
+
+    ``_evaluate_position`` only looks at material/mobility, so on a
+    checkmated or stalemated board it would score however the pieces happen
+    to sit -- e.g. a stalemate reached from a materially lost position would
+    still read as a big material deficit, when a draw is always better than
+    losing. Used wherever a 1-ply lookahead (e.g. ``_blunder_score``) needs to
+    tell a forced draw apart from an outright loss.
+    """
+    if board.is_checkmate():
+        return -MATE_SCORE if board.turn == chess.WHITE else MATE_SCORE
+    if board.is_stalemate() or board.is_insufficient_material():
+        return 0.0
+    return _evaluate_position(board)
+
+
+# Severity tiers for how much of a move's evaluation swing (in eval points,
+# lost to the opponent's best reply) is "unjustified" -- mirroring the
+# inaccuracy/mistake/blunder tiers chess sites use, from a slight edge given
+# up (Inaccuracy) through a real threat (Mistake) to roughly "lost a piece
+# for a pawn" (Blunder). material_score_weight scales evaluation points per
+# point of material, so each *_MATERIAL_PAWNS constant is that tier's cutoff
+# in pawns of unjustified swing.
+INACCURACY_MATERIAL_PAWNS = 1.0
+MISTAKE_MATERIAL_PAWNS = 1.75
 BLUNDER_MATERIAL_PAWNS = 2.5
+INACCURACY_THRESHOLD = MATERIAL_SCORE_WEIGHT * INACCURACY_MATERIAL_PAWNS
+MISTAKE_THRESHOLD = MATERIAL_SCORE_WEIGHT * MISTAKE_MATERIAL_PAWNS
 BLUNDER_THRESHOLD = MATERIAL_SCORE_WEIGHT * BLUNDER_MATERIAL_PAWNS
 
 
@@ -588,6 +616,10 @@ def _blunder_score(board: chess.Board, move: chess.Move) -> float:
     worst of those replies drags the evaluation down from before the move
     (from the mover's perspective). This only catches immediate tactical
     blunders such as hanging a piece -- deeper tactics need a real search.
+    Post-move positions are scored with ``_terminal_aware_evaluate`` so that
+    a stalemate escape (a draw) is correctly valued above losing outright,
+    and a reply that delivers checkmate is valued as an outright loss rather
+    than whatever the material count happens to be.
     """
     mover = board.turn
     before_for_mover = _evaluate_position(board)
@@ -598,7 +630,7 @@ def _blunder_score(board: chess.Board, move: chess.Move) -> float:
     try:
         replies = list(board.legal_moves)
         if not replies:
-            worst_for_mover = _evaluate_position(board)
+            worst_for_mover = _terminal_aware_evaluate(board)
             if mover == chess.BLACK:
                 worst_for_mover = -worst_for_mover
         else:
@@ -606,7 +638,7 @@ def _blunder_score(board: chess.Board, move: chess.Move) -> float:
             for reply in replies:
                 board.push(reply)
                 try:
-                    after = _evaluate_position(board)
+                    after = _terminal_aware_evaluate(board)
                 finally:
                     board.pop()
                 after_for_mover = -after if mover == chess.BLACK else after
@@ -617,8 +649,15 @@ def _blunder_score(board: chess.Board, move: chess.Move) -> float:
     return round(before_for_mover - worst_for_mover, 2)
 
 
-def _is_blunder(blunder_score: float, threshold: float = BLUNDER_THRESHOLD) -> bool:
-    return blunder_score >= threshold
+def _move_severity(blunder_score: float) -> str:
+    """Classify a move's eval swing into a chess.com-style severity tier."""
+    if blunder_score >= BLUNDER_THRESHOLD:
+        return "Blunder"
+    if blunder_score >= MISTAKE_THRESHOLD:
+        return "Mistake"
+    if blunder_score >= INACCURACY_THRESHOLD:
+        return "Inaccuracy"
+    return ""
 
 
 def _order_moves(board: chess.Board) -> list[chess.Move]:
@@ -641,9 +680,6 @@ def _order_moves(board: chess.Board) -> list[chess.Move]:
         return (0, 0)
 
     return sorted(board.legal_moves, key=move_key, reverse=True)
-
-
-MATE_SCORE = 1_000_000.0
 
 
 def _negamax(
@@ -865,7 +901,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
             score=start_score,
             total_score=start_total_score,
             blunder_score=0.0,
-            is_blunder=False,
+            severity="",
         )
     ]
 
@@ -901,7 +937,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
                 score=score,
                 total_score=total_score,
                 blunder_score=blunder_score,
-                is_blunder=_is_blunder(blunder_score),
+                severity=_move_severity(blunder_score),
             )
         )
 

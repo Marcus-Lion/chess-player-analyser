@@ -14,8 +14,9 @@
     .message { color: #0b6; }
     .moves { display: flex; flex-wrap: wrap; gap: .4rem; }
     .moves button { padding: .35rem .55rem; }
-    .history { margin: 0; padding-left: 1.2rem; }
-    .history li { margin: .2rem 0; }
+    .history { display: inline-grid; grid-template-columns: max-content 1fr 1fr; gap: .2rem .75rem; padding: 0; margin: 0; }
+    .history .history-row { display: contents; }
+    .history .move-number { color: #666; }
     .grid { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: .75rem; }
     input, select, button { font-size: 1rem; padding: .45rem; }
     label { display: block; margin-top: .75rem; font-weight: 600; }
@@ -97,11 +98,17 @@
     <div class="panel">
       <h2>Move history</h2>
       {% if history %}
-        <ol class="history">
-          {% for item in history %}
-            <li>{{ item.move_number }}. {{ item.side }} {{ item.san }}</li>
+        <div class="history">
+          {% for move_number, moves in history|groupby('move_number') %}
+            {% set white_item = moves|selectattr('side', 'equalto', 'White')|first %}
+            {% set black_item = moves|selectattr('side', 'equalto', 'Black')|first %}
+            <div class="history-row">
+              <span class="move-number">{{ move_number }}.</span>
+              <span class="move-white">{{ white_item.san if white_item else '' }}</span>
+              <span class="move-black">{{ black_item.san if black_item else '' }}</span>
+            </div>
           {% endfor %}
-        </ol>
+        </div>
       {% else %}
         <p class="muted">No moves yet.</p>
       {% endif %}

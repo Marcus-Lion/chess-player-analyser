@@ -748,7 +748,7 @@ def _negamax(
 def choose_engine_move(
     board: chess.Board,
     rng: random.Random | None = None,
-    top_k: int = 3,
+    top_k: int = 1,
     *,
     legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
     material_score_weight: float = MATERIAL_SCORE_WEIGHT,

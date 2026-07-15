@@ -69,7 +69,7 @@ class SelfPlayGame:
     run_id: str = ""
     played_at: str = ""
     seed: int | None = None
-    top_k: int = 3
+    top_k: int = 1
     max_turns: int = 100
     start_fen: str = "startpos"
     white_weights: dict[str, float] | None = None
@@ -83,7 +83,7 @@ class SelfPlayGame:
 class SelfPlayConfig:
     games: int = 3
     max_turns: int = 100
-    top_k: int = 3
+    top_k: int = 1
     # Negamax search depth. None (the default) auto-derives depth per move
     # from remaining material via ``_auto_search_depth`` -- shallow while the
     # board is full, deeper once material has thinned out. Set an explicit

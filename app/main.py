@@ -312,7 +312,7 @@ def index(request: Request):
 
 
 @app.get("/play", response_class=HTMLResponse)
-def play(request: Request, human_color: str = "white", top_k: int = 3, seed: str | None = None):
+def play(request: Request, human_color: str = "white", top_k: int = 1, seed: str | None = None):
     human_color_n = _normalize_human_color(human_color)
     seed_value = int(seed) if seed and seed.strip().isdigit() else None
     rng = random.Random(seed_value)
@@ -329,7 +329,7 @@ def play_move(
     request: Request,
     current_fen: str = Form(...),
     human_color: str = Form("white"),
-    top_k: int = Form(3),
+    top_k: int = Form(1),
     seed: str | None = Form(None),
     history_json: str | None = Form(None),
     move_uci: str | None = Form(None),
@@ -388,7 +388,7 @@ def self_play_run(
     request: Request,
     games: int = Form(3),
     max_turns: int = Form(100),
-    top_k: int = Form(3),
+    top_k: int = Form(1),
     workers: str | None = Form(None),
     seed: str | None = Form(None),
     fen: str | None = Form(None),
@@ -441,7 +441,7 @@ def self_play_run(
 def self_play_start(
     games: int = Form(3),
     max_turns: int = Form(100),
-    top_k: int = Form(3),
+    top_k: int = Form(1),
     workers: str | None = Form(None),
     seed: str | None = Form(None),
     fen: str | None = Form(None),

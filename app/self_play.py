@@ -48,7 +48,7 @@ CACHE_DIR = BASE_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 SELF_PLAY_JOBS_DIR = CACHE_DIR / "self_play_jobs"
 SELF_PLAY_JOBS_DIR.mkdir(parents=True, exist_ok=True)
-DEFAULT_SELF_PLAY_WORKERS = max(1, os.cpu_count() or 1)
+DEFAULT_SELF_PLAY_WORKERS = max(1, os.process_cpu_count() or 1)
 # Job status lives in memory (see SelfPlayJobHub); only each job's worker log
 # file is on disk. Delete a job's status/log once it has been idle for this
 # long so neither grows without bound.

@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import os
+import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -680,27 +681,35 @@ def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random |
 
     start_time = time.perf_counter()
     result, termination = _terminal_reason(board)
-    while plies < config.max_turns and not result:
-        active_weights = white_weights if board.turn == chess.WHITE else black_weights
-        depth = config.depth if config.depth is not None else _auto_search_depth(board)
-        move, _ = choose_engine_move(
-            board,
-            rng,
-            config.top_k,
-            legal_moves_weight=active_weights["legal_moves_weight"],
-            material_score_weight=active_weights["material_score_weight"],
-            forward_score_weight=active_weights["forward_score_weight"],
-            center_control_weight=active_weights["center_control_weight"],
-            checkmate_weight=config.checkmate_weight,
-            depth=depth,
-            eval_counter=eval_counter,
-        )
-        san = board.san(move)
-        board.push(move)
-        node = node.add_variation(move)
-        node.comment = san
-        plies += 1
-        result, termination = _terminal_reason(board)
+    try:
+        while plies < config.max_turns and not result:
+            active_weights = white_weights if board.turn == chess.WHITE else black_weights
+            depth = config.depth if config.depth is not None else _auto_search_depth(board)
+            move, _ = choose_engine_move(
+                board,
+                rng,
+                config.top_k,
+                legal_moves_weight=active_weights["legal_moves_weight"],
+                material_score_weight=active_weights["material_score_weight"],
+                forward_score_weight=active_weights["forward_score_weight"],
+                center_control_weight=active_weights["center_control_weight"],
+                checkmate_weight=config.checkmate_weight,
+                depth=depth,
+                eval_counter=eval_counter,
+            )
+            san = board.san(move)
+            board.push(move)
+            node = node.add_variation(move)
+            node.comment = san
+            plies += 1
+            result, termination = _terminal_reason(board)
+    except Exception:
+        # A crashed game shouldn't take the rest of the batch down with it
+        # (this is submitted as one ProcessPoolExecutor unit of work per
+        # game): record it as a terminal "Crash" result instead of letting
+        # the exception propagate out of the worker.
+        traceback.print_exc()
+        result, termination = "0-0", "Crash"
     duration_seconds = time.perf_counter() - start_time
 
     if not result:
@@ -713,7 +722,10 @@ def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random |
     exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=True)
     pgn_text = game.accept(exporter)
     final_score = _evaluate_board(board)
-    summary = _result_summary(result, white="Heuristic", black="Heuristic")
+    if termination == "Crash":
+        summary = {"status": "Crash", "winner": "", "loser": ""}
+    else:
+        summary = _result_summary(result, white="Heuristic", black="Heuristic")
     evaluations = eval_counter[0]
 
     return SelfPlayGame(

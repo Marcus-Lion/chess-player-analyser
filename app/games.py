@@ -8,6 +8,7 @@ from io import StringIO
 
 import chess
 import chess.pgn
+import chess.polyglot
 import chess.svg
 
 from app.eco import eco_name
@@ -435,14 +436,21 @@ def _calculate_material(board: chess.Board) -> dict[str, int]:
     return {"White": white, "Black": black}
 
 
-MAX_STARTING_MATERIAL = 39
+MAX_STARTING_MATERIAL = (
+    8 * PIECE_POINTS[chess.PAWN]
+    + 2 * PIECE_POINTS[chess.KNIGHT]
+    + 2 * PIECE_POINTS[chess.BISHOP]
+    + 2 * PIECE_POINTS[chess.ROOK]
+    + PIECE_POINTS[chess.QUEEN]
+) # 39
 MAX_TOTAL_MATERIAL = MAX_STARTING_MATERIAL * 2
 MIN_AUTO_SEARCH_DEPTH = 3
-MAX_AUTO_SEARCH_DEPTH = 6
+MAX_AUTO_SEARCH_DEPTH = 7
 # Exponent applied to the traded-material fraction before the exponential
 # curve. Below 1, it front-loads the ramp so depth climbs early, well before
 # the endgame, instead of hugging the minimum until material is nearly gone.
-AUTO_SEARCH_DEPTH_CURVE_EXPONENT = 0.55
+# 2 is equals 1 white and 1 black
+AUTO_SEARCH_DEPTH_CURVE_EXPONENT = 0.45
 
 
 def _auto_search_depth(board: chess.Board) -> int:
@@ -574,6 +582,14 @@ def _evaluate_position(
 
 MATE_SCORE = 1_000_000.0
 
+# Transposition table entry bound types: EXACT means the stored score is the
+# position's true negamax value; LOWERBOUND/UPPERBOUND mean the search that
+# produced it was cut off by beta/alpha, so the true value is only known to
+# be at least/at most the stored score.
+TT_EXACT = 0
+TT_LOWERBOUND = 1
+TT_UPPERBOUND = 2
+
 
 def _terminal_aware_evaluate(board: chess.Board) -> float:
     """Like ``_evaluate_position``, but scores checkmate/stalemate by their
@@ -660,24 +676,38 @@ def _move_severity(blunder_score: float) -> str:
     return ""
 
 
-def _order_moves(board: chess.Board) -> list[chess.Move]:
+def _order_moves(
+    board: chess.Board,
+    killer_move: chess.Move | None = None,
+    tt_move: chess.Move | None = None,
+) -> list[chess.Move]:
     """Order legal moves so alpha-beta pruning cuts more of the tree.
 
-    Captures first (most valuable capture first), then checks, then
+    ``tt_move`` -- the best move found for this exact position in a prior
+    search, per the transposition table -- goes first. Then captures,
+    ranked by captured value with ties broken by cheapest attacker first
+    (MVV-LVA), then checks, then ``killer_move`` -- a quiet move that
+    caused a beta cutoff in a sibling branch at this depth -- then
     everything else.
     """
 
-    def move_key(move: chess.Move) -> tuple[int, int]:
+    def move_key(move: chess.Move) -> tuple[int, int, int]:
+        if move == tt_move:
+            return (4, 0, 0)
         if board.is_capture(move):
             if board.is_en_passant(move):
                 captured_value = PIECE_POINTS[chess.PAWN]
             else:
                 captured_piece = board.piece_at(move.to_square)
                 captured_value = PIECE_POINTS[captured_piece.piece_type] if captured_piece else 0
-            return (2, captured_value)
+            attacker_piece = board.piece_at(move.from_square)
+            attacker_value = PIECE_POINTS[attacker_piece.piece_type] if attacker_piece else 0
+            return (3, captured_value, -attacker_value)
         if board.gives_check(move):
-            return (1, 0)
-        return (0, 0)
+            return (2, 0, 0)
+        if move == killer_move:
+            return (1, 0, 0)
+        return (0, 0, 0)
 
     return sorted(board.legal_moves, key=move_key, reverse=True)
 
@@ -694,12 +724,26 @@ def _negamax(
     center_control_weight: float = CENTER_CONTROL_WEIGHT,
     checkmate_weight: float = CHECKMATE_WEIGHT,
     eval_counter: list[int] | None = None,
+    killer_moves: dict[int, chess.Move] | None = None,
+    transposition_table: dict[int, tuple[int, float, int, chess.Move | None]] | None = None,
 ) -> float:
     """Negamax search with alpha-beta pruning, from the side-to-move's view.
 
     Terminal nodes score mate distance-adjusted (a mate found with more
     depth left to search is closer to the root, so it scores higher) and
     draws as 0. Leaves are scored by ``_evaluate_position``.
+
+    ``killer_moves``, if given, is a shared ``{depth: move}`` table: a quiet
+    move that triggers a beta cutoff at a given depth is remembered there so
+    sibling branches at the same depth try it early, causing their own
+    cutoffs to fire sooner.
+
+    ``transposition_table``, if given, is a shared ``{zobrist_hash: entry}``
+    cache keyed by position. A position reached again -- via a different
+    move order, transposing to the same board -- reuses the stored bound
+    from a prior search of at least the same depth instead of being
+    re-searched, and its best move is tried first everywhere else it's
+    reached, for the same early-cutoff benefit as ``killer_moves``.
     """
     if board.is_checkmate():
         return -(MATE_SCORE + depth)
@@ -718,8 +762,29 @@ def _negamax(
         )
         return score if board.turn == chess.WHITE else -score
 
+    original_alpha = alpha
+    tt_key = None
+    tt_move = None
+    if transposition_table is not None:
+        tt_key = chess.polyglot.zobrist_hash(board)
+        entry = transposition_table.get(tt_key)
+        if entry is not None:
+            entry_depth, entry_score, entry_flag, entry_move = entry
+            tt_move = entry_move
+            if entry_depth >= depth:
+                if entry_flag == TT_EXACT:
+                    return entry_score
+                if entry_flag == TT_LOWERBOUND:
+                    alpha = max(alpha, entry_score)
+                elif entry_flag == TT_UPPERBOUND:
+                    beta = min(beta, entry_score)
+                if alpha >= beta:
+                    return entry_score
+
     best = -math.inf
-    for move in _order_moves(board):
+    best_move = None
+    killer_move = killer_moves.get(depth) if killer_moves is not None else None
+    for move in _order_moves(board, killer_move, tt_move):
         board.push(move)
         try:
             score = -_negamax(
@@ -733,16 +798,46 @@ def _negamax(
                 center_control_weight=center_control_weight,
                 checkmate_weight=checkmate_weight,
                 eval_counter=eval_counter,
+                killer_moves=killer_moves,
+                transposition_table=transposition_table,
             )
         finally:
             board.pop()
+
         if score > best:
             best = score
+            best_move = move
         if best > alpha:
             alpha = best
         if alpha >= beta:
+            if killer_moves is not None and not board.is_capture(move):
+                killer_moves[depth] = move
             break
+
+    if transposition_table is not None and tt_key is not None:
+        if best <= original_alpha:
+            flag = TT_UPPERBOUND
+        elif best >= beta:
+            flag = TT_LOWERBOUND
+        else:
+            flag = TT_EXACT
+        transposition_table[tt_key] = (depth, best, flag, best_move)
+
     return best
+
+
+def _mover_material_advantage(board: chess.Board) -> int:
+    """Material lead for the side to move, in pawns (positive means ahead)."""
+    material = _calculate_material(board)
+    advantage = material["White"] - material["Black"]
+    return advantage if board.turn == chess.WHITE else -advantage
+
+
+# When the side to move is ahead by at least this many pawns of material, it
+# should keep pressing for a win rather than settle for a draw, so moves that
+# would trigger a threefold repetition get penalized in ``choose_engine_move``.
+REPETITION_AVOIDANCE_MATERIAL_PAWNS = 2
+REPETITION_AVOIDANCE_PENALTY = 500.0
 
 
 def choose_engine_move(
@@ -767,6 +862,9 @@ def choose_engine_move(
     """
     rng = rng or random.Random()
     depth = max(1, depth)
+    avoid_repetition = _mover_material_advantage(board) >= REPETITION_AVOIDANCE_MATERIAL_PAWNS
+    killer_moves: dict[int, chess.Move] = {}
+    transposition_table: dict[int, tuple[int, float, int, chess.Move | None]] = {}
     scored_moves: list[tuple[float, chess.Move]] = []
     for move in _order_moves(board):
         board.push(move)
@@ -782,7 +880,11 @@ def choose_engine_move(
                 center_control_weight=center_control_weight,
                 checkmate_weight=checkmate_weight,
                 eval_counter=eval_counter,
+                killer_moves=killer_moves,
+                transposition_table=transposition_table,
             )
+            if avoid_repetition and board.is_repetition(3):
+                value -= REPETITION_AVOIDANCE_PENALTY
         finally:
             board.pop()
         scored_moves.append((value, move))

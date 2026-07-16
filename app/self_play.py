@@ -735,6 +735,29 @@ def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random |
     )
 
 
+def _play_and_save_game(
+    config: SelfPlayConfig,
+    game_index: int,
+    run_id: str,
+    played_at: str,
+) -> SelfPlayGame:
+    """Play one game and persist it immediately, in whichever process played it.
+
+    Submitted as the unit of work to worker processes so a completed game is
+    saved right where it finished, instead of being pickled back to the
+    parent for the parent to save.
+    """
+    game = play_self_game(config, game_index)
+    game.run_id = run_id
+    game.played_at = played_at
+    game.seed = config.seed
+    game.top_k = config.top_k
+    game.max_turns = config.max_turns
+    game.start_fen = config.fen or "startpos"
+    save_self_play_results([game])
+    return game
+
+
 def run_self_play(
     config: SelfPlayConfig,
     *,
@@ -743,18 +766,11 @@ def run_self_play(
 ) -> list[SelfPlayGame]:
     played_at = datetime.now(timezone.utc).isoformat()
     run_id = run_id or (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8])
-    start_fen = config.fen or "startpos"
     games: list[SelfPlayGame] = []
 
     if config.games <= 1:
         game_config = _config_for_game(config, 1)
-        game = play_self_game(game_config, 1)
-        game.run_id = run_id
-        game.played_at = played_at
-        game.seed = game_config.seed
-        game.top_k = config.top_k
-        game.max_turns = config.max_turns
-        game.start_fen = start_fen
+        game = _play_and_save_game(game_config, 1, run_id, played_at)
         games.append(game)
         if progress_callback is not None:
             progress_callback(1, game, games)
@@ -766,7 +782,7 @@ def run_self_play(
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         for i in range(1, config.games + 1):
             game_config = _config_for_game(config, i)
-            future = executor.submit(play_self_game, game_config, i)
+            future = executor.submit(_play_and_save_game, game_config, i, run_id, played_at)
             future_to_index[future] = i
 
         completed_games: dict[int, SelfPlayGame] = {}
@@ -774,12 +790,6 @@ def run_self_play(
         for future in as_completed(future_to_index):
             index = future_to_index[future]
             game = future.result()
-            game.run_id = run_id
-            game.played_at = played_at
-            game.seed = _seed_for_game(config, index)
-            game.top_k = config.top_k
-            game.max_turns = config.max_turns
-            game.start_fen = start_fen
             completed_games[index] = game
             completed_count += 1
             ordered_games = [completed_games[i] for i in sorted(completed_games)]
@@ -864,8 +874,7 @@ def load_tuning_corpus(limit: int = 50) -> list[dict]:
         return corpus
 
     bootstrap_config = SelfPlayConfig(games=max(1, min(5, limit)))
-    bootstrap_games = run_self_play(bootstrap_config)
-    save_self_play_results(bootstrap_games)
+    run_self_play(bootstrap_config)
     return load_self_play_results(limit=limit)
 
 
@@ -908,16 +917,13 @@ def _run_self_play_job(job_id: str, run_id: str, config_data: dict, reporter: "S
 
     try:
         def progress_callback(completed: int, game: SelfPlayGame, games: list[SelfPlayGame]) -> None:
-            save_self_play_results([game])
             with status_lock:
                 status.completed = completed
                 status.message = f"Completed {completed} of {status.total}"
                 status.run_id = game.run_id or run_id
                 reporter.send(status)
 
-        games = run_self_play(config, progress_callback=progress_callback, run_id=run_id)
-        if not config.games:
-            save_self_play_results(games)
+        run_self_play(config, progress_callback=progress_callback, run_id=run_id)
         with status_lock:
             status.state = "completed"
             status.completed = status.total
@@ -1106,7 +1112,6 @@ def main(argv: list[str] | None = None) -> int:
             args.tune_output.write_text(json.dumps(tuning, indent=2), encoding="utf-8")
 
     games = run_self_play(config)
-    save_self_play_results(games)
 
     if args.output:
         args.output.write_text("\n\n".join(game.pgn for game in games) + "\n", encoding="utf-8")

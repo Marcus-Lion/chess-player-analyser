@@ -33,7 +33,6 @@ from app.self_play import (
     load_self_play_results,
     prune_old_jobs,
     run_self_play,
-    save_self_play_results,
     start_self_play_job,
 )
 from app.self_play_metrics import (
@@ -427,7 +426,6 @@ def self_play_run(
         black_center_control_weight=_parse_optional_float(black_center_control_weight),
     )
     recent_games = run_self_play(config)
-    save_self_play_results(recent_games)
     results = load_self_play_results()
     return templates.TemplateResponse("self_play.html", {
         "request": request,

@@ -53,13 +53,16 @@ To control how many games run in parallel (processes), add `--workers`:
 uv run python -m app.self_play --games 20 --workers 20 --max-turns 55
 ```
 
-Each move is chosen by a negamax search. By default the search **depth is
-inversely proportional to the material remaining on the board**, scaled
-linearly from depth 1 at a full board (material 39, the starting value for
-one side -- biggest branching factor, most expensive to search) up to depth
-7 once a side is down to material 0 (smallest branching factor, and deeper
-search matters most for endgame precision). Pass `--depth` to pin a fixed
-depth for the whole game instead (higher is slower but stronger):
+Each move is chosen by a negamax search with alpha-beta pruning, move
+ordering (MVV-LVA, killer moves), and a transposition table. By default the
+search **depth is inversely proportional to the material remaining on the
+board**, scaled linearly from depth 1 at a full board (material 39, the
+starting value for one side -- biggest branching factor, most expensive to
+search) up to depth 7 once a side is down to material 0 (smallest branching
+factor, and deeper search matters most for endgame precision). Pass
+`--depth` to pin a fixed depth for the whole game instead (higher is slower
+but stronger). See [`gameplay_rules.md`](gameplay_rules.md) for the full
+move-selection and game-termination rules:
 
 ```bash
 uv run python -m app.self_play --games 10 --depth 2 --max-turns 55 --top-k 1 --seed 1

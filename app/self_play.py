@@ -801,7 +801,30 @@ def run_self_play(
         completed_count = 0
         for future in as_completed(future_to_index):
             index = future_to_index[future]
-            game = future.result()
+            try:
+                game = future.result()
+            except Exception:
+                # The worker process itself died (crashed/killed) before it could
+                # return or save a result -- distinct from an in-game exception,
+                # which play_self_game already catches and reports as "Crash".
+                traceback.print_exc()
+                game = SelfPlayGame(
+                    index=index,
+                    result="0-0",
+                    termination="disconnect",
+                    plies=0,
+                    pgn="",
+                    final_fen="",
+                    final_score=0.0,
+                    outcome="Disconnected",
+                    run_id=run_id,
+                    played_at=played_at,
+                    seed=config.seed,
+                    top_k=config.top_k,
+                    max_turns=config.max_turns,
+                    start_fen=config.fen or "startpos",
+                )
+                save_self_play_results([game])
             completed_games[index] = game
             completed_count += 1
             ordered_games = [completed_games[i] for i in sorted(completed_games)]

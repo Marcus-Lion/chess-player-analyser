@@ -56,6 +56,16 @@ docker run --rm \
   neo4j:5
 ```
 
+## Run Neo4j privately on GCP
+
+In production (Cloud Run), Neo4j runs on a Compute Engine VM instead of
+locally. See [`README.md`](README.md#private-neo4j-on-gcp) for the full
+architecture; in short: VM `neo4j-server` has no external IP, a firewall
+rule scopes bolt (7687) to a Serverless VPC Access connector's subnet, Cloud
+NAT gives the VM outbound-only internet access to pull images, and Cloud Run
+reaches it privately over the connector. `NEO4J_URI` on Cloud Run points at
+the VM's internal IP rather than `localhost`.
+
 ## Configuration
 
 Export to Neo4j is opt-in via environment variables so the analytics engine is

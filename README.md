@@ -165,6 +165,57 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8134
 
 For production, run with `systemd` and put Nginx in front as a reverse proxy.
 
+## GCP Cloud Run deployment
+
+The app also runs on Cloud Run, built from the repo's `Dockerfile` via Cloud
+Build (no Artifact Registry setup needed):
+
+```bash
+gcloud run deploy chess-player-analyser \
+  --source . \
+  --region us-central1 \
+  --allow-unauthenticated
+```
+
+Live deployment: project `chess-player-502601`, region `us-central1`, service
+`chess-player-analyser` at
+https://chess-player-analyser-859165106671.us-central1.run.app (public, no
+auth -- matches the plain-HTTP Hostinger setup above).
+
+### Private Neo4j on GCP
+
+Self-play (and optional `/analyse` export) needs Neo4j. In production it runs
+on a Compute Engine VM with **no external IP**, reachable only from Cloud Run
+over a private VPC connection -- never exposed to the public internet:
+
+- VM `neo4j-server` (e2-small, `us-central1-a`, Container-Optimized OS,
+  `--no-address`) running the `neo4j:5` container.
+- Firewall `allow-neo4j-from-vpc-connector`: tcp:7687 (bolt) only, source
+  restricted to the VPC connector's subnet (`10.8.0.0/28`) -- never
+  `0.0.0.0/0`.
+- Serverless VPC Access connector `cloudrun-to-vpc` (`us-central1`) lets Cloud
+  Run reach the VM's internal IP.
+- Cloud Router/NAT (`nat-router`/`nat-config`) gives the VM outbound-only
+  internet access (needed to pull container images) without an external IP or
+  any inbound exposure.
+- Cloud Run is wired to it with `--vpc-connector cloudrun-to-vpc` plus the
+  same `NEO4J_ENABLED`/`NEO4J_URI`/`NEO4J_USER`/`NEO4J_PASSWORD` env vars as
+  the [Neo4j option](#neo4j-option) below, with `NEO4J_URI` pointing at the
+  VM's internal IP instead of `localhost`.
+
+Neo4j Browser isn't exposed publicly; admin access is via an SSH tunnel:
+
+```bash
+gcloud compute ssh neo4j-server --zone=us-central1-a --tunnel-through-iap -- -L 7474:localhost:7474
+# then open http://localhost:7474 locally
+```
+
+Data lives on the VM's boot disk rather than a separate persistent disk, so
+deleting/recreating the VM loses it -- the same ephemeral-storage tradeoff
+already accepted for Cloud Run's local file cache. Unlike Cloud Run, none of
+this scales to zero: budget roughly $20-25/month ongoing for the VM,
+connector, and NAT.
+
 ## Game browser
 
 Beyond the analytics dashboard you can inspect individual games move by move:

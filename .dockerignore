@@ -1,0 +1,9 @@
+.venv
+cache/*
+.env
+.git
+.idea
+.ollamassist
+images
+__pycache__
+*.pyc

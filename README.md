@@ -208,17 +208,6 @@ Beyond the analytics dashboard you can inspect individual games move by move:
 The results page also links straight to the browser via
 "Browse all games and step through positions".
 
-## Firebase option
-
-Firebase is useful for:
-- user accounts/auth
-- saving analysis snapshots
-- Firestore for cached profile metadata
-- Cloud Storage for raw PGN archives
-- hosting a separate frontend
-
-For this MVP, local cache files are simpler. Firebase can be added later without changing the analytics engine.
-
 ## Neo4j option
 
 Neo4j lets you explore games as a graph (players, games, opponents) for

@@ -174,13 +174,22 @@ Build (no Artifact Registry setup needed):
 gcloud run deploy chess-player-analyser \
   --source . \
   --region us-central1 \
-  --allow-unauthenticated
+  --allow-unauthenticated \
+  --memory 2Gi --cpu 2 --timeout 1800
 ```
 
 Live deployment: project `chess-player-502601`, region `us-central1`, service
 `chess-player-analyser` at
 https://chess-player-analyser-859165106671.us-central1.run.app (public, no
-auth -- matches the plain-HTTP Hostinger setup above).
+auth -- matches the plain-HTTP Hostinger setup above). Sized at 2 vCPU / 2Gi
+memory with a 30-minute request timeout (up from the Cloud Run defaults of 1
+vCPU / 512Mi / 5 minutes) after self-play runs were getting OOM-killed --
+Cloud Logging showed repeated `Memory limit of 512 MiB exceeded` errors that
+took the WebSocket connection down mid-run. The underlying trigger was
+`app/self_play.py`'s default worker count reading the *host* machine's CPU
+count instead of what the container was actually allocated, over-spawning
+worker processes; it now uses `os.process_cpu_count()`, which respects the
+container's cgroup CPU quota.
 
 ### Private Neo4j on GCP
 
@@ -215,6 +224,19 @@ deleting/recreating the VM loses it -- the same ephemeral-storage tradeoff
 already accepted for Cloud Run's local file cache. Unlike Cloud Run, none of
 this scales to zero: budget roughly $20-25/month ongoing for the VM,
 connector, and NAT.
+
+### Cost
+
+- **Cloud Run** bills per request-second of actual CPU/memory used and
+  scales to zero when idle, so the 1→2 vCPU / 512Mi→2Gi resize roughly
+  doubles the *active-second* rate (~$0.000025/s → ~$0.000053/s) rather than
+  adding a fixed cost. The free tier (180k vCPU-seconds + 360k GiB-seconds/
+  month) covers light/occasional use; the main cost driver is self-play run
+  duration now that the request timeout is 1800s instead of 300s -- a ~10
+  minute self-play run at 2 vCPU/2Gi costs roughly $0.03.
+- **Neo4j VM + connector + NAT** (above) is the real fixed cost: ~$20-25/month,
+  billed continuously since none of it scales to zero, independent of how
+  much the app is actually used.
 
 ## Game browser
 

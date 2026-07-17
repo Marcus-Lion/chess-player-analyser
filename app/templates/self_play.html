@@ -143,6 +143,7 @@
       <div class="progress-bar" aria-label="Self-play progress">
         <div id="progress_fill" class="progress-fill"></div>
       </div>
+      <p class="muted" style="margin-top: .5rem;"><a id="progress_log_link" href="#" target="_blank">View worker logs ↗</a></p>
     </div>
   </div>
 
@@ -246,6 +247,7 @@
     const progressWrap = document.getElementById('progress_wrap');
     const progressText = document.getElementById('progress_text');
     const progressFill = document.getElementById('progress_fill');
+    const progressLogLink = document.getElementById('progress_log_link');
     const submitButton = form.querySelector('button[type="submit"]');
     const gamesInput = form.querySelector('input[name="games"]');
     const activeJobKey = 'selfPlayActiveJobId';
@@ -274,6 +276,7 @@
     // The server pushes every status change over a websocket the moment a
     // worker reports it, instead of the browser polling on a timer.
     function trackJob(jobId, { resuming } = {}) {
+      progressLogLink.href = `/self-play/log/${jobId}`;
       let lastCompleted = -1;
       let watchdog = null;
       let sawFirstMessage = false;

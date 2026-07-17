@@ -35,6 +35,7 @@ from app.self_play import (
     prune_old_jobs,
     run_self_play,
     start_self_play_job,
+    SELF_PLAY_JOBS_DIR,
 )
 from app.self_play_metrics import (
     OUTCOME_ORDER,
@@ -485,6 +486,14 @@ def self_play_start(
         black_center_control_weight=_parse_optional_float(black_center_control_weight),
     )
     return JSONResponse(start_self_play_job(config))
+
+
+@app.get("/self-play/log/{job_id}")
+def self_play_log(job_id: str):
+    log_path = SELF_PLAY_JOBS_DIR / f"{job_id}.log"
+    if not log_path.exists():
+        return HTMLResponse("Log not found", status_code=404)
+    return FileResponse(log_path, media_type="text/plain")
 
 
 @app.get("/self-play/status/{job_id}")

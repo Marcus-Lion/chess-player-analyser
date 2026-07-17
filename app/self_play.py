@@ -976,6 +976,37 @@ def _run_self_play_job(job_id: str, run_id: str, config_data: dict, reporter: "S
         heartbeat_thread.join(timeout=1.0)
 
 
+def _tee_output(infile: Any, log_file: Any, stdout: Any) -> None:
+    """Read lines from infile and write to each outfile, flushing each time."""
+    try:
+        for line in infile:
+            if isinstance(line, bytes):
+                line = line.decode("utf-8", errors="replace")
+            # Write to log file
+            try:
+                log_file.write(line)
+                log_file.flush()
+            except Exception:
+                pass
+            # Write to stdout
+            try:
+                stdout.write(line)
+                stdout.flush()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    finally:
+        try:
+            infile.close()
+        except Exception:
+            pass
+        try:
+            log_file.close()
+        except Exception:
+            pass
+
+
 def start_self_play_job(config: SelfPlayConfig) -> dict:
     hub = get_job_hub()
     prune_old_jobs()
@@ -1044,19 +1075,29 @@ def start_self_play_job(config: SelfPlayConfig) -> dict:
             cmd,
             cwd=str(BASE_DIR),
             env=env,
-            stdout=log_handle,
+            stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE,
             creationflags=creationflags,
             close_fds=True,
         )
+
+        # Tee worker output to both the log file and the main process's stdout
+        # so it's visible in Cloud Run logs.
+        threading.Thread(
+            target=_tee_output,
+            args=(proc.stdout, log_handle, sys.stdout),
+            daemon=True,
+            name=f"job-{job_id}-tee",
+        ).start()
+
         assert proc.stdin is not None
         proc.stdin.write(json.dumps(asdict(config)).encode("utf-8"))
         proc.stdin.close()
-    finally:
-        # The child has inherited its own copy of the handle; the parent no
-        # longer needs it.
+    except Exception as e:
+        print(f"FAILED to launch worker: {e}", flush=True)
         log_handle.close()
+        raise
     return asdict(status)
 
 

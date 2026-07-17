@@ -43,7 +43,9 @@ gcloud run deploy chess-player-analyser \
   --source . \
   --region us-central1 \
   --allow-unauthenticated \
-  --memory 2Gi --cpu 2 --timeout 1800
+  --memory 2Gi --cpu 2 --timeout 1800 \
+  --session-affinity \
+  --no-cpu-throttling
 ```
 
 Live deployment: project `chess-player-502601`, region `us-central1`, service

@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+import dotenv
+
 # Make the ``app`` package importable no matter how this worker was launched.
 # When run by file path (``python app/self_play_worker.py``) or via a debugger
 # that rewrites the launch (PyCharm/pydevd), the project root is not on
@@ -59,4 +61,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    dotenv.load_dotenv()
     raise SystemExit(main())

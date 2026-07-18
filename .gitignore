@@ -8,3 +8,5 @@ cache/*
 
 /.full_logs.txt
 /.logs.json
+/.ollamassist/
+/cache/

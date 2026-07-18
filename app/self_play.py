@@ -662,7 +662,7 @@ def _terminal_reason(board: chess.Board) -> tuple[str, str]:
     return ("", "")
 
 
-def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random | None = None) -> SelfPlayGame:
+def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None = None, rng: random.Random | None = None) -> SelfPlayGame:
     rng = rng or random.Random(config.seed)
     board = chess.Board(config.fen) if config.fen else chess.Board()
     white_weights, black_weights = _player_weight_sets(config, rng)
@@ -676,15 +676,15 @@ def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random |
     game.headers["BlackWeights"] = json.dumps(black_weights, sort_keys=True)
 
     node = game
-    plies = 0
+    turn = 0
     eval_counter = [0]
 
     start_time = time.perf_counter()
     result, termination = _terminal_reason(board)
     try:
-        while plies < config.max_turns and not result:
+        while turn < config.max_turns and not result:
             active_weights = white_weights if board.turn == chess.WHITE else black_weights
-            depth = config.depth if config.depth is not None else _auto_search_depth(board)
+            depth = config.depth if config.depth is not None else _auto_search_depth(board, game_id=f"{run_id}:{game_index}" if run_id else game_index)
             move, _ = choose_engine_move(
                 board,
                 rng,
@@ -701,7 +701,7 @@ def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random |
             board.push(move)
             node = node.add_variation(move)
             node.comment = san
-            plies += 1
+            turn += 1
             result, termination = _terminal_reason(board)
     except Exception:
         # A crashed game shouldn't take the rest of the batch down with it
@@ -732,7 +732,7 @@ def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random |
         index=game_index,
         result=result,
         termination=termination,
-        plies=plies,
+        plies=turn,
         pgn=pgn_text,
         final_fen=board.fen(),
         final_score=final_score,
@@ -743,7 +743,7 @@ def play_self_game(config: SelfPlayConfig, game_index: int, rng: random.Random |
         black_weights=black_weights,
         duration_seconds=duration_seconds,
         evaluations=evaluations,
-        evaluations_per_move=(evaluations / plies) if plies else 0.0,
+        evaluations_per_move=(evaluations / turn) if turn else 0.0,
     )
 
 
@@ -759,7 +759,7 @@ def _play_and_save_game(
     saved right where it finished, instead of being pickled back to the
     parent for the parent to save.
     """
-    game = play_self_game(config, game_index)
+    game = play_self_game(config, game_index, run_id=run_id)
     game.run_id = run_id
     game.played_at = played_at
     game.seed = config.seed

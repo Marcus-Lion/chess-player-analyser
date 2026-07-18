@@ -406,24 +406,21 @@ def get_board_control(board: chess.Board) -> dict[str, int]:
     """Count squares attacked on the forward two ranks for each side.
 
     For White, this is ranks 2 and 3. For Black, this is ranks 7 and 6.
+    Only checks the 16 relevant squares instead of all 64.
     """
-    forward_ranks = {
-        chess.WHITE: {1, 2},
-        chess.BLACK: {5, 6},
-    }
+    white_control = 0
+    black_control = 0
 
-    return {
-        "White": sum(
-            1
-            for sq in chess.SQUARES
-            if chess.square_rank(sq) in forward_ranks[chess.WHITE] and board.is_attacked_by(chess.WHITE, sq)
-        ),
-        "Black": sum(
-            1
-            for sq in chess.SQUARES
-            if chess.square_rank(sq) in forward_ranks[chess.BLACK] and board.is_attacked_by(chess.BLACK, sq)
-        ),
-    }
+    for sq in chess.SQUARES:
+        rank = chess.square_rank(sq)
+        if rank in (1, 2):
+            if board.is_attacked_by(chess.WHITE, sq):
+                white_control += 1
+        elif rank in (5, 6):
+            if board.is_attacked_by(chess.BLACK, sq):
+                black_control += 1
+
+    return {"White": white_control, "Black": black_control}
 
 
 def _calculate_material(board: chess.Board) -> dict[str, int]:
@@ -453,7 +450,7 @@ MAX_AUTO_SEARCH_DEPTH = 7
 AUTO_SEARCH_DEPTH_CURVE_EXPONENT = 0.45
 
 
-def _auto_search_depth(board: chess.Board) -> int:
+def _auto_search_depth(board: chess.Board, game_id: str | int | None = None) -> int:
     """Derive negamax search depth, inversely proportional to material left.
 
     A full board (combined material 78, both sides at their starting value)
@@ -473,16 +470,31 @@ def _auto_search_depth(board: chess.Board) -> int:
     depth_ratio = MAX_AUTO_SEARCH_DEPTH / MIN_AUTO_SEARCH_DEPTH
     depth = MIN_AUTO_SEARCH_DEPTH * depth_ratio ** scaled_fraction
     depth_int = max(MIN_AUTO_SEARCH_DEPTH, min(MAX_AUTO_SEARCH_DEPTH, round(depth)))
-    print(f"{board.fullmove_number}. material: {material} -> depth: {round(depth,2)} -> {depth_int}")
+    prefix = f"[{game_id}] " if game_id is not None else ""
+    print(f"{board.turn} {prefix}. material: W {material['White']} B {material['Black']} -> depth: {round(depth,2)} -> {depth_int}")
     return depth_int
 
 
 def _calculate_center_control(board: chess.Board) -> dict[str, int]:
     """Count control of the 4 central squares (d4, e4, d5, e5)."""
-    center_squares = {chess.D4, chess.E4, chess.D5, chess.E5}
-    white_control = sum(1 for sq in center_squares if board.is_attacked_by(chess.WHITE, sq))
-    black_control = sum(1 for sq in center_squares if board.is_attacked_by(chess.BLACK, sq))
-    return {"White": white_control, "Black": black_control}
+    d4 = chess.D4
+    e4 = chess.E4
+    d5 = chess.D5
+    e5 = chess.E5
+    return {
+        "White": (
+            board.is_attacked_by(chess.WHITE, d4)
+            + board.is_attacked_by(chess.WHITE, e4)
+            + board.is_attacked_by(chess.WHITE, d5)
+            + board.is_attacked_by(chess.WHITE, e5)
+        ),
+        "Black": (
+            board.is_attacked_by(chess.BLACK, d4)
+            + board.is_attacked_by(chess.BLACK, e4)
+            + board.is_attacked_by(chess.BLACK, d5)
+            + board.is_attacked_by(chess.BLACK, e5)
+        ),
+    }
 
 
 def _king_escape_squares(board: chess.Board, king_color: chess.Color) -> int:
@@ -499,8 +511,8 @@ def _king_escape_squares(board: chess.Board, king_color: chess.Color) -> int:
     enemy = not king_color
     escapes = 0
     for square in chess.SquareSet(chess.BB_KING_ATTACKS[king_sq]):
-        occupant = board.piece_at(square)
-        if occupant is not None and occupant.color == king_color:
+        piece = board.piece_at(square)
+        if piece and piece.color == king_color:
             continue
         if board.is_attacked_by(enemy, square):
             continue
@@ -545,6 +557,23 @@ def _color_mobility(board: chess.Board, color: chess.Color) -> int:
     return count
 
 
+def _both_mobilities(board: chess.Board) -> tuple[int, int]:
+    """Calculate legal move counts for both sides in one pass.
+
+    Returns (white_count, black_count) without flipping turn back/forth twice.
+    """
+    original_turn = board.turn
+
+    board.turn = chess.WHITE
+    white_count = len(list(board.legal_moves))
+
+    board.turn = chess.BLACK
+    black_count = len(list(board.legal_moves))
+
+    board.turn = original_turn
+    return white_count, black_count
+
+
 def _evaluate_position(
     board: chess.Board,
     *,
@@ -553,6 +582,7 @@ def _evaluate_position(
     forward_score_weight: float = FORWARD_SCORE_WEIGHT,
     center_control_weight: float = CENTER_CONTROL_WEIGHT,
     checkmate_weight: float = CHECKMATE_WEIGHT,
+    material_memo: dict[int, dict[str, int]] | None = None,
 ) -> float:
     """White-perspective static evaluation used at search leaves.
 
@@ -563,10 +593,18 @@ def _evaluate_position(
     second-order term, which itself generates a full ply of moves) since
     this runs at every leaf of the search tree.
     """
-    material = _calculate_material(board)
+    zh = chess.polyglot.zobrist_hash(board) if material_memo is not None else 0
+    if material_memo is not None and zh in material_memo:
+        material = material_memo[zh]
+    else:
+        material = _calculate_material(board)
+        if material_memo is not None:
+            material_memo[zh] = material
+
     control = get_board_control(board)
     center = _calculate_center_control(board)
-    mobility_score = _color_mobility(board, chess.WHITE) - _color_mobility(board, chess.BLACK)
+    white_mobility, black_mobility = _both_mobilities(board)
+    mobility_score = white_mobility - black_mobility
     material_score = material["White"] - material["Black"]
     forward_score = control["White"] - control["Black"]
     center_score = center["White"] - center["Black"]
@@ -726,6 +764,7 @@ def _negamax(
     eval_counter: list[int] | None = None,
     killer_moves: dict[int, chess.Move] | None = None,
     transposition_table: dict[int, tuple[int, float, int, chess.Move | None]] | None = None,
+    material_memo: dict[int, dict[str, int]] | None = None,
 ) -> float:
     """Negamax search with alpha-beta pruning, from the side-to-move's view.
 
@@ -744,6 +783,10 @@ def _negamax(
     from a prior search of at least the same depth instead of being
     re-searched, and its best move is tried first everywhere else it's
     reached, for the same early-cutoff benefit as ``killer_moves``.
+
+    ``material_memo``, if given, is a shared ``{zobrist_hash: material}``
+    cache to avoid recalculating material at positions reached via different
+    move orders.
     """
     if board.is_checkmate():
         return -(MATE_SCORE + depth)
@@ -759,6 +802,7 @@ def _negamax(
             forward_score_weight=forward_score_weight,
             center_control_weight=center_control_weight,
             checkmate_weight=checkmate_weight,
+            material_memo=material_memo,
         )
         return score if board.turn == chess.WHITE else -score
 
@@ -800,6 +844,7 @@ def _negamax(
                 eval_counter=eval_counter,
                 killer_moves=killer_moves,
                 transposition_table=transposition_table,
+                material_memo=material_memo,
             )
         finally:
             board.pop()
@@ -865,6 +910,7 @@ def choose_engine_move(
     avoid_repetition = _mover_material_advantage(board) >= REPETITION_AVOIDANCE_MATERIAL_PAWNS
     killer_moves: dict[int, chess.Move] = {}
     transposition_table: dict[int, tuple[int, float, int, chess.Move | None]] = {}
+    material_memo: dict[int, dict[str, int]] = {}
     scored_moves: list[tuple[float, chess.Move]] = []
     for move in _order_moves(board):
         board.push(move)
@@ -882,6 +928,7 @@ def choose_engine_move(
                 eval_counter=eval_counter,
                 killer_moves=killer_moves,
                 transposition_table=transposition_table,
+                material_memo=material_memo,
             )
             if avoid_repetition and board.is_repetition(3):
                 value -= REPETITION_AVOIDANCE_PENALTY

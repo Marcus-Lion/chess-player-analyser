@@ -7,3 +7,8 @@ cache/*
 images
 __pycache__
 *.pyc
+.junie
+.claude
+.full_logs.txt
+.logs.json
+

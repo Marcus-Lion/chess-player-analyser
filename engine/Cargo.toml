@@ -1,0 +1,22 @@
+[package]
+name = "chess_engine"
+version = "0.1.0"
+edition = "2021"
+description = "Native negamax self-play engine for chess-player-analyser"
+license = "GPL-3.0-or-later"
+
+[lib]
+name = "chess_engine"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.26", features = ["extension-module"] }
+shakmaty = "0.30"
+rand = "0.8"
+
+# NB: keep the default unwind panic strategy -- PyO3 converts Rust panics into
+# Python exceptions by unwinding across the FFI boundary; panic="abort" would
+# instead kill the whole interpreter (and any self-play worker) on a panic.
+[profile.release]
+lto = true
+codegen-units = 1

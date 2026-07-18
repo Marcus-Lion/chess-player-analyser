@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "chess-engine"
+version = "0.1.0"
+requires-python = ">=3.14"
+description = "Native negamax self-play engine for chess-player-analyser"
+
+[tool.maturin]
+# Produce a single top-level extension module `chess_engine` that
+# `app/self_play.py` imports (with a graceful Python fallback if absent).
+module-name = "chess_engine"

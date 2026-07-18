@@ -10,3 +10,7 @@ cache/*
 /.logs.json
 /.ollamassist/
 /cache/
+
+# Rust engine build artifacts
+/engine/target/
+

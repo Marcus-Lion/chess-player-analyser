@@ -473,8 +473,6 @@ def _auto_search_depth(board: chess.Board, game_id: str | int | None = None) -> 
     depth_ratio = MAX_AUTO_SEARCH_DEPTH / MIN_AUTO_SEARCH_DEPTH
     depth = MIN_AUTO_SEARCH_DEPTH * depth_ratio ** scaled_fraction
     depth_int = max(MIN_AUTO_SEARCH_DEPTH, min(MAX_AUTO_SEARCH_DEPTH, round(depth)))
-    prefix = f"[{game_id}] " if game_id is not None else ""
-    print(f"{board.turn} {prefix}. material: W {material['White']} B {material['Black']} -> depth: {round(depth,2)} -> {depth_int}")
     return depth_int
 
 

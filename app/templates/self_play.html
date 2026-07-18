@@ -173,6 +173,9 @@
 
   <div class="card">
     <h2>Recent saved self-play results</h2>
+    {% if elo %}
+      <p class="muted" style="margin-top: 0;">Estimated Elo from all saved results: White {{ "%.0f"|format(elo.white_elo) }}, Black {{ "%.0f"|format(elo.black_elo) }}, gap {{ "%.0f"|format(elo.elo_diff) }}.</p>
+    {% endif %}
     <p><a href="/self-play/analysis">Analyse results →</a></p>
     {% if results %}
       <div class="filters">

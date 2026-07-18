@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 
 OUTCOME_ORDER = ["White wins", "Black wins", "Draw"]
@@ -31,6 +33,102 @@ def to_dataframe(rows: list[dict]) -> pd.DataFrame:
         df[f"weight_diff_{dim}"] = df[f"white_{dim}"] - df[f"black_{dim}"]
 
     return df
+
+
+def export_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Return one flattened row per game for CSV export and tabular display."""
+    if df.empty:
+        return df.copy()
+
+    out = df.copy()
+
+    if "played_at" in out.columns:
+        played_at = pd.to_datetime(out["played_at"], errors="coerce", utc=True)
+        out["played_at"] = played_at.dt.strftime("%Y-%m-%dT%H:%M:%SZ").fillna("")
+
+    for side, prefix in (("white", "WhiteWeights"), ("black", "BlackWeights")):
+        weights_col = f"{side}_weights"
+        if weights_col not in out.columns:
+            continue
+        weights = out[weights_col].apply(lambda w: w if isinstance(w, dict) else {})
+        for dim in WEIGHT_DIMENSIONS:
+            col = f"{prefix}_{dim}"
+            out[col] = weights.apply(lambda w, dim=dim: w.get(dim))
+
+    if {"white_won", "is_draw"}.issubset(out.columns):
+        white_score_pct = (
+            out["white_won"].astype(float)
+            .add(out["is_draw"].astype(float) * 0.5)
+            .expanding()
+            .mean()
+        )
+        elo_gap = white_score_pct.apply(score_pct_to_elo)
+        out["WhiteElo"] = 1500.0 + elo_gap / 2.0
+        out["BlackElo"] = 1500.0 - elo_gap / 2.0
+        out["EloGap"] = elo_gap
+
+    drop_cols = [col for col in ("white_weights", "black_weights", "pgn", "played_at_display") if col in out.columns]
+    if drop_cols:
+        out = out.drop(columns=drop_cols)
+
+    preferred = [
+        "played_at",
+        "run_id",
+        "index",
+        "seed",
+        "top_k",
+        "max_turns",
+        "start_fen",
+        "result",
+        "termination",
+        "plies",
+        "final_fen",
+        "final_score",
+        "outcome",
+        "winner",
+        "loser",
+        "duration_seconds",
+        "evaluations",
+        "evaluations_per_move",
+        "WhiteElo",
+        "BlackElo",
+        "EloGap",
+        "WhiteWeights_legal_moves_weight",
+        "WhiteWeights_material_score_weight",
+        "WhiteWeights_forward_score_weight",
+        "WhiteWeights_center_control_weight",
+        "BlackWeights_legal_moves_weight",
+        "BlackWeights_material_score_weight",
+        "BlackWeights_forward_score_weight",
+        "BlackWeights_center_control_weight",
+    ]
+    ordered = [col for col in preferred if col in out.columns]
+    ordered.extend(col for col in out.columns if col not in ordered)
+    return out[ordered]
+
+
+def score_pct_to_elo(score_pct: float) -> float:
+    clipped = min(max(float(score_pct), 1e-9), 1.0 - 1e-9)
+    return 400.0 * math.log10(clipped / (1.0 - clipped))
+
+
+def estimate_side_elos(df: pd.DataFrame, baseline: float = 1500.0) -> dict[str, float]:
+    if df.empty:
+        return {
+            "white_score_pct": 0.0,
+            "elo_diff": 0.0,
+            "white_elo": baseline,
+            "black_elo": baseline,
+        }
+
+    white_score_pct = float(df["white_won"].mean() + 0.5 * df["is_draw"].mean())
+    elo_diff = score_pct_to_elo(white_score_pct)
+    return {
+        "white_score_pct": white_score_pct,
+        "elo_diff": elo_diff,
+        "white_elo": baseline + elo_diff / 2.0,
+        "black_elo": baseline - elo_diff / 2.0,
+    }
 
 
 def summary(df: pd.DataFrame) -> dict:
@@ -129,4 +227,27 @@ def weight_diff_scores(df: pd.DataFrame) -> pd.DataFrame:
         frames.append(frame)
     if not frames:
         return pd.DataFrame(columns=["weight_diff", "final_score", "outcome", "weight_dim"])
+    return pd.concat(frames, ignore_index=True)
+
+
+def absolute_weight_scores(df: pd.DataFrame) -> pd.DataFrame:
+    """Per-game absolute white-vs-black weight pairs, long-form across all weight dims."""
+    frames = []
+    if "result" in df.columns:
+        winner = df["result"].map({"1-0": "White", "0-1": "Black", "1/2-1/2": "Draw"}).fillna("Draw")
+    else:
+        winner = pd.Series(index=df.index, dtype=object).fillna("Draw")
+    for dim in WEIGHT_DIMENSIONS:
+        white_col = f"white_{dim}"
+        black_col = f"black_{dim}"
+        if white_col not in df.columns or black_col not in df.columns:
+            continue
+        frame = df[[white_col, black_col]].copy()
+        frame = frame.rename(columns={white_col: "white_weight", black_col: "black_weight"})
+        frame["winner"] = winner
+        frame["weight_dim"] = dim
+        frame = frame.dropna(subset=["white_weight", "black_weight"])
+        frames.append(frame)
+    if not frames:
+        return pd.DataFrame(columns=["white_weight", "black_weight", "winner", "weight_dim"])
     return pd.concat(frames, ignore_index=True)

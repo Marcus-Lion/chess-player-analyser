@@ -106,6 +106,9 @@ for both the CLI and the web form. If you want to pit two fixed weight
 profiles against each other instead, set all four weights (legal-moves,
 material, forward, center) for a side — the web form's weight fields are
 optional and only take effect once a side's full set is filled in.
+The per-player random weight draw now uses absolute float values between
+`0.0` and `4.0`; you can override the bounds with
+`SELF_PLAY_PLAYER_WEIGHT_MIN` and `SELF_PLAY_PLAYER_WEIGHT_MAX` in `.env`.
 
 Games end on checkmate, stalemate, insufficient material, threefold
 repetition, or the fifty-move rule (the fivefold repetition and 75-move

@@ -5,12 +5,25 @@
   <link rel="icon" href="/static/favicon.png" type="image/png" />
   <title>Self-play analysis</title>
   <style>
-    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 1100px; }
-    .card { border: 1px solid #ddd; border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem; }
+    :root { --table-row-height: 2.15rem; }
+    body { font-family: system-ui, sans-serif; margin: 1rem; padding: 0 1rem; max-width: none; width: 100%; box-sizing: border-box; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem; width: 100%; box-sizing: border-box; }
     .grid { display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr)); gap: .75rem; }
     .metric { border: 1px solid #eee; border-radius: 10px; padding: .75rem; }
     .metric b { display: block; font-size: 1.4rem; }
     .chart { margin: 1.5rem 0; }
+    .table-wrap {
+      overflow: auto;
+      max-width: 100%;
+      max-height: calc(var(--table-row-height) * 25 + 4.5rem);
+      border: 1px solid #ddd;
+      border-radius: 12px;
+    }
+    table { border-collapse: collapse; width: max-content; min-width: 100%; font-size: .92rem; }
+    th, td { border-bottom: 1px solid #eee; padding: .35rem .6rem; text-align: left; vertical-align: top; white-space: nowrap; }
+    tbody tr { height: var(--table-row-height); }
+    th { position: sticky; top: 0; background: #fafafa; z-index: 1; }
+    .table-actions { display: flex; gap: 1rem; align-items: center; margin: 1rem 0 .5rem; flex-wrap: wrap; }
     .muted { color: #666; }
   </style>
 </head>
@@ -27,12 +40,42 @@
         <div class="metric">White wins <b>{{ "%.1f"|format(summary.white_win_pct * 100) }}%</b></div>
         <div class="metric">Avg turns <b>{{ "%.0f"|format(summary.avg_plies) }}</b></div>
         <div class="metric">Top termination <b>{{ summary.top_termination }}</b></div>
+        <div class="metric">White Elo <b>{{ "%.0f"|format(elo.white_elo) }}</b></div>
+        <div class="metric">Black Elo <b>{{ "%.0f"|format(elo.black_elo) }}</b></div>
+        <div class="metric">Elo gap <b>{{ "%.0f"|format(elo.elo_diff) }}</b></div>
       </div>
     </div>
 
     {% for name, chart in charts.items() %}
       <div class="card chart">{{ chart | safe }}</div>
     {% endfor %}
+
+    <div class="card">
+      <div class="table-actions">
+        <h2 style="margin: 0;">Row data</h2>
+        <a href="{{ csv_url }}">Download CSV</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              {% for column in table_columns %}
+                <th>{{ column }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in table_rows %}
+              <tr>
+                {% for column in table_columns %}
+                  <td>{{ row[column] }}</td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
   {% else %}
     <p class="muted">No self-play results saved yet. Run some games from the <a href="/self-play">self-play page</a> first.</p>
   {% endif %}

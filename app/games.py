@@ -182,10 +182,10 @@ PIECE_POINTS = {
     chess.KING: 0,
 }
 
-LEGAL_MOVES_WEIGHT:float = 0.3
-MATERIAL_SCORE_WEIGHT:float = 0.35
-FORWARD_SCORE_WEIGHT:float = 0.20
-CENTER_CONTROL_WEIGHT:float = 0.125
+LEGAL_MOVES_WEIGHT:float = 1.59
+MATERIAL_SCORE_WEIGHT:float = 2.38
+FORWARD_SCORE_WEIGHT:float = 1.98
+CENTER_CONTROL_WEIGHT:float = 2.0
 # Weight for the "goal is checkmate" heuristic: how hard the engine leans on
 # driving the enemy king to the edge and cutting off its escape squares. Kept
 # small relative to material so it only breaks ties between otherwise-similar
@@ -1040,6 +1040,8 @@ def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None
     center_score = center["White"] - center["Black"]
     mobility_w, mobility_b = _both_mobilities(board)
     mobility_score = mobility_w - mobility_b
+    pressure = _mate_pressure(board)
+    score = len(legal_moves)
     total_score = _calculate_total_score(
         mobility_score, material_score, forward_score, center_score, pressure
     )

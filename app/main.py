@@ -11,7 +11,7 @@ import chess
 import plotly.express as px
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -52,7 +52,9 @@ from app.self_play_metrics import (
     summary as self_play_summary,
     termination_counts,
     to_dataframe as self_play_to_dataframe,
-    weight_diff_scores,
+    export_dataframe as self_play_export_dataframe,
+    estimate_side_elos,
+    absolute_weight_scores,
     win_rate_by_weight_advantage_all,
 )
 from app.metrics import (
@@ -119,6 +121,12 @@ def _maybe_save_to_neo4j(username: str, df: pd.DataFrame) -> None:
 
 def _fig_html(fig) -> str:
     return fig.to_html(full_html=False, include_plotlyjs="cdn", config={"displayModeBar": False})
+
+
+def _self_play_csv_response(df: pd.DataFrame) -> Response:
+    csv_text = df.to_csv(index=False)
+    headers = {"Content-Disposition": 'attachment; filename="self_play_analysis.csv"'}
+    return Response(content=csv_text, media_type="text/csv", headers=headers)
 
 
 def _make_charts(df: pd.DataFrame) -> dict[str, str]:
@@ -213,15 +221,16 @@ def _make_self_play_charts(df: pd.DataFrame) -> dict[str, str]:
                      category_orders={"outcome": OUTCOME_ORDER})
         charts["score_by_outcome"] = _fig_html(fig)
 
-    weight_scores = weight_diff_scores(df)
+    weight_scores = absolute_weight_scores(df)
     for dim in WEIGHT_DIMENSIONS:
         points = weight_scores[weight_scores["weight_dim"] == dim]
         if points.empty:
             continue
         label = dim.replace("_", " ")
-        fig = px.scatter(points, x="weight_diff", y="final_score", color="outcome",
-                          category_orders={"outcome": OUTCOME_ORDER}, opacity=0.6,
-                          title=f"Final score vs (white − black) {label} advantage")
+        fig = px.scatter(points, x="white_weight", y="black_weight", color="winner",
+                          category_orders={"winner": ["White", "Black", "Draw"]},
+                          opacity=0.7, title=f"White vs black {label}",
+                          labels={"white_weight": "White weight", "black_weight": "Black weight", "winner": "Winner"})
         charts[f"weight_scatter_{dim}"] = _fig_html(fig)
 
     return charts
@@ -417,11 +426,13 @@ def play_move(
 @app.get("/self-play", response_class=HTMLResponse)
 def self_play_page(request: Request):
     results = load_self_play_results()
+    elo = estimate_side_elos(self_play_to_dataframe(results))
     return templates.TemplateResponse("self_play.html", {
         "request": request,
         "results": results,
         "recent_games": [],
         "config": None,
+        "elo": elo,
     })
 
 
@@ -584,11 +595,24 @@ async def self_play_ws(websocket: WebSocket, job_id: str) -> None:
 def self_play_analysis(request: Request):
     rows = load_self_play_results(limit=None)
     df = self_play_to_dataframe(rows)
+    table_df = self_play_export_dataframe(df)
+    elo = estimate_side_elos(df)
     return templates.TemplateResponse("self_play_analysis.html", {
         "request": request,
         "summary": self_play_summary(df),
+        "elo": elo,
         "charts": _make_self_play_charts(df) if not df.empty else {},
+        "table_columns": list(table_df.columns),
+        "table_rows": table_df.to_dict(orient="records"),
+        "csv_url": "/self-play/analysis.csv",
     })
+
+
+@app.get("/self-play/analysis.csv")
+def self_play_analysis_csv():
+    rows = load_self_play_results(limit=None)
+    df = self_play_to_dataframe(rows)
+    return _self_play_csv_response(self_play_export_dataframe(df))
 
 
 @app.get("/games", response_class=HTMLResponse)

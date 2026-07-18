@@ -52,6 +52,13 @@ except ImportError:  # pragma: no cover - exercised only without the built wheel
     chess_engine = None
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return float(raw)
+
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = BASE_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -112,8 +119,8 @@ class SelfPlayConfig:
     # per-player randomized): the objective is the same for everyone.
     checkmate_weight: float = CHECKMATE_WEIGHT
     randomize_player_weights: bool = True
-    player_weight_min_multiplier: float = 0.5
-    player_weight_max_multiplier: float = 1.5
+    player_weight_min: float = 0.0
+    player_weight_max: float = 4.0
     # Fixed per-side overrides: when all four are set for a side, that
     # side skips randomization and always uses these exact weights.
     white_legal_moves_weight: float | None = None
@@ -160,13 +167,12 @@ def _randomize_weight_tuple(
     base_weights: tuple[float, float, float, float],
     rng: random.Random,
     *,
-    min_multiplier: float,
-    max_multiplier: float,
+    stddev: float,
+    min_weight: float,
+    max_weight: float,
 ) -> tuple[float, float, float, float]:
-    log_min = math.log(min_multiplier)
-    log_max = math.log(max_multiplier)
     return tuple(
-        base * math.exp(rng.uniform(log_min, log_max))
+        min(max(rng.gauss(base, stddev), min_weight), max_weight)
         for base in base_weights
     )
 
@@ -199,16 +205,18 @@ def _player_weight_sets(config: SelfPlayConfig, rng: random.Random) -> tuple[dic
         _randomize_weight_tuple(
             base,
             rng,
-            min_multiplier=config.player_weight_min_multiplier,
-            max_multiplier=config.player_weight_max_multiplier,
+            stddev=_env_float("SELF_PLAY_PLAYER_WEIGHT_STDDEV", 1.0),
+            min_weight=config.player_weight_min,
+            max_weight=config.player_weight_max,
         )
     )
     black = fixed_black or _weight_tuple_to_dict(
         _randomize_weight_tuple(
             base,
             rng,
-            min_multiplier=config.player_weight_min_multiplier,
-            max_multiplier=config.player_weight_max_multiplier,
+            stddev=_env_float("SELF_PLAY_PLAYER_WEIGHT_STDDEV", 1.0),
+            min_weight=config.player_weight_min,
+            max_weight=config.player_weight_max,
         )
     )
     return white, black
@@ -234,8 +242,8 @@ def _config_for_game(config: SelfPlayConfig, game_index: int) -> SelfPlayConfig:
         center_control_weight=config.center_control_weight,
         checkmate_weight=config.checkmate_weight,
         randomize_player_weights=config.randomize_player_weights,
-        player_weight_min_multiplier=config.player_weight_min_multiplier,
-        player_weight_max_multiplier=config.player_weight_max_multiplier,
+        player_weight_min=config.player_weight_min,
+        player_weight_max=config.player_weight_max,
         white_legal_moves_weight=config.white_legal_moves_weight,
         white_material_score_weight=config.white_material_score_weight,
         white_forward_score_weight=config.white_forward_score_weight,
@@ -545,22 +553,22 @@ def _extract_samples_from_pgn(pgn_text: str) -> list[tuple[int, int, int, float,
     return samples
 
 
-def _log_loss(probability: float, target: float) -> float:
-    clipped = min(max(probability, 1e-9), 1.0 - 1e-9)
-    return -(target * math.log(clipped) + (1.0 - target) * math.log(1.0 - clipped))
+def _score_pct_to_elo(score_pct: float) -> float:
+    clipped = min(max(score_pct, 1e-9), 1.0 - 1e-9)
+    return 400.0 * math.log10(clipped / (1.0 - clipped))
 
 
-def _evaluate_candidate(
+def _candidate_score_pct(
     samples: list[tuple[int, int, int, float, int, float]],
     weights: tuple[float, float, float, float, float],
     *,
     temperature: float,
 ) -> float:
     if not samples:
-        return float("inf")
+        return 0.0
 
     lm_w, mat_w, fwd_w, cc_w, mate_w = weights
-    total_loss = 0.0
+    total_score = 0.0
     for legal_moves, material_score, forward_score, mate_pressure, side_sign, target in samples:
         # Note: tuning samples don't have center_score; using 0 for simplicity during tuning
         score = _calculate_total_score(
@@ -575,8 +583,17 @@ def _evaluate_candidate(
         ) + mate_w * mate_pressure
         utility = score * side_sign
         probability = _sigmoid(utility / max(temperature, 1e-6))
-        total_loss += _log_loss(probability, target)
-    return total_loss / len(samples)
+        total_score += probability if target >= 0.5 else (1.0 - probability)
+    return total_score / len(samples)
+
+
+def _evaluate_candidate(
+    samples: list[tuple[int, int, int, float, int, float]],
+    weights: tuple[float, float, float, float, float],
+    *,
+    temperature: float,
+) -> float:
+    return _score_pct_to_elo(_candidate_score_pct(samples, weights, temperature=temperature))
 
 
 def tune_score_weights(
@@ -603,7 +620,7 @@ def tune_score_weights(
 
     base_weights = (LEGAL_MOVES_WEIGHT, MATERIAL_SCORE_WEIGHT, FORWARD_SCORE_WEIGHT, CENTER_CONTROL_WEIGHT, CHECKMATE_WEIGHT)
     best_weights = base_weights
-    best_loss = _evaluate_candidate(validation_samples, base_weights, temperature=temperature)
+    best_validation_elo = _evaluate_candidate(validation_samples, base_weights, temperature=temperature)
     history: list[dict[str, float]] = [
         {
             "legal_moves_weight": base_weights[0],
@@ -611,7 +628,7 @@ def tune_score_weights(
             "forward_score_weight": base_weights[2],
             "center_control_weight": base_weights[3],
             "checkmate_weight": base_weights[4],
-            "validation_loss": best_loss,
+            "validation_elo": best_validation_elo,
         }
     ]
 
@@ -623,19 +640,19 @@ def tune_score_weights(
             base * math.exp(rng.uniform(log_min, log_max))
             for base in base_weights
         )
-        loss = _evaluate_candidate(train_samples, candidate, temperature=temperature)
-        validation_loss = _evaluate_candidate(validation_samples, candidate, temperature=temperature)
+        training_elo = _evaluate_candidate(train_samples, candidate, temperature=temperature)
+        validation_elo = _evaluate_candidate(validation_samples, candidate, temperature=temperature)
         history.append({
             "legal_moves_weight": candidate[0],
             "material_score_weight": candidate[1],
             "forward_score_weight": candidate[2],
             "center_control_weight": candidate[3],
             "checkmate_weight": candidate[4],
-            "training_loss": loss,
-            "validation_loss": validation_loss,
+            "training_elo": training_elo,
+            "validation_elo": validation_elo,
         })
-        if validation_loss < best_loss:
-            best_loss = validation_loss
+        if validation_elo > best_validation_elo:
+            best_validation_elo = validation_elo
             best_weights = candidate
 
     return {
@@ -646,7 +663,7 @@ def tune_score_weights(
             "center_control_weight": best_weights[3],
             "checkmate_weight": best_weights[4],
         },
-        "best_validation_loss": best_loss,
+        "best_validation_elo": best_validation_elo,
         "samples": len(samples),
         "train_samples": len(train_samples),
         "validation_samples": len(validation_samples),
@@ -784,7 +801,7 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
     if termination == "Crash":
         summary = {"status": "Crash", "winner": "", "loser": ""}
     else:
-        summary = _result_summary(result, white="Heuristic", black="Heuristic")
+        summary = _result_summary(result, white="White", black="Black")
     evaluations = eval_counter[0]
 
     return SelfPlayGame(
@@ -1187,8 +1204,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--center-control-weight", type=float, default=CENTER_CONTROL_WEIGHT, help="Weight for center control.")
     parser.add_argument("--checkmate-weight", type=float, default=CHECKMATE_WEIGHT, help="Weight for the mate-pressure heuristic (drive the enemy king toward checkmate).")
     parser.add_argument("--fixed-player-weights", action="store_true", help="Use the same weights for both sides.")
-    parser.add_argument("--player-weight-min-multiplier", type=float, default=0.1, help="Lower bound for per-player randomization.")
-    parser.add_argument("--player-weight-max-multiplier", type=float, default=3.5, help="Upper bound for per-player randomization.")
+    parser.add_argument(
+        "--player-weight-min",
+        "--player-weight-min-multiplier",
+        dest="player_weight_min",
+        type=float,
+        default=_env_float("SELF_PLAY_PLAYER_WEIGHT_MIN", 0.0),
+        help="Lower bound for absolute per-player random weights.",
+    )
+    parser.add_argument(
+        "--player-weight-max",
+        "--player-weight-max-multiplier",
+        dest="player_weight_max",
+        type=float,
+        default=_env_float("SELF_PLAY_PLAYER_WEIGHT_MAX", 4.0),
+        help="Upper bound for absolute per-player random weights.",
+    )
     parser.add_argument("--tune-weights", action="store_true", help="Search for better score weights before playing.")
     parser.add_argument("--tune-iterations", type=int, default=100, help="Number of random weight candidates to test.")
     parser.add_argument("--tune-corpus-size", type=int, default=50, help="How many recent self-play games to use as tuning data.")
@@ -1216,8 +1247,8 @@ def main(argv: list[str] | None = None) -> int:
         center_control_weight=args.center_control_weight,
         checkmate_weight=args.checkmate_weight,
         randomize_player_weights=not args.fixed_player_weights,
-        player_weight_min_multiplier=args.player_weight_min_multiplier,
-        player_weight_max_multiplier=args.player_weight_max_multiplier,
+        player_weight_min=args.player_weight_min,
+        player_weight_max=args.player_weight_max,
     )
 
     if args.tune_weights:
@@ -1242,7 +1273,7 @@ def main(argv: list[str] | None = None) -> int:
             f"center={config.center_control_weight:.6f}, "
             f"checkmate={config.checkmate_weight:.6f}"
         )
-        print(f"Validation loss: {tuning['best_validation_loss']:.6f}")
+        print(f"Validation Elo: {tuning['best_validation_elo']:.2f}")
         if args.tune_output:
             args.tune_output.write_text(json.dumps(tuning, indent=2), encoding="utf-8")
 

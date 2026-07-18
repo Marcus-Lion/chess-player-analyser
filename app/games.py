@@ -411,14 +411,17 @@ def get_board_control(board: chess.Board) -> dict[str, int]:
     white_control = 0
     black_control = 0
 
-    for sq in chess.SQUARES:
-        rank = chess.square_rank(sq)
-        if rank in (1, 2):
-            if board.is_attacked_by(chess.WHITE, sq):
-                white_control += 1
-        elif rank in (5, 6):
-            if board.is_attacked_by(chess.BLACK, sq):
-                black_control += 1
+    # White forward squares: d2, e2, f2, g2, h2, d3, e3, f3, g3, h3
+    for sq in (chess.D2, chess.E2, chess.F2, chess.G2, chess.H2,
+               chess.D3, chess.E3, chess.F3, chess.G3, chess.H3):
+        if board.is_attacked_by(chess.WHITE, sq):
+            white_control += 1
+
+    # Black forward squares: d6, e6, f6, g6, h6, d7, e7, f7, g7, h7
+    for sq in (chess.D6, chess.E6, chess.F6, chess.G6, chess.H6,
+               chess.D7, chess.E7, chess.F7, chess.G7, chess.H7):
+        if board.is_attacked_by(chess.BLACK, sq):
+            black_control += 1
 
     return {"White": white_control, "Black": black_control}
 
@@ -565,10 +568,10 @@ def _both_mobilities(board: chess.Board) -> tuple[int, int]:
     original_turn = board.turn
 
     board.turn = chess.WHITE
-    white_count = len(list(board.legal_moves))
+    white_count = sum(1 for _ in board.legal_moves)
 
     board.turn = chess.BLACK
-    black_count = len(list(board.legal_moves))
+    black_count = sum(1 for _ in board.legal_moves)
 
     board.turn = original_turn
     return white_count, black_count
@@ -583,6 +586,7 @@ def _evaluate_position(
     center_control_weight: float = CENTER_CONTROL_WEIGHT,
     checkmate_weight: float = CHECKMATE_WEIGHT,
     material_memo: dict[int, dict[str, int]] | None = None,
+    mate_pressure_memo: dict[int, float] | None = None,
 ) -> float:
     """White-perspective static evaluation used at search leaves.
 
@@ -593,13 +597,21 @@ def _evaluate_position(
     second-order term, which itself generates a full ply of moves) since
     this runs at every leaf of the search tree.
     """
-    zh = chess.polyglot.zobrist_hash(board) if material_memo is not None else 0
+    zh = chess.polyglot.zobrist_hash(board) if (material_memo is not None or mate_pressure_memo is not None) else 0
+
     if material_memo is not None and zh in material_memo:
         material = material_memo[zh]
     else:
         material = _calculate_material(board)
         if material_memo is not None:
             material_memo[zh] = material
+
+    if mate_pressure_memo is not None and zh in mate_pressure_memo:
+        pressure = mate_pressure_memo[zh]
+    else:
+        pressure = _mate_pressure(board)
+        if mate_pressure_memo is not None:
+            mate_pressure_memo[zh] = pressure
 
     control = get_board_control(board)
     center = _calculate_center_control(board)
@@ -613,7 +625,7 @@ def _evaluate_position(
         + material_score_weight * material_score
         + forward_score_weight * forward_score
         + center_control_weight * center_score
-        + checkmate_weight * _mate_pressure(board),
+        + checkmate_weight * pressure,
         2,
     )
 
@@ -765,6 +777,7 @@ def _negamax(
     killer_moves: dict[int, chess.Move] | None = None,
     transposition_table: dict[int, tuple[int, float, int, chess.Move | None]] | None = None,
     material_memo: dict[int, dict[str, int]] | None = None,
+    mate_pressure_memo: dict[int, float] | None = None,
 ) -> float:
     """Negamax search with alpha-beta pruning, from the side-to-move's view.
 
@@ -787,6 +800,10 @@ def _negamax(
     ``material_memo``, if given, is a shared ``{zobrist_hash: material}``
     cache to avoid recalculating material at positions reached via different
     move orders.
+
+    ``mate_pressure_memo``, if given, is a shared ``{zobrist_hash: pressure}``
+    cache to avoid recalculating mate pressure at positions reached via different
+    move orders.
     """
     if board.is_checkmate():
         return -(MATE_SCORE + depth)
@@ -803,6 +820,7 @@ def _negamax(
             center_control_weight=center_control_weight,
             checkmate_weight=checkmate_weight,
             material_memo=material_memo,
+            mate_pressure_memo=mate_pressure_memo,
         )
         return score if board.turn == chess.WHITE else -score
 
@@ -845,6 +863,7 @@ def _negamax(
                 killer_moves=killer_moves,
                 transposition_table=transposition_table,
                 material_memo=material_memo,
+                mate_pressure_memo=mate_pressure_memo,
             )
         finally:
             board.pop()
@@ -911,6 +930,7 @@ def choose_engine_move(
     killer_moves: dict[int, chess.Move] = {}
     transposition_table: dict[int, tuple[int, float, int, chess.Move | None]] = {}
     material_memo: dict[int, dict[str, int]] = {}
+    mate_pressure_memo: dict[int, float] = {}
     scored_moves: list[tuple[float, chess.Move]] = []
     for move in _order_moves(board):
         board.push(move)
@@ -929,6 +949,7 @@ def choose_engine_move(
                 killer_moves=killer_moves,
                 transposition_table=transposition_table,
                 material_memo=material_memo,
+                mate_pressure_memo=mate_pressure_memo,
             )
             if avoid_repetition and board.is_repetition(3):
                 value -= REPETITION_AVOIDANCE_PENALTY

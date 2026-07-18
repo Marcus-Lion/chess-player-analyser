@@ -3,6 +3,7 @@ cache/*
 .env
 .git
 .idea
+engine/target
 .ollamassist
 images
 __pycache__

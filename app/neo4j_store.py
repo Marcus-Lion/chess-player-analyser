@@ -43,7 +43,7 @@ class Neo4jStore:
                 "The 'neo4j' package is not installed. Run `uv sync` to install it."
             )
         self.uri = uri or os.getenv("NEO4J_URI", "bolt://localhost:7687")
-        self.user = user or os.getenv("NEO4J_USER", "neo4j")
+        self.user = user or os.getenv("NEO4J_USERNAME") or os.getenv("NEO4J_USER", "neo4j")
         self.password = password or os.getenv("NEO4J_PASSWORD", "neo4j")
         self.database = database or os.getenv("NEO4J_DATABASE", "neo4j")
         self._driver: Driver = GraphDatabase.driver(

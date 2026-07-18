@@ -972,33 +972,34 @@ def choose_engine_move(
 
 
 def _calculate_total_score(
-    legal_moves: int,
+    mobility_score: int,
     material_score: int,
     forward_score: int,
     center_score: int = 0,
+    pressure: float = 0.0,
     *,
     legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
     material_score_weight: float = MATERIAL_SCORE_WEIGHT,
     forward_score_weight: float = FORWARD_SCORE_WEIGHT,
     center_control_weight: float = CENTER_CONTROL_WEIGHT,
+    checkmate_weight: float = CHECKMATE_WEIGHT,
 ) -> float:
-    """Blend mobility, material, forward, and center control into one position score.
+    """Blend mobility, material, forward, center control, and pressure into one position score.
 
     Formula:
-        total_score = legal_moves_weight * legal_moves
-                    + material_score_weight * material_score
-                    + forward_score_weight * forward_score
-                    + center_control_weight * center_score
+        total_score = w1 * mobility + w2 * material + w3 * forward + w4 * center + w5 * pressure
 
     The weights keep material as the strongest signal, while still letting
     other factors move the score in a visible way.
     """
     return round(
-        legal_moves_weight * legal_moves
+        legal_moves_weight * mobility_score
         + material_score_weight * material_score
         + forward_score_weight * forward_score
         + center_control_weight * center_score
-    , 2)
+        + checkmate_weight * pressure,
+        2,
+    )
 
 
 def _legal_move_arrows(board: chess.Board) -> list[chess.svg.Arrow]:
@@ -1039,8 +1040,11 @@ def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None
     forward_score = (f1["White"] + f2["White"]) - (f1["Black"] + f2["Black"])
     material_score = material["White"] - material["Black"]
     center_score = center["White"] - center["Black"]
-    score = len(legal_moves)
-    total_score = _calculate_total_score(score, material_score, forward_score, center_score)
+    mobility_w, mobility_b = _both_mobilities(board)
+    mobility_score = mobility_w - mobility_b
+    total_score = _calculate_total_score(
+        mobility_score, material_score, forward_score, center_score, pressure
+    )
 
     for move in legal_moves:
         san = board.san(move)

@@ -894,6 +894,8 @@ def run_self_play(
 
 
 def save_self_play_results(games: list[SelfPlayGame]) -> None:
+    if os.getenv("NEO4J_ENABLED", "").lower() not in ("1", "true", "yes", "on"):
+        return
     if not games:
         return
 
@@ -929,12 +931,18 @@ def save_self_play_results(games: list[SelfPlayGame]) -> None:
 
 
 def load_self_play_results(limit: int | None = 50) -> list[dict]:
+    if os.getenv("NEO4J_ENABLED", "").lower() not in ("1", "true", "yes", "on"):
+        return []
+
     with Neo4jStore() as store:
         rows = store.load_self_play_games(limit)
     return [_normalize_result(row) for row in rows]
 
 
 def load_self_play_result(run_id: str, index: int) -> dict | None:
+    if os.getenv("NEO4J_ENABLED", "").lower() not in ("1", "true", "yes", "on"):
+        return None
+
     with Neo4jStore() as store:
         row = store.load_self_play_game(run_id, index)
     return _normalize_result(row) if row is not None else None

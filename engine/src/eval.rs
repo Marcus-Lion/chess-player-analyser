@@ -220,7 +220,7 @@ fn pseudo_mobility(board: &Board, color: Color) -> i32 {
 /// strategic parity (Python uses banker's rounding; the difference only
 /// surfaces on exact .xx5 ties, which are negligible here).
 fn round2(x: f64) -> f64 {
-    (x * 100.0).round() / 100.0
+    (x * 100.0).round_ties_even() / 100.0
 }
 
 /// White-perspective static evaluation (`_evaluate_position`, games.py:580-630):

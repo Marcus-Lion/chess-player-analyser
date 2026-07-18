@@ -60,7 +60,7 @@
         <div class="board-wrap{% if can_move %} movable{% endif %}" id="board-wrap">
           {{ board_svg | safe }}
         </div>
-        <label><input type="checkbox" id="arrows_toggle" /> Show move arrows</label>
+        <label><input type="checkbox" id="board_control_toggle" /> Board Control</label>
       </div>
 
       <div class="panel">
@@ -119,7 +119,7 @@
   <script>
     (function () {
       const boardWrap = document.getElementById('board-wrap');
-      const arrowsToggle = document.getElementById('arrows_toggle');
+      const boardControlToggle = document.getElementById('board_control_toggle');
       const svgPlain = {{ board_svg | tojson }};
       const svgMoves = {{ board_svg_moves | tojson }};
       const moveForm = document.getElementById('moveForm');
@@ -154,11 +154,11 @@
         svg.appendChild(highlight);
       }
 
-      if (arrowsToggle) {
-        arrowsToggle.checked = false;
-        arrowsToggle.addEventListener('change', () => {
+      if (boardControlToggle) {
+        boardControlToggle.checked = false;
+        boardControlToggle.addEventListener('change', () => {
           setSelected(null);
-          boardWrap.innerHTML = arrowsToggle.checked ? svgMoves : svgPlain;
+          boardWrap.innerHTML = boardControlToggle.checked ? svgMoves : svgPlain;
         });
       }
 

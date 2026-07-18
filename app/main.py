@@ -10,7 +10,7 @@ import pandas as pd
 import chess
 import plotly.express as px
 from dotenv import load_dotenv
-from fastapi import FastAPI, Form, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Form, Request, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -42,6 +42,7 @@ from app.self_play import (
     start_self_play_job,
     SELF_PLAY_JOBS_DIR,
 )
+from app.players import get_player, get_player_roster
 from app.self_play_metrics import (
     OUTCOME_ORDER,
     WEIGHT_DIMENSIONS,
@@ -54,6 +55,8 @@ from app.self_play_metrics import (
     to_dataframe as self_play_to_dataframe,
     export_dataframe as self_play_export_dataframe,
     estimate_side_elos,
+    player_detail,
+    player_overview,
     absolute_weight_scores,
     win_rate_by_weight_advantage_all,
 )
@@ -96,6 +99,14 @@ def _parse_optional_float(value: str | None) -> float | None:
         return None
 
 
+def _self_play_elo_baseline() -> float:
+    raw = (os.getenv("BASELINE_ELO") or os.getenv("ELO_BASELINE") or "1500").strip()
+    try:
+        return float(raw)
+    except ValueError:
+        return 1500.0
+
+
 def _cached_paths(username: str) -> tuple[Path, Path]:
     safe = "".join(c for c in username.lower() if c.isalnum() or c in "_-")
     return CACHE_DIR / f"{safe}.pgn", CACHE_DIR / f"{safe}.games.csv"
@@ -127,6 +138,23 @@ def _self_play_csv_response(df: pd.DataFrame) -> Response:
     csv_text = df.to_csv(index=False)
     headers = {"Content-Disposition": 'attachment; filename="self_play_analysis.csv"'}
     return Response(content=csv_text, media_type="text/csv", headers=headers)
+
+
+def _self_play_page_context(request: Request, notice: str | None = None) -> dict:
+    results = load_self_play_results()
+    df = self_play_to_dataframe(results)
+    table_df = self_play_export_dataframe(df)
+    elo = estimate_side_elos(df)
+    context = {
+        "request": request,
+        "results": table_df.to_dict(orient="records"),
+        "recent_games": [],
+        "config": None,
+        "elo": elo,
+    }
+    if notice:
+        context["notice"] = notice
+    return context
 
 
 def _make_charts(df: pd.DataFrame) -> dict[str, str]:
@@ -425,15 +453,7 @@ def play_move(
 
 @app.get("/self-play", response_class=HTMLResponse)
 def self_play_page(request: Request):
-    results = load_self_play_results()
-    elo = estimate_side_elos(self_play_to_dataframe(results))
-    return templates.TemplateResponse("self_play.html", {
-        "request": request,
-        "results": results,
-        "recent_games": [],
-        "config": None,
-        "elo": elo,
-    })
+    return templates.TemplateResponse("self_play.html", _self_play_page_context(request))
 
 
 @app.post("/self-play", response_class=HTMLResponse)
@@ -480,13 +500,28 @@ def self_play_run(
         black_center_control_weight=_parse_optional_float(black_center_control_weight),
     )
     recent_games = run_self_play(config)
-    results = load_self_play_results()
-    return templates.TemplateResponse("self_play.html", {
-        "request": request,
-        "results": results,
-        "recent_games": recent_games,
-        "config": config,
-    })
+    page_context = _self_play_page_context(request)
+    page_context["recent_games"] = recent_games
+    page_context["config"] = config
+    return templates.TemplateResponse("self_play.html", page_context)
+
+
+@app.post("/self-play/delete-all", response_class=HTMLResponse)
+def self_play_delete_all(request: Request):
+    deleted = 0
+    try:
+        from app.neo4j_store import Neo4jStore
+
+        with Neo4jStore() as store:
+            deleted = store.delete_self_play_games()
+    except Exception as exc:
+        return templates.TemplateResponse("self_play.html", {
+            **_self_play_page_context(request, notice=f"Delete failed: {exc}"),
+            "delete_error": str(exc),
+        }, status_code=500)
+
+    notice = f"Deleted {deleted} saved self-play game(s)."
+    return templates.TemplateResponse("self_play.html", _self_play_page_context(request, notice=notice))
 
 
 @app.post("/self-play/start")
@@ -613,6 +648,71 @@ def self_play_analysis_csv():
     rows = load_self_play_results(limit=None)
     df = self_play_to_dataframe(rows)
     return _self_play_csv_response(self_play_export_dataframe(df))
+
+
+@app.get("/self-play/players", response_class=HTMLResponse)
+def self_play_players(request: Request):
+    rows = load_self_play_results(limit=None)
+    df = self_play_to_dataframe(rows)
+    roster = get_player_roster()
+    stats = player_overview(df)
+    stats_by_id = {row.player_id: row for row in stats.itertuples(index=False)}
+    players = []
+    for player in roster:
+        row = stats_by_id.get(player.player_id)
+        players.append({
+            "player_id": player.player_id,
+            "name": player.name,
+            "description": player.description,
+            "legal_moves_weight": player.legal_moves_weight,
+            "material_score_weight": player.material_score_weight,
+            "forward_score_weight": player.forward_score_weight,
+            "center_control_weight": player.center_control_weight,
+            "games": int(getattr(row, "games", 0) or 0),
+            "wins": int(getattr(row, "wins", 0) or 0),
+            "draws": int(getattr(row, "draws", 0) or 0),
+            "losses": int(getattr(row, "losses", 0) or 0),
+            "score_pct": float(getattr(row, "score_pct", 0.0) or 0.0),
+            "white_games": int(getattr(row, "white_games", 0) or 0),
+            "black_games": int(getattr(row, "black_games", 0) or 0),
+            "elo": float(getattr(row, "elo", _self_play_elo_baseline()) or _self_play_elo_baseline()),
+        })
+    return templates.TemplateResponse("self_play_players.html", {
+        "request": request,
+        "players": players,
+    })
+
+
+@app.get("/self-play/players/{player_id}", response_class=HTMLResponse)
+def self_play_player(request: Request, player_id: str):
+    player = get_player(player_id)
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    rows = load_self_play_results(limit=None)
+    df = self_play_to_dataframe(rows)
+    detail = player_detail(df, player_id)
+    overview = detail["overview"] or {
+        "player_id": player.player_id,
+        "player_name": player.name,
+        "player_description": player.description,
+        "games": 0,
+        "wins": 0,
+        "draws": 0,
+        "losses": 0,
+        "score_pct": 0.0,
+        "white_games": 0,
+        "black_games": 0,
+        "elo": _self_play_elo_baseline(),
+    }
+    games_df = detail["games"]
+    games = games_df.to_dict(orient="records") if not games_df.empty else []
+    return templates.TemplateResponse("self_play_player.html", {
+        "request": request,
+        "player": player,
+        "overview": overview,
+        "games": games,
+    })
 
 
 @app.get("/games", response_class=HTMLResponse)

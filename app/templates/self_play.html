@@ -58,6 +58,23 @@
     .filters .range input { width: 5.5rem; }
     .filters button { align-self: flex-end; }
     #filter_count { margin-bottom: .5rem; }
+    .danger {
+      background: #b91c1c;
+      color: white;
+      border: 1px solid #991b1b;
+      border-radius: 8px;
+      padding: .55rem .85rem;
+      cursor: pointer;
+    }
+    .danger:hover { background: #991b1b; }
+    .notice {
+      padding: .75rem .9rem;
+      border: 1px solid #d1fae5;
+      background: #ecfdf5;
+      border-radius: 10px;
+      color: #065f46;
+      margin: 0 0 1rem 0;
+    }
   </style>
 </head>
 <body>
@@ -154,6 +171,7 @@
         <div class="metric">
           <b><a href="/self-play/view/{{ game.run_id }}/{{ game.index }}">Game {{ game.index }} · {{ game.result }} · {{ game.plies }} turns</a></b>
           <div>Outcome: {{ game.outcome }}{% if game.winner %} · Winner: {{ game.winner }}{% endif %}{% if game.loser %} · Loser: {{ game.loser }}{% endif %}</div>
+          <div>Players: {% if game.white_player_id %}<a href="/self-play/players/{{ game.white_player_id }}">{{ game.white_player_name }}</a>{% else %}{{ game.white_player_name }}{% endif %} vs {% if game.black_player_id %}<a href="/self-play/players/{{ game.black_player_id }}">{{ game.black_player_name }}</a>{% else %}{{ game.black_player_name }}{% endif %}</div>
           <div>Termination: {{ game.termination }}</div>
           <div>Final score: {{ "%.2f"|format(game.final_score) }}</div>
           <div>Time to play: {{ "%.2f"|format(game.duration_seconds) }}s · Evaluations: {{ game.evaluations }} total, {{ "%.0f"|format(game.evaluations_per_move) }} per move</div>
@@ -173,10 +191,17 @@
 
   <div class="card">
     <h2>Recent saved self-play results</h2>
+    {% if notice %}
+      <div class="notice">{{ notice }}</div>
+    {% endif %}
     {% if elo %}
       <p class="muted" style="margin-top: 0;">Estimated Elo from all saved results: White {{ "%.0f"|format(elo.white_elo) }}, Black {{ "%.0f"|format(elo.black_elo) }}, gap {{ "%.0f"|format(elo.elo_diff) }}.</p>
     {% endif %}
     <p><a href="/self-play/analysis">Analyse results →</a></p>
+    <p><a href="/self-play/players">View players →</a></p>
+    <form method="post" action="/self-play/delete-all" onsubmit="return confirm('Delete all saved self-play results? This cannot be undone.');" style="margin: .75rem 0 1rem 0;">
+      <button type="submit" class="danger">Delete all prior self-play</button>
+    </form>
     {% if results %}
       <div class="filters">
         <label>Result
@@ -211,7 +236,11 @@
         <thead>
           <tr>
             <th>Played at</th>
+            <th>White player</th>
+            <th>Black player</th>
             <th>Result</th>
+            <th>White Elo</th>
+            <th>Black Elo</th>
             <th>Turns</th>
             <th>Termination</th>
             <th>Final score</th>
@@ -228,8 +257,12 @@
                 data-termination="{{ row.termination }}"
                 data-plies="{{ row.plies }}"
                 data-final-score="{{ row.final_score }}">
-              <td>{{ row.played_at_display if row.played_at_display else row.played_at }}</td>
+              <td>{{ row.played_at }}</td>
+              <td>{% if row.white_player_id %}<a href="/self-play/players/{{ row.white_player_id }}">{{ row.white_player_name or row.white_player_id }}</a>{% else %}{{ row.white_player_name or "" }}{% endif %}</td>
+              <td>{% if row.black_player_id %}<a href="/self-play/players/{{ row.black_player_id }}">{{ row.black_player_name or row.black_player_id }}</a>{% else %}{{ row.black_player_name or "" }}{% endif %}</td>
               <td><a href="/self-play/view/{{ row.run_id }}/{{ row.index }}">{{ row.result }}</a></td>
+              <td>{{ "%.0f"|format(row.WhiteElo if row.WhiteElo is not none else 0) }}</td>
+              <td>{{ "%.0f"|format(row.BlackElo if row.BlackElo is not none else 0) }}</td>
               <td>{{ row.plies }}</td>
               <td>{{ row.termination }}</td>
               <td>{{ "%.2f"|format(row.final_score) }}</td>
@@ -254,10 +287,44 @@
     const submitButton = form.querySelector('button[type="submit"]');
     const gamesInput = form.querySelector('input[name="games"]');
     const activeJobKey = 'selfPlayActiveJobId';
+    const formStateKey = 'selfPlayHarnessFormState';
     // If a job we're tracking makes no forward progress for this long it's an
     // orphan (its worker died), so we stop waiting and free the UI instead of
     // waiting on the socket forever.
     const NO_PROGRESS_TIMEOUT_MS = 1000000;
+
+    function readSavedFormState() {
+      try {
+        const raw = localStorage.getItem(formStateKey);
+        return raw ? JSON.parse(raw) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function saveFormState() {
+      const state = {};
+      Array.from(form.elements).forEach((el) => {
+        if (!el.name || el.disabled || el.type === 'submit' || el.type === 'button' || el.type === 'fieldset') {
+          return;
+        }
+        state[el.name] = el.value;
+      });
+      localStorage.setItem(formStateKey, JSON.stringify(state));
+    }
+
+    function restoreFormState() {
+      const saved = readSavedFormState();
+      if (!saved) {
+        return;
+      }
+      Array.from(form.elements).forEach((el) => {
+        if (!el.name || !(el.name in saved)) {
+          return;
+        }
+        el.value = saved[el.name];
+      });
+    }
 
     function releaseJob() {
       // Stop tracking whatever job was active and re-enable the form so the
@@ -402,13 +469,20 @@
       trackJob(jobId, { resuming: true });
     }
 
+    restoreFormState();
+    saveFormState();
+    form.addEventListener('input', saveFormState);
+    form.addEventListener('change', saveFormState);
+
     form.addEventListener('submit', async (event) => {
       const games = Number(gamesInput.value || '1');
       if (!(games > 1)) {
+        saveFormState();
         return;
       }
 
       event.preventDefault();
+      saveFormState();
       submitButton.disabled = true;
       setProgress(0, games, 'Starting...');
 

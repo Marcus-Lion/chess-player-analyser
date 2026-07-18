@@ -182,10 +182,10 @@ PIECE_POINTS = {
     chess.KING: 0,
 }
 
-LEGAL_MOVES_WEIGHT:float = 1.59
-MATERIAL_SCORE_WEIGHT:float = 2.38
-FORWARD_SCORE_WEIGHT:float = 1.98
-CENTER_CONTROL_WEIGHT:float = 2.0
+LEGAL_MOVES_WEIGHT:float = 2.0
+MATERIAL_SCORE_WEIGHT:float = 1.0
+FORWARD_SCORE_WEIGHT:float = 1.0
+CENTER_CONTROL_WEIGHT:float = 1.0
 # Weight for the "goal is checkmate" heuristic: how hard the engine leans on
 # driving the enemy king to the edge and cutting off its escape squares. Kept
 # small relative to material so it only breaks ties between otherwise-similar

@@ -79,7 +79,7 @@
           <button type="button" id="prev_btn">◀</button>
           <button type="button" id="next_btn">▶</button>
           <button type="button" id="last_btn">⏭</button>
-          <label><input type="checkbox" id="arrows_toggle" /> Show move arrows</label>
+          <label><input type="checkbox" id="board_control_toggle" /> Board Control</label>
           <span id="position_label" class="muted">Start position</span>
         </div>
 
@@ -130,7 +130,7 @@
       const score = document.getElementById('score');
       const legalScore = document.getElementById('legal_score');
       const links = Array.from(document.querySelectorAll('#positions_list a[data-index]'));
-      const arrowsToggle = document.getElementById('arrows_toggle');
+      const boardControlToggle = document.getElementById('board_control_toggle');
       const firstBtn = document.getElementById('first_btn');
       const prevBtn = document.getElementById('prev_btn');
       const nextBtn = document.getElementById('next_btn');
@@ -161,7 +161,7 @@
         const pos = positions[index];
         current = index;
         slider.value = String(index);
-        boardWrap.innerHTML = arrowsToggle.checked ? pos.svg_moves : pos.svg;
+        boardWrap.innerHTML = boardControlToggle.checked ? pos.svg_moves : pos.svg;
         forwardList.innerHTML = `
           <li>1st order: White ${pos.forward_1.White} / Black ${pos.forward_1.Black}</li>
           <li>2nd order: White ${pos.forward_2.White} / Black ${pos.forward_2.Black}</li>
@@ -184,7 +184,7 @@
       nextBtn.addEventListener('click', () => render(Math.min(positions.length - 1, current + 1)));
       lastBtn.addEventListener('click', () => render(positions.length - 1));
       slider.addEventListener('input', (event) => render(Number(event.target.value)));
-      arrowsToggle.addEventListener('change', () => render(current));
+      boardControlToggle.addEventListener('change', () => render(current));
       links.forEach(link => {
         link.addEventListener('click', (event) => {
           event.preventDefault();

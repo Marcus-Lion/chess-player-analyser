@@ -7,6 +7,8 @@ from typing import Iterator
 
 import pandas as pd
 
+from app.self_play_metrics import player_overview, to_dataframe as self_play_to_dataframe
+
 try:
     from neo4j import GraphDatabase, Driver
 except Exception:  # pragma: no cover - neo4j is an optional dependency
@@ -21,6 +23,14 @@ class Neo4jStore:
 
         (:Player {username})-[:PLAYED]->(:Game {game_id, ...})
         (:Game)-[:AGAINST]->(:Opponent {name})
+
+    Self-play results use a separate namespace so they do not collide with
+    imported human games:
+
+        (:SelfPlayPlayer {player_id, name, description, weights...})
+            {elo}
+            <-[:PLAYED_AS_WHITE]- (:SelfPlayGame {game_key, ...})
+            <-[:PLAYED_AS_BLACK]-
 
     Configuration is read from environment variables so the analytics engine
     stays unchanged when Neo4j is not configured:
@@ -117,19 +127,32 @@ class Neo4jStore:
         return len(rows)
 
     def ensure_self_play_constraints(self) -> None:
-        statement = (
+        statements = [
             "CREATE CONSTRAINT self_play_game_key IF NOT EXISTS "
-            "FOR (g:SelfPlayGame) REQUIRE g.game_key IS UNIQUE"
-        )
+            "FOR (g:SelfPlayGame) REQUIRE g.game_key IS UNIQUE",
+            "CREATE CONSTRAINT self_play_player_id IF NOT EXISTS "
+            "FOR (p:SelfPlayPlayer) REQUIRE p.player_id IS UNIQUE",
+        ]
         with self._driver.session(database=self.database) as session:
-            session.run(statement)
+            for statement in statements:
+                session.run(statement)
 
     @staticmethod
     def _encode_self_play_row(game: dict) -> dict:
         row = dict(game)
         row["game_key"] = f"{row.get('run_id')}:{row.get('index')}"
-        row["white_weights_json"] = json.dumps(row.pop("white_weights", None))
-        row["black_weights_json"] = json.dumps(row.pop("black_weights", None))
+        white_weights = row.pop("white_weights", None) or {}
+        black_weights = row.pop("black_weights", None) or {}
+        row["white_weights_json"] = json.dumps(white_weights)
+        row["black_weights_json"] = json.dumps(black_weights)
+        row["white_legal_moves_weight"] = white_weights.get("legal_moves_weight")
+        row["white_material_score_weight"] = white_weights.get("material_score_weight")
+        row["white_forward_score_weight"] = white_weights.get("forward_score_weight")
+        row["white_center_control_weight"] = white_weights.get("center_control_weight")
+        row["black_legal_moves_weight"] = black_weights.get("legal_moves_weight")
+        row["black_material_score_weight"] = black_weights.get("material_score_weight")
+        row["black_forward_score_weight"] = black_weights.get("forward_score_weight")
+        row["black_center_control_weight"] = black_weights.get("center_control_weight")
         return row
 
     @staticmethod
@@ -141,7 +164,7 @@ class Neo4jStore:
         return row
 
     def save_self_play_games(self, games: list[dict]) -> int:
-        """Upsert self-play game results, keyed on ``run_id``+``index``."""
+        """Upsert self-play game results and player nodes, keyed on run/index."""
         if not games:
             return 0
 
@@ -151,12 +174,65 @@ class Neo4jStore:
         UNWIND $rows AS row
         MERGE (g:SelfPlayGame {game_key: row.game_key})
         SET g += row
+        WITH g, row
+        FOREACH (_ IN CASE WHEN row.white_player_id IS NULL THEN [] ELSE [1] END |
+            MERGE (white:SelfPlayPlayer {player_id: row.white_player_id})
+            SET white.name = row.white_player_name,
+                white.description = row.white_player_description,
+                white.legal_moves_weight = row.white_legal_moves_weight,
+                white.material_score_weight = row.white_material_score_weight,
+                white.forward_score_weight = row.white_forward_score_weight,
+                white.center_control_weight = row.white_center_control_weight
+            MERGE (g)-[:PLAYED_AS_WHITE]->(white)
+        )
+        FOREACH (_ IN CASE WHEN row.black_player_id IS NULL THEN [] ELSE [1] END |
+            MERGE (black:SelfPlayPlayer {player_id: row.black_player_id})
+            SET black.name = row.black_player_name,
+                black.description = row.black_player_description,
+                black.legal_moves_weight = row.black_legal_moves_weight,
+                black.material_score_weight = row.black_material_score_weight,
+                black.forward_score_weight = row.black_forward_score_weight,
+                black.center_control_weight = row.black_center_control_weight
+            MERGE (g)-[:PLAYED_AS_BLACK]->(black)
+        )
         """
 
         self.ensure_self_play_constraints()
         with self._driver.session(database=self.database) as session:
             session.run(query, rows=rows)
+        self.refresh_self_play_player_elos()
         return len(rows)
+
+    def refresh_self_play_player_elos(self) -> int:
+        """Recompute and persist Elo on every self-play player node."""
+        rows = self.load_self_play_games(limit=None)
+        if not rows:
+            return 0
+
+        df = self_play_to_dataframe(rows)
+        if df.empty:
+            return 0
+
+        stats = player_overview(df)
+        player_rows = [
+            {
+                "player_id": str(row.player_id),
+                "elo": float(row.elo),
+            }
+            for row in stats.itertuples(index=False)
+            if getattr(row, "player_id", None) is not None
+        ]
+        if not player_rows:
+            return 0
+
+        query = """
+        UNWIND $rows AS row
+        MATCH (p:SelfPlayPlayer {player_id: row.player_id})
+        SET p.elo = row.elo
+        """
+        with self._driver.session(database=self.database) as session:
+            session.run(query, rows=player_rows)
+        return len(player_rows)
 
     def load_self_play_games(self, limit: int | None = 50) -> list[dict]:
         """Load self-play games, oldest first (matches the old JSONL append order)."""
@@ -180,6 +256,31 @@ class Neo4jStore:
         if record is None:
             return None
         return self._decode_self_play_row(dict(record["g"]))
+
+    def delete_self_play_games(self) -> int:
+        """Delete every saved self-play game result."""
+        with self._driver.session(database=self.database) as session:
+            games_record = session.run(
+                """
+                MATCH (g:SelfPlayGame)
+                WITH collect(g) AS games, count(g) AS deleted
+                FOREACH (game IN games | DETACH DELETE game)
+                RETURN deleted
+                """
+            ).single()
+            players_record = session.run(
+                """
+                MATCH (p:SelfPlayPlayer)
+                WHERE NOT (p)--()
+                WITH collect(p) AS players, count(p) AS deleted
+                FOREACH (player IN players | DETACH DELETE player)
+                RETURN deleted
+                """
+            ).single()
+
+        games_deleted = int(games_record["deleted"]) if games_record is not None else 0
+        players_deleted = int(players_record["deleted"]) if players_record is not None else 0
+        return games_deleted + players_deleted
 
 
 @contextmanager

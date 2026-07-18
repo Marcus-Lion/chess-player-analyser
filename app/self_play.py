@@ -40,7 +40,9 @@ from app.games import (
     _result_summary,
     choose_engine_move,
 )
+from app.players import PlayerProfile, pick_two_players
 from app.neo4j_store import Neo4jStore
+from app.self_play_metrics import player_overview, to_dataframe as self_play_to_dataframe
 
 try:
     # Native negamax engine (see engine/). When present, play_self_game runs
@@ -91,6 +93,12 @@ class SelfPlayGame:
     start_fen: str = "startpos"
     white_weights: dict[str, float] | None = None
     black_weights: dict[str, float] | None = None
+    white_player_id: str | None = None
+    white_player_name: str | None = None
+    white_player_description: str | None = None
+    black_player_id: str | None = None
+    black_player_name: str | None = None
+    black_player_description: str | None = None
     duration_seconds: float = 0.0
     evaluations: int = 0
     evaluations_per_move: float = 0.0
@@ -119,7 +127,7 @@ class SelfPlayConfig:
     # per-player randomized): the objective is the same for everyone.
     checkmate_weight: float = CHECKMATE_WEIGHT
     randomize_player_weights: bool = True
-    player_weight_min: float = 0.0
+    player_weight_min: float = -4.0
     player_weight_max: float = 4.0
     # Fixed per-side overrides: when all four are set for a side, that
     # side skips randomization and always uses these exact weights.
@@ -163,20 +171,6 @@ def _weight_tuple_to_dict(weights: tuple[float, float, float, float]) -> dict[st
     }
 
 
-def _randomize_weight_tuple(
-    base_weights: tuple[float, float, float, float],
-    rng: random.Random,
-    *,
-    stddev: float,
-    min_weight: float,
-    max_weight: float,
-) -> tuple[float, float, float, float]:
-    return tuple(
-        min(max(rng.gauss(base, stddev), min_weight), max_weight)
-        for base in base_weights
-    )
-
-
 def _fixed_side_weights(
     config: SelfPlayConfig, side: str
 ) -> dict[str, float] | None:
@@ -189,37 +183,53 @@ def _fixed_side_weights(
     return _weight_tuple_to_dict((lm, mat, fwd, cc))
 
 
-def _player_weight_sets(config: SelfPlayConfig, rng: random.Random) -> tuple[dict[str, float], dict[str, float]]:
+def _player_weight_sets(
+    config: SelfPlayConfig, rng: random.Random
+) -> tuple[
+    PlayerProfile | None,
+    dict[str, float],
+    PlayerProfile | None,
+    dict[str, float],
+]:
     base = _score_weights(config)
     fixed_white = _fixed_side_weights(config, "white")
     fixed_black = _fixed_side_weights(config, "black")
 
     if fixed_white is not None and fixed_black is not None:
-        return fixed_white, fixed_black
+        return None, fixed_white, None, fixed_black
 
     if not config.randomize_player_weights:
         shared = _weight_tuple_to_dict(base)
-        return fixed_white or shared, fixed_black or shared.copy()
+        return None, fixed_white or shared, None, fixed_black or shared.copy()
 
-    white = fixed_white or _weight_tuple_to_dict(
-        _randomize_weight_tuple(
-            base,
-            rng,
-            stddev=_env_float("SELF_PLAY_PLAYER_WEIGHT_STDDEV", 1.0),
-            min_weight=config.player_weight_min,
-            max_weight=config.player_weight_max,
-        )
+    white_player, black_player = pick_two_players(rng, _current_player_skill_levels())
+    white = fixed_white or white_player.weights
+    black = fixed_black or black_player.weights
+    return (
+        None if fixed_white is not None else white_player,
+        white,
+        None if fixed_black is not None else black_player,
+        black,
     )
-    black = fixed_black or _weight_tuple_to_dict(
-        _randomize_weight_tuple(
-            base,
-            rng,
-            stddev=_env_float("SELF_PLAY_PLAYER_WEIGHT_STDDEV", 1.0),
-            min_weight=config.player_weight_min,
-            max_weight=config.player_weight_max,
-        )
-    )
-    return white, black
+
+
+def _current_player_skill_levels() -> dict[str, float]:
+    """Return the latest per-player Elo estimates from saved self-play games."""
+    try:
+        rows = load_self_play_results(limit=None)
+        if not rows:
+            return {}
+        df = self_play_to_dataframe(rows)
+        if df.empty:
+            return {}
+        stats = player_overview(df)
+        return {
+            row.player_id: float(row.elo)
+            for row in stats.itertuples(index=False)
+            if getattr(row, "player_id", None)
+        }
+    except Exception:
+        return {}
 
 
 def _seed_for_game(config: SelfPlayConfig, game_index: int) -> int | None:
@@ -728,15 +738,23 @@ def _rust_engine_move(
 def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None = None, rng: random.Random | None = None) -> SelfPlayGame:
     rng = rng or random.Random(config.seed)
     board = chess.Board(config.fen) if config.fen else chess.Board()
-    white_weights, black_weights = _player_weight_sets(config, rng)
+    white_player, white_weights, black_player, black_weights = _player_weight_sets(config, rng)
+    white_player_name = white_player.name if white_player is not None else "Custom White"
+    black_player_name = black_player.name if black_player is not None else "Custom Black"
     game = chess.pgn.Game()
     game.headers["Event"] = "Self-play harness"
     game.headers["Site"] = "Local"
     game.headers["Round"] = str(game_index)
-    game.headers["White"] = "Heuristic"
-    game.headers["Black"] = "Heuristic"
+    game.headers["White"] = white_player_name
+    game.headers["Black"] = black_player_name
     game.headers["WhiteWeights"] = json.dumps(white_weights, sort_keys=True)
     game.headers["BlackWeights"] = json.dumps(black_weights, sort_keys=True)
+    if white_player is not None:
+        game.headers["WhitePlayerId"] = white_player.player_id
+        game.headers["WhitePlayerDescription"] = white_player.description
+    if black_player is not None:
+        game.headers["BlackPlayerId"] = black_player.player_id
+        game.headers["BlackPlayerDescription"] = black_player.description
 
     node = game
     turn = 0
@@ -801,7 +819,7 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
     if termination == "Crash":
         summary = {"status": "Crash", "winner": "", "loser": ""}
     else:
-        summary = _result_summary(result, white="White", black="Black")
+        summary = _result_summary(result, white=white_player_name, black=black_player_name)
     evaluations = eval_counter[0]
 
     return SelfPlayGame(
@@ -817,6 +835,12 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
         loser=summary["loser"],
         white_weights=white_weights,
         black_weights=black_weights,
+        white_player_id=white_player.player_id if white_player is not None else None,
+        white_player_name=white_player_name,
+        white_player_description=white_player.description if white_player is not None else None,
+        black_player_id=black_player.player_id if black_player is not None else None,
+        black_player_name=black_player_name,
+        black_player_description=black_player.description if black_player is not None else None,
         duration_seconds=duration_seconds,
         evaluations=evaluations,
         evaluations_per_move=(evaluations / turn) if turn else 0.0,
@@ -829,12 +853,7 @@ def _play_and_save_game(
     run_id: str,
     played_at: str,
 ) -> SelfPlayGame:
-    """Play one game and persist it immediately, in whichever process played it.
-
-    Submitted as the unit of work to worker processes so a completed game is
-    saved right where it finished, instead of being pickled back to the
-    parent for the parent to save.
-    """
+    """Play one game and return it to the caller for persistence."""
     game = play_self_game(config, game_index, run_id=run_id)
     game.run_id = run_id
     game.played_at = played_at
@@ -842,7 +861,6 @@ def _play_and_save_game(
     game.top_k = config.top_k
     game.max_turns = config.max_turns
     game.start_fen = config.fen or "startpos"
-    save_self_play_results([game])
     return game
 
 
@@ -859,6 +877,7 @@ def run_self_play(
     if config.games <= 1:
         game_config = _config_for_game(config, 1)
         game = _play_and_save_game(game_config, 1, run_id, played_at)
+        save_self_play_results([game])
         games.append(game)
         if progress_callback is not None:
             progress_callback(1, game, games)
@@ -900,7 +919,7 @@ def run_self_play(
                     max_turns=config.max_turns,
                     start_fen=config.fen or "startpos",
                 )
-                save_self_play_results([game])
+            save_self_play_results([game])
             completed_games[index] = game
             completed_count += 1
             ordered_games = [completed_games[i] for i in sorted(completed_games)]
@@ -933,6 +952,12 @@ def save_self_play_results(games: list[SelfPlayGame]) -> None:
             "loser": game.loser,
             "white_weights": game.white_weights,
             "black_weights": game.black_weights,
+            "white_player_id": game.white_player_id,
+            "white_player_name": game.white_player_name,
+            "white_player_description": game.white_player_description,
+            "black_player_id": game.black_player_id,
+            "black_player_name": game.black_player_name,
+            "black_player_description": game.black_player_description,
             "duration_seconds": game.duration_seconds,
             "evaluations": game.evaluations,
             "evaluations_per_move": game.evaluations_per_move,
@@ -1209,7 +1234,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--player-weight-min-multiplier",
         dest="player_weight_min",
         type=float,
-        default=_env_float("SELF_PLAY_PLAYER_WEIGHT_MIN", 0.0),
+        default=_env_float("SELF_PLAY_PLAYER_WEIGHT_MIN", -4.0),
         help="Lower bound for absolute per-player random weights.",
     )
     parser.add_argument(

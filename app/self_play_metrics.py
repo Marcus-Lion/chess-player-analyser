@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import math
+import os
 
 import pandas as pd
 
@@ -11,6 +11,92 @@ WEIGHT_DIMENSIONS = [
     "forward_score_weight",
     "center_control_weight",
 ]
+
+
+def _elo_baseline() -> float:
+    raw = (os.getenv("BASELINE_ELO") or os.getenv("ELO_BASELINE") or "1500").strip()
+    try:
+        return float(raw)
+    except ValueError:
+        return 1500.0
+
+
+def _floor_elo(value: float, floor: float = 100.0) -> float:
+    return max(floor, float(value))
+
+
+def _elo_k(games_played: int) -> float:
+    if games_played < 30:
+        return 40.0
+    if games_played < 100:
+        return 24.0
+    return 16.0
+
+
+def _elo_expected(rating_a: float, rating_b: float) -> float:
+    return 1.0 / (1.0 + 10.0 ** ((rating_b - rating_a) / 400.0))
+
+
+def _score_for_result(result: str) -> float:
+    if result == "1-0":
+        return 1.0
+    if result == "1/2-1/2":
+        return 0.5
+    if result == "0-1":
+        return 0.0
+    return 0.5
+
+
+def _ordered_self_play_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+    sort_cols = [col for col in ("played_at", "game_seq", "run_id", "index") if col in df.columns]
+    if sort_cols:
+        return df.sort_values(sort_cols, kind="stable").reset_index(drop=True)
+    return df.reset_index(drop=True)
+
+
+def _dynamic_elo_state(df: pd.DataFrame, baseline: float | None = None) -> tuple[list[float], list[float], list[float], dict[str, float], dict[str, int]]:
+    baseline = _elo_baseline() if baseline is None else baseline
+    rows = _ordered_self_play_rows(df)
+    white_elos: list[float] = []
+    black_elos: list[float] = []
+    elo_gaps: list[float] = []
+    ratings: dict[str, float] = {}
+    games_played: dict[str, int] = {}
+
+    for _, row in rows.iterrows():
+        white_id = row.get("white_player_id")
+        black_id = row.get("black_player_id")
+        white_key = None if pd.isna(white_id) else str(white_id)
+        black_key = None if pd.isna(black_id) else str(black_id)
+        white_rating = ratings.get(white_key, baseline)
+        black_rating = ratings.get(black_key, baseline)
+
+        white_elos.append(_floor_elo(white_rating))
+        black_elos.append(_floor_elo(black_rating))
+        elo_gaps.append(white_rating - black_rating)
+
+        if white_key is None or black_key is None:
+            continue
+
+        score_white = _score_for_result(str(row.get("result", "")))
+        score_black = 1.0 - score_white
+
+        white_games = games_played.get(white_key, 0)
+        black_games = games_played.get(black_key, 0)
+        white_k = _elo_k(white_games)
+        black_k = _elo_k(black_games)
+
+        expected_white = _elo_expected(white_rating, black_rating)
+        expected_black = 1.0 - expected_white
+
+        ratings[white_key] = _floor_elo(white_rating + white_k * (score_white - expected_white))
+        ratings[black_key] = _floor_elo(black_rating + black_k * (score_black - expected_black))
+        games_played[white_key] = white_games + 1
+        games_played[black_key] = black_games + 1
+
+    return white_elos, black_elos, elo_gaps, ratings, games_played
 
 
 def to_dataframe(rows: list[dict]) -> pd.DataFrame:
@@ -55,17 +141,11 @@ def export_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             col = f"{prefix}_{dim}"
             out[col] = weights.apply(lambda w, dim=dim: w.get(dim))
 
-    if {"white_won", "is_draw"}.issubset(out.columns):
-        white_score_pct = (
-            out["white_won"].astype(float)
-            .add(out["is_draw"].astype(float) * 0.5)
-            .expanding()
-            .mean()
-        )
-        elo_gap = white_score_pct.apply(score_pct_to_elo)
-        out["WhiteElo"] = 1500.0 + elo_gap / 2.0
-        out["BlackElo"] = 1500.0 - elo_gap / 2.0
-        out["EloGap"] = elo_gap
+    if {"white_player_id", "black_player_id", "result"}.issubset(out.columns):
+        white_elos, black_elos, elo_gaps, _, _ = _dynamic_elo_state(out)
+        out["WhiteElo"] = white_elos
+        out["BlackElo"] = black_elos
+        out["EloGap"] = elo_gaps
 
     drop_cols = [col for col in ("white_weights", "black_weights", "pgn", "played_at_display") if col in out.columns]
     if drop_cols:
@@ -79,6 +159,12 @@ def export_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         "top_k",
         "max_turns",
         "start_fen",
+        "white_player_id",
+        "white_player_name",
+        "white_player_description",
+        "black_player_id",
+        "black_player_name",
+        "black_player_description",
         "result",
         "termination",
         "plies",
@@ -104,15 +190,12 @@ def export_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     ]
     ordered = [col for col in preferred if col in out.columns]
     ordered.extend(col for col in out.columns if col not in ordered)
-    return out[ordered]
+    out = out[ordered]
+    return out.where(pd.notna(out), None)
 
 
-def score_pct_to_elo(score_pct: float) -> float:
-    clipped = min(max(float(score_pct), 1e-9), 1.0 - 1e-9)
-    return 400.0 * math.log10(clipped / (1.0 - clipped))
-
-
-def estimate_side_elos(df: pd.DataFrame, baseline: float = 1500.0) -> dict[str, float]:
+def estimate_side_elos(df: pd.DataFrame, baseline: float | None = None) -> dict[str, float]:
+    baseline = _elo_baseline() if baseline is None else baseline
     if df.empty:
         return {
             "white_score_pct": 0.0,
@@ -121,14 +204,155 @@ def estimate_side_elos(df: pd.DataFrame, baseline: float = 1500.0) -> dict[str, 
             "black_elo": baseline,
         }
 
+    table = export_dataframe(df)
+    white_elo = float(table["WhiteElo"].mean()) if "WhiteElo" in table.columns and not table["WhiteElo"].empty else baseline
+    black_elo = float(table["BlackElo"].mean()) if "BlackElo" in table.columns and not table["BlackElo"].empty else baseline
+    elo_diff = white_elo - black_elo
     white_score_pct = float(df["white_won"].mean() + 0.5 * df["is_draw"].mean())
-    elo_diff = score_pct_to_elo(white_score_pct)
     return {
         "white_score_pct": white_score_pct,
         "elo_diff": elo_diff,
-        "white_elo": baseline + elo_diff / 2.0,
-        "black_elo": baseline - elo_diff / 2.0,
+        "white_elo": _floor_elo(white_elo),
+        "black_elo": _floor_elo(black_elo),
     }
+
+
+def player_participations(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=[
+            "player_id",
+            "player_name",
+            "player_description",
+            "color",
+            "opponent_id",
+            "opponent_name",
+            "opponent_description",
+            "score",
+            "outcome",
+        ])
+
+    frames = []
+    score_maps = {
+        "white": {"1-0": 1.0, "0-1": 0.0, "1/2-1/2": 0.5},
+        "black": {"1-0": 0.0, "0-1": 1.0, "1/2-1/2": 0.5},
+    }
+
+    for side in ("white", "black"):
+        id_col = f"{side}_player_id"
+        name_col = f"{side}_player_name"
+        desc_col = f"{side}_player_description"
+        opp_side = "black" if side == "white" else "white"
+        opp_id_col = f"{opp_side}_player_id"
+        opp_name_col = f"{opp_side}_player_name"
+        opp_desc_col = f"{opp_side}_player_description"
+        if id_col not in df.columns:
+            continue
+
+        frame = df[[
+            "played_at",
+            "run_id",
+            "index",
+            "result",
+            "termination",
+            "plies",
+            "final_score",
+            "outcome",
+            "winner",
+            "loser",
+            "duration_seconds",
+            "evaluations_per_move",
+        ]].copy()
+        frame["player_id"] = df[id_col]
+        frame["player_name"] = df[name_col] if name_col in df.columns else df[id_col]
+        frame["player_description"] = df[desc_col] if desc_col in df.columns else ""
+        frame["opponent_id"] = df[opp_id_col] if opp_id_col in df.columns else ""
+        frame["opponent_name"] = df[opp_name_col] if opp_name_col in df.columns else ""
+        frame["opponent_description"] = df[opp_desc_col] if opp_desc_col in df.columns else ""
+        for col in ("player_name", "player_description", "opponent_id", "opponent_name", "opponent_description"):
+            frame[col] = frame[col].where(pd.notna(frame[col]), "")
+        frame["color"] = side.title()
+        frame["score"] = frame["result"].map(score_maps[side]).fillna(0.5)
+        frame["outcome"] = frame["score"].map({1.0: "Win", 0.5: "Draw", 0.0: "Loss"})
+        frames.append(frame)
+
+    if not frames:
+        return pd.DataFrame(columns=[
+            "player_id",
+            "player_name",
+            "player_description",
+            "color",
+            "opponent_id",
+            "opponent_name",
+            "opponent_description",
+            "score",
+            "outcome",
+        ])
+    return pd.concat(frames, ignore_index=True)
+
+
+def player_overview(df: pd.DataFrame) -> pd.DataFrame:
+    baseline = _elo_baseline()
+    parts = player_participations(df)
+    if parts.empty:
+        return pd.DataFrame(columns=[
+            "player_id",
+            "player_name",
+            "player_description",
+            "games",
+            "wins",
+            "draws",
+            "losses",
+            "score_pct",
+            "white_games",
+            "black_games",
+            "elo",
+        ])
+
+    _, _, _, ratings, _ = _dynamic_elo_state(df, baseline=baseline)
+    grouped = parts.groupby(["player_id", "player_name", "player_description"], dropna=False)
+    out = grouped.agg(
+        games=("score", "size"),
+        wins=("score", lambda s: int((s == 1.0).sum())),
+        draws=("score", lambda s: int((s == 0.5).sum())),
+        losses=("score", lambda s: int((s == 0.0).sum())),
+        score_pct=("score", "mean"),
+        white_games=("color", lambda s: int((s == "White").sum())),
+        black_games=("color", lambda s: int((s == "Black").sum())),
+    ).reset_index()
+    out["elo"] = out["player_id"].map(lambda pid: _floor_elo(ratings.get(str(pid), baseline)))
+    return out.sort_values(["score_pct", "games"], ascending=[False, False]).reset_index(drop=True)
+
+
+def player_detail(df: pd.DataFrame, player_id: str) -> dict:
+    baseline = _elo_baseline()
+    parts = player_participations(df)
+    if parts.empty:
+        return {"overview": {}, "games": pd.DataFrame()}
+
+    player = parts[parts["player_id"] == player_id].copy()
+    if player.empty:
+        return {"overview": {}, "games": pd.DataFrame()}
+
+    _, _, _, ratings, _ = _dynamic_elo_state(df, baseline=baseline)
+    player = player.sort_values("played_at")
+    overview = {
+        "player_id": player_id,
+        "player_name": player["player_name"].iloc[0],
+        "player_description": player["player_description"].iloc[0],
+        "games": int(len(player)),
+        "wins": int((player["score"] == 1.0).sum()),
+        "draws": int((player["score"] == 0.5).sum()),
+        "losses": int((player["score"] == 0.0).sum()),
+        "score_pct": float(player["score"].mean()),
+        "white_games": int((player["color"] == "White").sum()),
+        "black_games": int((player["color"] == "Black").sum()),
+        "elo": float(_floor_elo(ratings.get(str(player_id), baseline))),
+    }
+
+    recent = player.sort_values("played_at", ascending=False).copy()
+    recent["opponent"] = recent["opponent_name"]
+    recent["played_at"] = pd.to_datetime(recent["played_at"], errors="coerce", utc=True).dt.strftime("%Y-%m-%d %H:%M:%S")
+    return {"overview": overview, "games": recent}
 
 
 def summary(df: pd.DataFrame) -> dict:

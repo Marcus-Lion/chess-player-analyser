@@ -462,8 +462,9 @@ def load_self_play_job(job_id: str) -> dict | None:
     return get_job_hub().get_job(job_id)
 
 
-def _evaluate_board(board: chess.Board, config: SelfPlayConfig | None = None) -> float:
-    legal_moves = len(list(board.legal_moves))
+def _evaluate_board(board: chess.Board, config: SelfPlayConfig | None = None, legal_moves: int | None = None) -> float:
+    if legal_moves is None:
+        legal_moves = len(list(board.legal_moves))
     f1, f2 = _calculate_forward(board)
     material = _calculate_material(board)
     center = _calculate_center_control(board)
@@ -678,6 +679,8 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
     node = game
     turn = 0
     eval_counter = [0]
+    material_memo: dict[int, dict[str, int]] = {}
+    mate_pressure_memo: dict[int, float] = {}
 
     start_time = time.perf_counter()
     result, termination = _terminal_reason(board)
@@ -696,6 +699,8 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
                 checkmate_weight=config.checkmate_weight,
                 depth=depth,
                 eval_counter=eval_counter,
+                material_memo=material_memo,
+                mate_pressure_memo=mate_pressure_memo,
             )
             san = board.san(move)
             board.push(move)
@@ -721,7 +726,8 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
 
     exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=True)
     pgn_text = game.accept(exporter)
-    final_score = _evaluate_board(board)
+    final_legal_moves = len(list(board.legal_moves))
+    final_score = _evaluate_board(board, legal_moves=final_legal_moves)
     if termination == "Crash":
         summary = {"status": "Crash", "winner": "", "loser": ""}
     else:

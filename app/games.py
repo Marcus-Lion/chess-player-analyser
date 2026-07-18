@@ -916,6 +916,8 @@ def choose_engine_move(
     checkmate_weight: float = CHECKMATE_WEIGHT,
     depth: int = 3,
     eval_counter: list[int] | None = None,
+    material_memo: dict[int, dict[str, int]] | None = None,
+    mate_pressure_memo: dict[int, float] | None = None,
 ) -> tuple[chess.Move, float]:
     """Pick a move via negamax search.
 
@@ -923,14 +925,17 @@ def choose_engine_move(
     accumulates one increment per leaf position statically evaluated during
     the search -- callers use this to report how many evaluations a move
     (or a whole game) cost.
+
+    ``material_memo`` and ``mate_pressure_memo``, if given, reuse cached
+    position evaluations across multiple move selections (e.g., during a game).
     """
     rng = rng or random.Random()
     depth = max(1, depth)
     avoid_repetition = _mover_material_advantage(board) >= REPETITION_AVOIDANCE_MATERIAL_PAWNS
     killer_moves: dict[int, chess.Move] = {}
     transposition_table: dict[int, tuple[int, float, int, chess.Move | None]] = {}
-    material_memo: dict[int, dict[str, int]] = {}
-    mate_pressure_memo: dict[int, float] = {}
+    material_memo = material_memo or {}
+    mate_pressure_memo = mate_pressure_memo or {}
     scored_moves: list[tuple[float, chess.Move]] = []
     for move in _order_moves(board):
         board.push(move)

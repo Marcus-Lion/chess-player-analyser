@@ -77,6 +77,7 @@ The app reads configuration from environment variables. `.env` is loaded by the 
 | `SELF_PLAY_PLAYER_WEIGHT_MAX` | Upper bound for per-player random weights. | `4.0` |
 | `SELF_PLAY_PLAYER_WEIGHT_STDDEV` | Present in `.env`, but not currently read by the code. | The player spread is currently hardcoded in `app/players.py` |
 | `SELF_PLAY_REBALANCE_BATCH_SIZE` | Number of games between weight updates. | `250` in `.env` |
+| `PYTHON_FALLBACK` | Lets the app fall back to pure Python if the Rust engine is missing. Set to `false` to fail fast instead. | `false` in `.env` |
 | `REPETITION_AVOIDANCE_MATERIAL_PAWNS` | Repetition-avoidance tuning parameter. | Used by engine logic |
 
 ## Data flow for human-game analysis
@@ -125,6 +126,15 @@ Useful performance signals are printed per game:
 
 That makes it possible to compare the Python fallback against the Rust extension and to spot regressions in search cost or game length.
 
+There is one important persistence bottleneck to know about:
+
+- every saved self-play game currently calls `refresh_self_play_player_elos()`,
+- that refresh reloads the full saved self-play history from Neo4j,
+- then recomputes the player overview across the entire corpus,
+- so the save path gets more expensive as the database grows.
+
+If self-play suddenly drops from something like 30 games/second to around 1 game/second, this full-history Neo4j refresh is a prime suspect.
+
 ## Important behavior to know
 
 - White/black win rates are tracked separately in self-play analytics.
@@ -132,6 +142,7 @@ That makes it possible to compare the Python fallback against the Rust extension
 - The timeline chart on a player page shows the weights used in each game, not just rebalance checkpoints.
 - Rebalance updates are closed-loop: the result of one batch affects the next batch’s player selection and weights.
 - If Neo4j is unavailable, self-play persistence and player-weight loading fall back to in-memory / code defaults where possible.
+- If Neo4j is enabled and populated, per-game persistence can dominate total runtime unless the Elo refresh is batched or deferred.
 
 ## Running locally
 
@@ -205,3 +216,4 @@ This architecture keeps the web app public while leaving the graph database priv
 - If self-play updates seem to happen too often, check that `.env` is loaded before `SELF_PLAY_REBALANCE_BATCH_SIZE` is read.
 - If the UI shows unexpected win-rate trends, check the most recent rebalance batch and the current player roster.
 - If Neo4j auth fails, self-play can still run, but persistence and stored-player loading will be incomplete.
+- If performance drops sharply, confirm `PYTHON_FALLBACK=false` and that the Rust `chess_engine` extension imports in the deployed image.

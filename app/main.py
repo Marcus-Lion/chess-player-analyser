@@ -82,11 +82,17 @@ app = FastAPI(title="Marcus Lion Chess Player Analyser")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "app" / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
 
+PYTHON_FALLBACK = (os.getenv("PYTHON_FALLBACK") or "true").strip().lower() in {"1", "true", "yes", "on"}
 
 try:
     import chess_engine
-except ImportError:
-    chess_engine = None
+except ImportError as exc:
+    if PYTHON_FALLBACK:
+        chess_engine = None
+    else:
+        raise RuntimeError(
+            "PYTHON_FALLBACK=false but the native chess_engine extension could not be imported"
+        ) from exc
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -896,6 +902,7 @@ def self_play_players(request: Request):
             "black_games": int(getattr(row, "black_games", 0) or 0),
             "elo": float(getattr(row, "elo", _self_play_elo_baseline()) or _self_play_elo_baseline()),
         })
+    players.sort(key=lambda player: (player["score_pct"], player["games"], player["elo"]), reverse=True)
     return templates.TemplateResponse("self_play_players.html", {
         "request": request,
         "players": players,

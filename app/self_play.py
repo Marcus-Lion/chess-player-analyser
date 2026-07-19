@@ -51,14 +51,21 @@ from app.self_play_metrics import (
     to_dataframe as self_play_to_dataframe,
 )
 
+PYTHON_FALLBACK = (os.getenv("PYTHON_FALLBACK") or "true").strip().lower() in {"1", "true", "yes", "on"}
+
 try:
     # Native negamax engine (see engine/). When present, play_self_game runs
-    # the whole per-move search in Rust; otherwise it falls back to the pure
-    # Python choose_engine_move. Import is optional so self-play still works
-    # in environments where the extension hasn't been built.
+    # the whole per-move search in Rust. If PYTHON_FALLBACK is enabled, it
+    # falls back to the pure Python choose_engine_move; otherwise startup
+    # fails if the extension is missing.
     import chess_engine
-except ImportError:  # pragma: no cover - exercised only without the built wheel
-    chess_engine = None
+except ImportError as exc:  # pragma: no cover - exercised only without the built wheel
+    if PYTHON_FALLBACK:
+        chess_engine = None
+    else:
+        raise RuntimeError(
+            "PYTHON_FALLBACK=false but the native chess_engine extension could not be imported"
+        ) from exc
 
 
 def _env_float(name: str, default: float) -> float:
@@ -76,6 +83,16 @@ def _env_int(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _env_bool(name: str, default: bool = True) -> bool:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+PYTHON_FALLBACK = _env_bool("PYTHON_FALLBACK", True)
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent

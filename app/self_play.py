@@ -25,6 +25,8 @@ import random
 
 import dotenv
 
+dotenv.load_dotenv()
+
 from app.games import (
     CENTER_CONTROL_WEIGHT,
     CHECKMATE_WEIGHT,
@@ -1392,5 +1394,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    dotenv.load_dotenv()
     raise SystemExit(main())

@@ -14,3 +14,5 @@ cache/*
 # Rust engine build artifacts
 /engine/target/
 
+/.junie/
+/.claude/

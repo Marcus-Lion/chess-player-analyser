@@ -794,9 +794,11 @@ def self_play_analysis(request: Request):
     }
     display_df = table_df.drop(columns=[col for col in hide_columns if col in table_df.columns])
     elo = estimate_side_elos(df)
+    summary = self_play_summary(df)
+    summary["black_win_pct"] = max(0.0, 1.0 - summary["white_win_pct"] - summary["draw_pct"])
     return templates.TemplateResponse("self_play_analysis.html", {
         "request": request,
-        "summary": self_play_summary(df),
+        "summary": summary,
         "elo": elo,
         "charts": _make_self_play_charts(df) if not df.empty else {},
         "table_columns": list(display_df.columns),
@@ -810,8 +812,11 @@ def self_play_terminations(request: Request):
     rows = load_self_play_results(limit=None)
     df = self_play_to_dataframe(rows)
     terminations = _self_play_termination_table(df)
+    summary = self_play_summary(df)
+    summary["black_win_pct"] = max(0.0, 1.0 - summary["white_win_pct"] - summary["draw_pct"])
     return templates.TemplateResponse("self_play_terminations.html", {
         "request": request,
+        "summary": summary,
         "terminations": terminations.to_dict(orient="records"),
     })
 

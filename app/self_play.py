@@ -5,6 +5,7 @@ import json
 import math
 import os
 import traceback
+from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -168,6 +169,42 @@ class SelfPlayJobStatus:
     played_at: str = ""
     run_id: str = ""
     error: str = ""
+
+
+def _result_counts(games: list[SelfPlayGame]) -> Counter[str]:
+    return Counter(game.result for game in games)
+
+
+def _print_result_summary(label: str, games: list[SelfPlayGame]) -> None:
+    if not games:
+        print(f"{label}: no games")
+        return
+
+    counts = _result_counts(games)
+    total = len(games)
+    white = counts.get("1-0", 0)
+    black = counts.get("0-1", 0)
+    draws = counts.get("1/2-1/2", 0)
+    other = total - white - black - draws
+    summary = (
+        f"{label}: {total} games | "
+        f"White wins {white} ({white / total:.1%}), "
+        f"Black wins {black} ({black / total:.1%}), "
+        f"Draws {draws} ({draws / total:.1%})"
+    )
+    if other:
+        summary += f", Other {other} ({other / total:.1%})"
+    print(summary)
+
+
+def _print_batch_summary(batch_number: int, games: list[SelfPlayGame], *, batch_size: int) -> None:
+    if not games:
+        return
+
+    start = (batch_number - 1) * batch_size + 1
+    end = start + len(games) - 1
+    print(f"Rebalance batch {batch_number} ({start}-{end}):")
+    _print_result_summary("  batch results", games)
 
 
 def _score_weights(config: SelfPlayConfig) -> tuple[float, float, float, float]:
@@ -929,6 +966,7 @@ def run_self_play(
     max_workers = max(1, min(int(requested_workers), config.games))
     future_to_index: dict = {}
     rebalance_batch: list[SelfPlayGame] = []
+    rebalance_batch_number = 0
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         for i in range(1, config.games + 1):
             game_config = _config_for_game(config, i)
@@ -965,8 +1003,11 @@ def run_self_play(
             save_self_play_results([game])
             rebalance_batch.append(game)
             if len(rebalance_batch) >= SELF_PLAY_REBALANCE_BATCH_SIZE:
+                rebalance_batch_number += 1
+                _print_batch_summary(rebalance_batch_number, rebalance_batch, batch_size=SELF_PLAY_REBALANCE_BATCH_SIZE)
                 try:
-                    rebalance_self_play_players(rebalance_batch)
+                    updated = rebalance_self_play_players(rebalance_batch)
+                    print(f"  updated {updated} players")
                 except Exception:
                     traceback.print_exc()
                 rebalance_batch.clear()
@@ -975,6 +1016,15 @@ def run_self_play(
             ordered_games = [completed_games[i] for i in sorted(completed_games)]
             if progress_callback is not None:
                 progress_callback(completed_count, game, ordered_games)
+
+    if rebalance_batch:
+        rebalance_batch_number += 1
+        _print_batch_summary(rebalance_batch_number, rebalance_batch, batch_size=SELF_PLAY_REBALANCE_BATCH_SIZE)
+        try:
+            updated = rebalance_self_play_players(rebalance_batch)
+            print(f"  updated {updated} players")
+        except Exception:
+            traceback.print_exc()
 
     return [completed_games[i] for i in sorted(completed_games)]
 
@@ -1374,10 +1424,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.tune_output:
             args.tune_output.write_text(json.dumps(tuning, indent=2), encoding="utf-8")
 
+    print(f"Self-play rebalance batch size: {SELF_PLAY_REBALANCE_BATCH_SIZE}")
     games = run_self_play(config)
 
     if args.output:
         args.output.write_text("\n\n".join(game.pgn for game in games) + "\n", encoding="utf-8")
+
+    _print_result_summary("Overall results", games)
+    _print_result_summary("Last 250 games", games[-250:])
 
     for game in games:
         white = game.white_weights or {}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 import re
 import random
 from dataclasses import dataclass
@@ -12,6 +13,16 @@ import chess.polyglot
 import chess.svg
 
 from app.eco import eco_name
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
 
 
 @dataclass
@@ -657,19 +668,21 @@ def _terminal_aware_evaluate(board: chess.Board) -> float:
     return _evaluate_position(board)
 
 
-# Severity tiers for how much of a move's evaluation swing (in eval points,
-# lost to the opponent's best reply) is "unjustified" -- mirroring the
-# inaccuracy/mistake/blunder tiers chess sites use, from a slight edge given
-# up (Inaccuracy) through a real threat (Mistake) to roughly "lost a piece
-# for a pawn" (Blunder). material_score_weight scales evaluation points per
-# point of material, so each *_MATERIAL_PAWNS constant is that tier's cutoff
-# in pawns of unjustified swing.
-INACCURACY_MATERIAL_PAWNS = 1.0
-MISTAKE_MATERIAL_PAWNS = 1.75
-BLUNDER_MATERIAL_PAWNS = 2.5
-INACCURACY_THRESHOLD = MATERIAL_SCORE_WEIGHT * INACCURACY_MATERIAL_PAWNS
-MISTAKE_THRESHOLD = MATERIAL_SCORE_WEIGHT * MISTAKE_MATERIAL_PAWNS
-BLUNDER_THRESHOLD = MATERIAL_SCORE_WEIGHT * BLUNDER_MATERIAL_PAWNS
+# Severity tiers for the swing from the mover's evaluation to the opponent's
+# best reply, expressed in standard chess-style pawn-loss bands:
+#   Inaccuracy: loses at least half a pawn
+#   Mistake: loses at least one pawn
+#   Blunder: loses at least two pawns
+#
+# This keeps the labels aligned with the way chess analysis sites usually talk
+# about move quality, instead of tying the thresholds to the engine's internal
+# material weight.
+INACCURACY_PAWN_LOSS = 0.50
+MISTAKE_PAWN_LOSS = 1.00
+BLUNDER_PAWN_LOSS = 2.00
+INACCURACY_THRESHOLD = INACCURACY_PAWN_LOSS
+MISTAKE_THRESHOLD = MISTAKE_PAWN_LOSS
+BLUNDER_THRESHOLD = BLUNDER_PAWN_LOSS
 
 
 def _blunder_score(board: chess.Board, move: chess.Move) -> float:
@@ -714,7 +727,7 @@ def _blunder_score(board: chess.Board, move: chess.Move) -> float:
 
 
 def _move_severity(blunder_score: float) -> str:
-    """Classify a move's eval swing into a chess.com-style severity tier."""
+    """Classify a move's eval swing into standard pawn-loss severity tiers."""
     if blunder_score >= BLUNDER_THRESHOLD:
         return "Blunder"
     if blunder_score >= MISTAKE_THRESHOLD:
@@ -895,11 +908,20 @@ def _mover_material_advantage(board: chess.Board) -> int:
     return advantage if board.turn == chess.WHITE else -advantage
 
 
-# When the side to move is ahead by at least this many pawns of material, it
-# should keep pressing for a win rather than settle for a draw, so moves that
-# would trigger a threefold repetition get penalized in ``choose_engine_move``.
-REPETITION_AVOIDANCE_MATERIAL_PAWNS = 2
+# When either side is ahead by at least this many pawns of material, the side
+# to move should keep pressing for a win rather than settle for a draw, so
+# moves that would trigger a threefold repetition get penalized in
+# ``choose_engine_move``.
+REPETITION_AVOIDANCE_MATERIAL_PAWNS = max(
+    0,
+    _env_int("REPETITION_AVOIDANCE_MATERIAL_PAWNS", 1),
+)
 REPETITION_AVOIDANCE_PENALTY = 500.0
+
+
+def _allows_threefold_claim(board: chess.Board) -> bool:
+    """True when the side to move can claim a threefold repetition now."""
+    return board.can_claim_threefold_repetition() or board.is_repetition(3)
 
 
 def choose_engine_move(
@@ -929,7 +951,7 @@ def choose_engine_move(
     """
     rng = rng or random.Random()
     depth = max(1, depth)
-    avoid_repetition = _mover_material_advantage(board) >= REPETITION_AVOIDANCE_MATERIAL_PAWNS
+    avoid_repetition = abs(_mover_material_advantage(board)) >= REPETITION_AVOIDANCE_MATERIAL_PAWNS
     killer_moves: dict[int, chess.Move] = {}
     transposition_table: dict[int, tuple[int, float, int, chess.Move | None]] = {}
     material_memo = material_memo or {}
@@ -954,7 +976,7 @@ def choose_engine_move(
                 material_memo=material_memo,
                 mate_pressure_memo=mate_pressure_memo,
             )
-            if avoid_repetition and board.is_repetition(3):
+            if avoid_repetition and _allows_threefold_claim(board):
                 value -= REPETITION_AVOIDANCE_PENALTY
         finally:
             board.pop()

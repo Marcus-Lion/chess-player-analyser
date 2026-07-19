@@ -169,7 +169,7 @@
       <h2>Most recent run</h2>
       {% for game in recent_games %}
         <div class="metric">
-          <b><a href="/self-play/view/{{ game.run_id }}/{{ game.index }}">Game {{ game.index }} · {{ game.result }} · {{ game.plies }} turns</a></b>
+          <b><a href="/self-play/view/{{ game.run_id }}/{{ game.index }}">Game {{ game.index }} · {{ game.result }} · {{ game.turns }} turns</a></b>
           <div>Outcome: {{ game.outcome }}{% if game.winner %} · Winner: {{ game.winner }}{% endif %}{% if game.loser %} · Loser: {{ game.loser }}{% endif %}</div>
           <div>Players: {% if game.white_player_id %}<a href="/self-play/players/{{ game.white_player_id }}">{{ game.white_player_name }}</a>{% else %}{{ game.white_player_name }}{% endif %} vs {% if game.black_player_id %}<a href="/self-play/players/{{ game.black_player_id }}">{{ game.black_player_name }}</a>{% else %}{{ game.black_player_name }}{% endif %}</div>
           <div>Termination: {{ game.termination }}</div>
@@ -198,6 +198,7 @@
       <p class="muted" style="margin-top: 0;">Estimated Elo from all saved results: White {{ "%.0f"|format(elo.white_elo) }}, Black {{ "%.0f"|format(elo.black_elo) }}, gap {{ "%.0f"|format(elo.elo_diff) }}.</p>
     {% endif %}
     <p><a href="/self-play/analysis">Analyse results →</a></p>
+    <p><a href="/self-play/terminations">View terminations →</a></p>
     <p><a href="/self-play/players">View players →</a></p>
     <form method="post" action="/self-play/delete-all" onsubmit="return confirm('Delete all saved self-play results? This cannot be undone.');" style="margin: .75rem 0 1rem 0;">
       <button type="submit" class="danger">Delete all prior self-play</button>
@@ -255,16 +256,16 @@
                 data-result="{{ row.result }}"
                 data-outcome="{{ row.outcome }}"
                 data-termination="{{ row.termination }}"
-                data-plies="{{ row.plies }}"
+                data-turns="{{ row.turns }}"
                 data-final-score="{{ row.final_score }}">
               <td>{{ row.played_at }}</td>
-              <td>{% if row.white_player_id %}<a href="/self-play/players/{{ row.white_player_id }}">{{ row.white_player_name or row.white_player_id }}</a>{% else %}{{ row.white_player_name or "" }}{% endif %}</td>
-              <td>{% if row.black_player_id %}<a href="/self-play/players/{{ row.black_player_id }}">{{ row.black_player_name or row.black_player_id }}</a>{% else %}{{ row.black_player_name or "" }}{% endif %}</td>
+              <td>{% if row.white_player_id %}<a href="/self-play/players/{{ row.white_player_id }}">{{ row.white_player_name or "" }}</a>{% else %}{{ row.white_player_name or "" }}{% endif %}</td>
+              <td>{% if row.black_player_id %}<a href="/self-play/players/{{ row.black_player_id }}">{{ row.black_player_name or "" }}</a>{% else %}{{ row.black_player_name or "" }}{% endif %}</td>
               <td><a href="/self-play/view/{{ row.run_id }}/{{ row.index }}">{{ row.result }}</a></td>
               <td>{{ "%.0f"|format(row.WhiteElo if row.WhiteElo is not none else 0) }}</td>
               <td>{{ "%.0f"|format(row.BlackElo if row.BlackElo is not none else 0) }}</td>
-              <td>{{ row.plies }}</td>
-              <td>{{ row.termination }}</td>
+              <td>{{ row.turns }}</td>
+              <td><a href="/self-play/terminations/{{ row.termination|urlencode }}">{{ row.termination }}</a></td>
               <td>{{ "%.2f"|format(row.final_score) }}</td>
               <td>{{ "%.2f"|format(row.duration_seconds) }}s</td>
               <td>{{ "%.0f"|format(row.evaluations_per_move) }}</td>

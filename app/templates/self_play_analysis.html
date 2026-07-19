@@ -38,7 +38,7 @@
         <div class="metric">Decisive <b>{{ "%.1f"|format(summary.decisive_pct * 100) }}%</b></div>
         <div class="metric">Draws <b>{{ "%.1f"|format(summary.draw_pct * 100) }}%</b></div>
         <div class="metric">White wins <b>{{ "%.1f"|format(summary.white_win_pct * 100) }}%</b></div>
-        <div class="metric">Avg turns <b>{{ "%.0f"|format(summary.avg_plies) }}</b></div>
+        <div class="metric">Avg turns <b>{{ "%.0f"|format(summary.avg_turns) }}</b></div>
         <div class="metric">Top termination <b>{{ summary.top_termination }}</b></div>
         <div class="metric">White Elo <b>{{ "%.0f"|format(elo.white_elo) }}</b></div>
         <div class="metric">Black Elo <b>{{ "%.0f"|format(elo.black_elo) }}</b></div>
@@ -53,7 +53,7 @@
     <div class="card">
       <div class="table-actions">
         <h2 style="margin: 0;">Row data</h2>
-        <a href="{{ csv_url }}">Download CSV</a>
+        <span><a href="/self-play/terminations">Terminations</a> · <a href="{{ csv_url }}">Download CSV</a></span>
       </div>
       <div class="table-wrap">
         <table>

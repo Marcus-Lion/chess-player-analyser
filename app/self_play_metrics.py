@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 import pandas as pd
+import numpy as np
 
 OUTCOME_ORDER = ["White wins", "Black wins", "Draw"]
 WEIGHT_DIMENSIONS = [
@@ -11,6 +12,11 @@ WEIGHT_DIMENSIONS = [
     "forward_score_weight",
     "center_control_weight",
 ]
+
+SHAP_BALANCE_TARGET_SCORE = 0.5
+SHAP_BALANCE_LEARNING_RATE = 0.15
+SHAP_BALANCE_MAX_STEP = 0.20
+SHAP_BALANCE_MIN_GAMES = 2
 
 
 def _elo_baseline() -> float:
@@ -104,6 +110,11 @@ def to_dataframe(rows: list[dict]) -> pd.DataFrame:
     if df.empty:
         return df
 
+    if "turns" not in df.columns and "plies" in df.columns:
+        df["turns"] = df["plies"]
+    if "plies" not in df.columns and "turns" in df.columns:
+        df["plies"] = df["turns"]
+
     df["played_at"] = pd.to_datetime(df["played_at"], errors="coerce", utc=True)
     df["game_seq"] = range(1, len(df) + 1)
     df["white_won"] = df["result"] == "1-0"
@@ -131,6 +142,9 @@ def export_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     if "played_at" in out.columns:
         played_at = pd.to_datetime(out["played_at"], errors="coerce", utc=True)
         out["played_at"] = played_at.dt.strftime("%Y-%m-%dT%H:%M:%SZ").fillna("")
+
+    if "turns" in out.columns and "plies" in out.columns:
+        out = out.drop(columns=["plies"])
 
     for side, prefix in (("white", "WhiteWeights"), ("black", "BlackWeights")):
         weights_col = f"{side}_weights"
@@ -167,7 +181,7 @@ def export_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         "black_player_description",
         "result",
         "termination",
-        "plies",
+        "turns",
         "final_fen",
         "final_score",
         "outcome",
@@ -254,7 +268,7 @@ def player_participations(df: pd.DataFrame) -> pd.DataFrame:
             "index",
             "result",
             "termination",
-            "plies",
+            "turns",
             "final_score",
             "outcome",
             "winner",
@@ -355,6 +369,239 @@ def player_detail(df: pd.DataFrame, player_id: str) -> dict:
     return {"overview": overview, "games": recent}
 
 
+def player_timeline(df: pd.DataFrame, player_id: str) -> pd.DataFrame:
+    """Build a per-game timeline for a single self-play player.
+
+    The timeline records the player's Elo after each game they participated in,
+    along with the weight values used in that game.
+    """
+    if df.empty:
+        return pd.DataFrame(columns=[
+            "played_at",
+            "game_seq",
+            "color",
+            "result",
+            "termination",
+            "opponent_name",
+            "elo",
+            *WEIGHT_DIMENSIONS,
+        ])
+
+    rows = _ordered_self_play_rows(df)
+    baseline = _elo_baseline()
+    ratings: dict[str, float] = {}
+    games_played: dict[str, int] = {}
+    records: list[dict[str, object]] = []
+
+    for game_seq, (_, row) in enumerate(rows.iterrows(), start=1):
+        white_id = row.get("white_player_id")
+        black_id = row.get("black_player_id")
+        white_key = None if pd.isna(white_id) else str(white_id)
+        black_key = None if pd.isna(black_id) else str(black_id)
+        white_rating = ratings.get(white_key, baseline)
+        black_rating = ratings.get(black_key, baseline)
+
+        if white_key is not None and black_key is not None:
+            score_white = _score_for_result(str(row.get("result", "")))
+            score_black = 1.0 - score_white
+
+            white_games = games_played.get(white_key, 0)
+            black_games = games_played.get(black_key, 0)
+            white_k = _elo_k(white_games)
+            black_k = _elo_k(black_games)
+
+            expected_white = _elo_expected(white_rating, black_rating)
+            expected_black = 1.0 - expected_white
+
+            ratings[white_key] = _floor_elo(white_rating + white_k * (score_white - expected_white))
+            ratings[black_key] = _floor_elo(black_rating + black_k * (score_black - expected_black))
+            games_played[white_key] = white_games + 1
+            games_played[black_key] = black_games + 1
+
+        for side, key, opponent_side in (("White", white_key, "black"), ("Black", black_key, "white")):
+            if key != str(player_id):
+                continue
+            opponent_name = row.get(f"{opponent_side}_player_name", "")
+            record = {
+                "played_at": row.get("played_at"),
+                "game_seq": game_seq,
+                "color": side,
+                "result": row.get("result", ""),
+                "termination": row.get("termination", ""),
+                "opponent_name": opponent_name,
+                "elo": ratings.get(key, baseline),
+            }
+            for dim in WEIGHT_DIMENSIONS:
+                record[dim] = row.get(f"{side.lower()}_{dim}")
+            records.append(record)
+
+    if not records:
+        return pd.DataFrame(columns=[
+            "played_at",
+            "game_seq",
+            "color",
+            "result",
+            "termination",
+            "opponent_name",
+            "elo",
+            *WEIGHT_DIMENSIONS,
+        ])
+
+    out = pd.DataFrame(records)
+    out["played_at"] = pd.to_datetime(out["played_at"], errors="coerce", utc=True)
+    return out.sort_values(["played_at", "game_seq"]).reset_index(drop=True)
+
+
+def _feature_value(value: object, default: float = 0.0) -> float:
+    if value is None or pd.isna(value):
+        return default
+    return float(value)
+
+
+def _player_balance_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+
+    frames: list[pd.DataFrame] = []
+    for side, opp_side in (("white", "black"), ("black", "white")):
+        id_col = f"{side}_player_id"
+        if id_col not in df.columns:
+            continue
+
+        frame = pd.DataFrame({
+            "player_id": df[id_col],
+            "player_name": df[f"{side}_player_name"] if f"{side}_player_name" in df.columns else df[id_col],
+            "player_description": df[f"{side}_player_description"] if f"{side}_player_description" in df.columns else "",
+            "opponent_id": df[f"{opp_side}_player_id"] if f"{opp_side}_player_id" in df.columns else "",
+            "opponent_name": df[f"{opp_side}_player_name"] if f"{opp_side}_player_name" in df.columns else "",
+            "opponent_description": df[f"{opp_side}_player_description"] if f"{opp_side}_player_description" in df.columns else "",
+            "score": df["result"].map({
+                "1-0": 1.0 if side == "white" else 0.0,
+                "0-1": 0.0 if side == "white" else 1.0,
+                "1/2-1/2": 0.5,
+            }).fillna(0.5),
+        })
+
+        for dim in WEIGHT_DIMENSIONS:
+            own_col = f"{side}_{dim}"
+            opp_col = f"{opp_side}_{dim}"
+            frame[f"own_{dim}"] = df[own_col] if own_col in df.columns else 0.0
+            frame[f"opp_{dim}"] = df[opp_col] if opp_col in df.columns else 0.0
+
+        frames.append(frame)
+
+    if not frames:
+        return pd.DataFrame()
+    out = pd.concat(frames, ignore_index=True)
+    out = out.where(pd.notna(out), other=pd.NA)
+    return out
+
+
+def shap_balance_player_weights(
+    df: pd.DataFrame,
+    *,
+    target_score: float = SHAP_BALANCE_TARGET_SCORE,
+    learning_rate: float = SHAP_BALANCE_LEARNING_RATE,
+    max_step: float = SHAP_BALANCE_MAX_STEP,
+    min_games: int = SHAP_BALANCE_MIN_GAMES,
+) -> pd.DataFrame:
+    """Return per-player weight updates from a linear SHAP-style analysis.
+
+    The model is a linear surrogate that predicts a player's score from their
+    own weights and the opponent's weights. For a linear model, SHAP values are
+    exact: each feature's contribution is coefficient * (value - mean(value)).
+
+    The update rule keeps the player centered around ``target_score``:
+    players scoring above the target are nudged downward on features that
+    helped them most; players scoring below the target are nudged upward on the
+    same features.
+    """
+
+    balance_rows = _player_balance_rows(df)
+    if balance_rows.empty:
+        return pd.DataFrame(columns=[
+            "player_id",
+            "player_name",
+            "player_description",
+            "games",
+            "score_pct",
+            *[f"shap_{dim}" for dim in WEIGHT_DIMENSIONS],
+            *[f"weight_{dim}" for dim in WEIGHT_DIMENSIONS],
+            *[f"updated_{dim}" for dim in WEIGHT_DIMENSIONS],
+        ])
+
+    feature_cols = [f"own_{dim}" for dim in WEIGHT_DIMENSIONS] + [f"opp_{dim}" for dim in WEIGHT_DIMENSIONS]
+    X = balance_rows[feature_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0).to_numpy(dtype=float)
+    y = balance_rows["score"].apply(_feature_value).to_numpy(dtype=float)
+
+    if len(X) < 2:
+        return pd.DataFrame()
+
+    design = np.column_stack([np.ones(len(X)), X])
+    coeffs, *_ = np.linalg.lstsq(design, y, rcond=None)
+    feature_coeffs = coeffs[1:]
+    feature_means = X.mean(axis=0)
+    shap_values = (X - feature_means) * feature_coeffs
+
+    shap_frame = balance_rows[["player_id", "player_name", "player_description", "score"]].copy()
+    for idx, dim in enumerate(WEIGHT_DIMENSIONS):
+        shap_frame[f"shap_{dim}"] = shap_values[:, idx]
+        shap_frame[f"weight_{dim}"] = balance_rows[f"own_{dim}"].apply(_feature_value)
+
+    grouped = shap_frame.groupby(["player_id", "player_name", "player_description"], dropna=False)
+    summary = grouped.agg(
+        games=("score", "size"),
+        score_pct=("score", "mean"),
+        **{f"shap_{dim}": (f"shap_{dim}", "mean") for dim in WEIGHT_DIMENSIONS},
+        **{f"weight_{dim}": (f"weight_{dim}", "mean") for dim in WEIGHT_DIMENSIONS},
+    ).reset_index()
+
+    updates: list[dict[str, float | str | int]] = []
+    for row in summary.itertuples(index=False):
+        if int(row.games) < min_games:
+            continue
+
+        shap_vec = np.array([getattr(row, f"shap_{dim}") for dim in WEIGHT_DIMENSIONS], dtype=float)
+        weight_vec = np.array([getattr(row, f"weight_{dim}") for dim in WEIGHT_DIMENSIONS], dtype=float)
+        shap_scale = float(np.sum(np.abs(shap_vec)))
+        if shap_scale <= 1e-9:
+            continue
+
+        normalized_shap = shap_vec / shap_scale
+        balance_error = target_score - float(row.score_pct)
+        delta = np.clip(learning_rate * balance_error * normalized_shap, -max_step, max_step)
+        updated = weight_vec + delta
+
+        update_row: dict[str, float | str | int] = {
+            "player_id": str(row.player_id),
+            "player_name": str(row.player_name),
+            "player_description": str(row.player_description),
+            "games": int(row.games),
+            "score_pct": float(row.score_pct),
+        }
+        for idx, dim in enumerate(WEIGHT_DIMENSIONS):
+            update_row[f"shap_{dim}"] = float(shap_vec[idx])
+            update_row[f"weight_{dim}"] = float(weight_vec[idx])
+            update_row[f"updated_{dim}"] = float(updated[idx])
+            update_row[f"delta_{dim}"] = float(delta[idx])
+        updates.append(update_row)
+
+    if not updates:
+        return pd.DataFrame(columns=[
+            "player_id",
+            "player_name",
+            "player_description",
+            "games",
+            "score_pct",
+            *[f"shap_{dim}" for dim in WEIGHT_DIMENSIONS],
+            *[f"weight_{dim}" for dim in WEIGHT_DIMENSIONS],
+            *[f"updated_{dim}" for dim in WEIGHT_DIMENSIONS],
+            *[f"delta_{dim}" for dim in WEIGHT_DIMENSIONS],
+        ])
+
+    return pd.DataFrame(updates)
+
+
 def summary(df: pd.DataFrame) -> dict:
     if df.empty:
         return {"games": 0}
@@ -367,7 +614,7 @@ def summary(df: pd.DataFrame) -> dict:
         "decisive_pct": decisive / games,
         "draw_pct": float(df["is_draw"].mean()),
         "white_win_pct": float(df["white_won"].mean()),
-        "avg_plies": float(df["plies"].mean()),
+        "avg_turns": float(df["turns"].mean()),
         "top_termination": top_termination,
     }
 
@@ -392,14 +639,19 @@ def termination_counts(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def plies_by_termination(df: pd.DataFrame) -> pd.DataFrame:
+def turns_by_termination(df: pd.DataFrame) -> pd.DataFrame:
     return (
-        df.groupby("termination")["plies"]
+        df.groupby("termination")["turns"]
         .mean()
-        .rename("avg_plies")
+        .rename("avg_turns")
         .reset_index()
-        .sort_values("avg_plies", ascending=False)
+        .sort_values("avg_turns", ascending=False)
     )
+
+
+def plies_by_termination(df: pd.DataFrame) -> pd.DataFrame:
+    """Backward-compatible alias for turns_by_termination."""
+    return turns_by_termination(df)
 
 
 def rolling_outcome_rates(df: pd.DataFrame, window: int = 50) -> pd.DataFrame:

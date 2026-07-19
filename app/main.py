@@ -9,6 +9,8 @@ from pathlib import Path
 import pandas as pd
 import chess
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, Request, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
@@ -35,6 +37,7 @@ from app.self_play import (
     SelfPlayConfig,
     get_job_hub,
     load_self_play_job,
+    load_current_player_roster,
     load_self_play_result,
     load_self_play_results,
     prune_old_jobs,
@@ -42,13 +45,12 @@ from app.self_play import (
     start_self_play_job,
     SELF_PLAY_JOBS_DIR,
 )
-from app.players import get_player, get_player_roster
 from app.self_play_metrics import (
     OUTCOME_ORDER,
     WEIGHT_DIMENSIONS,
     final_score_by_outcome,
     outcome_counts,
-    plies_by_termination,
+    turns_by_termination,
     rolling_outcome_rates,
     summary as self_play_summary,
     termination_counts,
@@ -57,6 +59,7 @@ from app.self_play_metrics import (
     estimate_side_elos,
     player_detail,
     player_overview,
+    player_timeline,
     absolute_weight_scores,
     win_rate_by_weight_advantage_all,
 )
@@ -218,15 +221,15 @@ def _make_self_play_charts(df: pd.DataFrame) -> dict[str, str]:
         fig.update_yaxes(autorange="reversed")
         charts["terminations"] = _fig_html(fig)
 
-    if "plies" in df.columns and not df["plies"].dropna().empty:
-        fig = px.histogram(df, x="plies", nbins=40, title="Game length distribution (turns)")
-        charts["plies_hist"] = _fig_html(fig)
+    if "turns" in df.columns and not df["turns"].dropna().empty:
+        fig = px.histogram(df, x="turns", nbins=40, title="Game length distribution (turns)")
+        charts["turns_hist"] = _fig_html(fig)
 
-    avg_plies = plies_by_termination(df)
-    if not avg_plies.empty:
-        fig = px.bar(avg_plies, x="termination", y="avg_plies", title="Average turns by termination",
-                     category_orders={"termination": avg_plies["termination"].tolist()})
-        charts["avg_plies_by_termination"] = _fig_html(fig)
+    avg_turns = turns_by_termination(df)
+    if not avg_turns.empty:
+        fig = px.bar(avg_turns, x="termination", y="avg_turns", title="Average turns by termination",
+                     category_orders={"termination": avg_turns["termination"].tolist()})
+        charts["avg_turns_by_termination"] = _fig_html(fig)
 
     rolling = rolling_outcome_rates(df)
     if not rolling.empty:
@@ -262,6 +265,77 @@ def _make_self_play_charts(df: pd.DataFrame) -> dict[str, str]:
         charts[f"weight_scatter_{dim}"] = _fig_html(fig)
 
     return charts
+
+
+def _make_player_timeline_chart(timeline: pd.DataFrame, player_name: str) -> str | None:
+    if timeline.empty:
+        return None
+
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        row_heights=[0.45, 0.55],
+        subplot_titles=("Elo over time", "Weights over time"),
+    )
+
+    x = timeline["played_at"]
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=timeline["elo"],
+            mode="lines+markers",
+            name="Elo",
+            line=dict(color="#2563eb", width=2),
+        ),
+        row=1,
+        col=1,
+    )
+
+    weight_colors = {
+        "legal_moves_weight": "#16a34a",
+        "material_score_weight": "#dc2626",
+        "forward_score_weight": "#7c3aed",
+        "center_control_weight": "#d97706",
+    }
+    for dim in ("legal_moves_weight", "material_score_weight", "forward_score_weight", "center_control_weight"):
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=timeline[dim],
+                mode="lines+markers",
+                name=dim.replace("_", " "),
+                line=dict(color=weight_colors[dim], width=2),
+            ),
+            row=2,
+            col=1,
+        )
+
+    fig.update_layout(
+        title=f"{player_name} — Elo and weights over time",
+        height=700,
+        margin=dict(l=40, r=20, t=70, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    fig.update_yaxes(title_text="Elo", row=1, col=1)
+    fig.update_yaxes(title_text="Weight", row=2, col=1)
+    fig.update_xaxes(title_text="Played at", row=2, col=1)
+    return _fig_html(fig)
+
+
+def _self_play_termination_table(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "termination" not in df.columns:
+        return pd.DataFrame(columns=["termination", "games", "avg_turns", "white_win_pct", "draw_pct", "black_win_pct"])
+
+    grouped = df.groupby("termination", dropna=False).agg(
+        games=("termination", "size"),
+        avg_turns=("turns", "mean"),
+        white_win_pct=("white_won", "mean"),
+        draw_pct=("is_draw", "mean"),
+        black_win_pct=("black_won", "mean"),
+    ).reset_index()
+    return grouped.sort_values(["games", "termination"], ascending=[False, True]).reset_index(drop=True)
 
 
 def _ensure_pgn(username: str, force_refresh: bool = False) -> str:
@@ -524,6 +598,80 @@ def self_play_delete_all(request: Request):
     return templates.TemplateResponse("self_play.html", _self_play_page_context(request, notice=notice))
 
 
+@app.post("/self-play/players/delete-all", response_class=HTMLResponse)
+def self_play_players_delete_all(request: Request):
+    deleted = 0
+    try:
+        from app.neo4j_store import Neo4jStore
+
+        with Neo4jStore() as store:
+            deleted = store.delete_self_play_players()
+    except Exception as exc:
+        rows = load_self_play_results(limit=None)
+        df = self_play_to_dataframe(rows)
+        roster = load_current_player_roster()
+        stats = player_overview(df)
+        stats_by_id = {row.player_id: row for row in stats.itertuples(index=False)}
+        players = []
+        for player in roster:
+            row = stats_by_id.get(player.player_id)
+            players.append({
+                "player_id": player.player_id,
+                "name": player.name,
+                "description": player.description,
+                "legal_moves_weight": player.legal_moves_weight,
+                "material_score_weight": player.material_score_weight,
+                "forward_score_weight": player.forward_score_weight,
+                "center_control_weight": player.center_control_weight,
+                "games": int(getattr(row, "games", 0) or 0),
+                "wins": int(getattr(row, "wins", 0) or 0),
+                "draws": int(getattr(row, "draws", 0) or 0),
+                "losses": int(getattr(row, "losses", 0) or 0),
+                "score_pct": float(getattr(row, "score_pct", 0.0) or 0.0),
+                "white_games": int(getattr(row, "white_games", 0) or 0),
+                "black_games": int(getattr(row, "black_games", 0) or 0),
+                "elo": float(getattr(row, "elo", _self_play_elo_baseline()) or _self_play_elo_baseline()),
+            })
+        return templates.TemplateResponse("self_play_players.html", {
+            "request": request,
+            "players": players,
+            "notice": f"Delete failed: {exc}",
+        }, status_code=500)
+
+    rows = load_self_play_results(limit=None)
+    df = self_play_to_dataframe(rows)
+    roster = load_current_player_roster()
+    stats = player_overview(df)
+    stats_by_id = {row.player_id: row for row in stats.itertuples(index=False)}
+    players = []
+    for player in roster:
+        row = stats_by_id.get(player.player_id)
+        players.append({
+            "player_id": player.player_id,
+            "name": player.name,
+            "description": player.description,
+            "legal_moves_weight": player.legal_moves_weight,
+            "material_score_weight": player.material_score_weight,
+            "forward_score_weight": player.forward_score_weight,
+            "center_control_weight": player.center_control_weight,
+            "games": int(getattr(row, "games", 0) or 0),
+            "wins": int(getattr(row, "wins", 0) or 0),
+            "draws": int(getattr(row, "draws", 0) or 0),
+            "losses": int(getattr(row, "losses", 0) or 0),
+            "score_pct": float(getattr(row, "score_pct", 0.0) or 0.0),
+            "white_games": int(getattr(row, "white_games", 0) or 0),
+            "black_games": int(getattr(row, "black_games", 0) or 0),
+            "elo": float(getattr(row, "elo", _self_play_elo_baseline()) or _self_play_elo_baseline()),
+        })
+
+    notice = f"Deleted {deleted} saved self-play player(s)."
+    return templates.TemplateResponse("self_play_players.html", {
+        "request": request,
+        "players": players,
+        "notice": notice,
+    })
+
+
 @app.post("/self-play/start")
 def self_play_start(
     games: int = Form(3),
@@ -631,15 +779,73 @@ def self_play_analysis(request: Request):
     rows = load_self_play_results(limit=None)
     df = self_play_to_dataframe(rows)
     table_df = self_play_export_dataframe(df)
+    hide_columns = {
+        "white_player_id",
+        "white_player_description",
+        "black_player_id",
+        "black_player_description",
+    }
+    display_df = table_df.drop(columns=[col for col in hide_columns if col in table_df.columns])
     elo = estimate_side_elos(df)
     return templates.TemplateResponse("self_play_analysis.html", {
         "request": request,
         "summary": self_play_summary(df),
         "elo": elo,
         "charts": _make_self_play_charts(df) if not df.empty else {},
-        "table_columns": list(table_df.columns),
-        "table_rows": table_df.to_dict(orient="records"),
+        "table_columns": list(display_df.columns),
+        "table_rows": display_df.to_dict(orient="records"),
         "csv_url": "/self-play/analysis.csv",
+    })
+
+
+@app.get("/self-play/terminations", response_class=HTMLResponse)
+def self_play_terminations(request: Request):
+    rows = load_self_play_results(limit=None)
+    df = self_play_to_dataframe(rows)
+    terminations = _self_play_termination_table(df)
+    return templates.TemplateResponse("self_play_terminations.html", {
+        "request": request,
+        "terminations": terminations.to_dict(orient="records"),
+    })
+
+
+@app.get("/self-play/terminations/{termination_key}", response_class=HTMLResponse)
+def self_play_termination(request: Request, termination_key: str):
+    rows = load_self_play_results(limit=None)
+    df = self_play_to_dataframe(rows)
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No self-play results available")
+
+    term_df = df[df["termination"] == termination_key].copy()
+    if term_df.empty:
+        raise HTTPException(status_code=404, detail="Termination not found")
+
+    overview = {
+        "termination": termination_key,
+        "games": int(len(term_df)),
+        "avg_turns": float(term_df["turns"].mean()),
+        "white_win_pct": float(term_df["white_won"].mean()),
+        "draw_pct": float(term_df["is_draw"].mean()),
+        "black_win_pct": float(term_df["black_won"].mean()),
+    }
+    recent = term_df.sort_values("played_at", ascending=False).copy()
+    recent = recent[[
+        "played_at",
+        "run_id",
+        "index",
+        "white_player_id",
+        "white_player_name",
+        "black_player_id",
+        "black_player_name",
+        "result",
+        "turns",
+        "final_score",
+        "outcome",
+    ]]
+    return templates.TemplateResponse("self_play_termination.html", {
+        "request": request,
+        "overview": overview,
+        "games": recent.to_dict(orient="records"),
     })
 
 
@@ -654,7 +860,7 @@ def self_play_analysis_csv():
 def self_play_players(request: Request):
     rows = load_self_play_results(limit=None)
     df = self_play_to_dataframe(rows)
-    roster = get_player_roster()
+    roster = load_current_player_roster()
     stats = player_overview(df)
     stats_by_id = {row.player_id: row for row in stats.itertuples(index=False)}
     players = []
@@ -685,13 +891,14 @@ def self_play_players(request: Request):
 
 @app.get("/self-play/players/{player_id}", response_class=HTMLResponse)
 def self_play_player(request: Request, player_id: str):
-    player = get_player(player_id)
+    player = next((p for p in load_current_player_roster() if p.player_id == player_id), None)
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
 
     rows = load_self_play_results(limit=None)
     df = self_play_to_dataframe(rows)
     detail = player_detail(df, player_id)
+    timeline = player_timeline(df, player_id)
     overview = detail["overview"] or {
         "player_id": player.player_id,
         "player_name": player.name,
@@ -712,6 +919,7 @@ def self_play_player(request: Request, player_id: str):
         "player": player,
         "overview": overview,
         "games": games,
+        "timeline_chart": _make_player_timeline_chart(timeline, player.name),
     })
 
 
@@ -766,6 +974,7 @@ def view_self_play_game(request: Request, run_id: str, index: int):
         "status": row.get("outcome") or "",
         "winner": row.get("winner") or "",
         "loser": row.get("loser") or "",
+        "termination": row.get("termination") or "",
         "white_weights": row.get("white_weights"),
         "black_weights": row.get("black_weights"),
         "duration_seconds": row.get("duration_seconds"),

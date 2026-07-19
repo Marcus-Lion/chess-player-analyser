@@ -40,9 +40,13 @@ from app.games import (
     _result_summary,
     choose_engine_move,
 )
-from app.players import PlayerProfile, pick_two_players
+from app.players import PlayerProfile, get_player_roster, pick_two_players
 from app.neo4j_store import Neo4jStore
-from app.self_play_metrics import player_overview, to_dataframe as self_play_to_dataframe
+from app.self_play_metrics import (
+    SHAP_BALANCE_LEARNING_RATE,
+    shap_balance_player_weights,
+    to_dataframe as self_play_to_dataframe,
+)
 
 try:
     # Native negamax engine (see engine/). When present, play_self_game runs
@@ -61,6 +65,16 @@ def _env_float(name: str, default: float) -> float:
     return float(raw)
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = BASE_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -71,6 +85,7 @@ DEFAULT_SELF_PLAY_WORKERS = max(1, os.process_cpu_count() or 1)
 # file is on disk. Delete a job's status/log once it has been idle for this
 # long so neither grows without bound.
 JOB_RETENTION_SECONDS = 60
+SELF_PLAY_REBALANCE_BATCH_SIZE = max(1, _env_int("SELF_PLAY_REBALANCE_BATCH_SIZE", 25))
 
 
 @dataclass
@@ -78,7 +93,7 @@ class SelfPlayGame:
     index: int
     result: str
     termination: str
-    plies: int
+    turns: int
     pgn: str
     final_fen: str
     final_score: float
@@ -171,6 +186,35 @@ def _weight_tuple_to_dict(weights: tuple[float, float, float, float]) -> dict[st
     }
 
 
+def _player_profile_from_row(base: PlayerProfile, row: dict) -> PlayerProfile:
+    return PlayerProfile(
+        player_id=str(row.get("player_id", base.player_id)),
+        name=str(row.get("name", base.name)),
+        description=str(row.get("description", base.description)),
+        legal_moves_weight=float(row.get("legal_moves_weight", base.legal_moves_weight)),
+        material_score_weight=float(row.get("material_score_weight", base.material_score_weight)),
+        forward_score_weight=float(row.get("forward_score_weight", base.forward_score_weight)),
+        center_control_weight=float(row.get("center_control_weight", base.center_control_weight)),
+    )
+
+
+def load_current_player_roster() -> list[PlayerProfile]:
+    """Load the latest self-play player weights from Neo4j, falling back to code defaults."""
+    base_roster = {player.player_id: player for player in get_player_roster()}
+    try:
+        with Neo4jStore() as store:
+            rows = store.load_self_play_players()
+        for row in rows:
+            player_id = str(row.get("player_id", ""))
+            base = base_roster.get(player_id)
+            if base is None:
+                continue
+            base_roster[player_id] = _player_profile_from_row(base, row)
+    except Exception:
+        pass
+    return list(base_roster.values())
+
+
 def _fixed_side_weights(
     config: SelfPlayConfig, side: str
 ) -> dict[str, float] | None:
@@ -202,7 +246,8 @@ def _player_weight_sets(
         shared = _weight_tuple_to_dict(base)
         return None, fixed_white or shared, None, fixed_black or shared.copy()
 
-    white_player, black_player = pick_two_players(rng, _current_player_skill_levels())
+    roster = load_current_player_roster()
+    white_player, black_player = pick_two_players(rng, _current_player_skill_levels(), roster=roster)
     white = fixed_white or white_player.weights
     black = fixed_black or black_player.weights
     return (
@@ -214,19 +259,14 @@ def _player_weight_sets(
 
 
 def _current_player_skill_levels() -> dict[str, float]:
-    """Return the latest per-player Elo estimates from saved self-play games."""
+    """Return the latest per-player Elo estimates from the player nodes."""
     try:
-        rows = load_self_play_results(limit=None)
-        if not rows:
-            return {}
-        df = self_play_to_dataframe(rows)
-        if df.empty:
-            return {}
-        stats = player_overview(df)
+        with Neo4jStore() as store:
+            rows = store.load_self_play_players()
         return {
-            row.player_id: float(row.elo)
-            for row in stats.itertuples(index=False)
-            if getattr(row, "player_id", None)
+            str(row.get("player_id")): float(row.get("elo", _self_play_elo_baseline()))
+            for row in rows
+            if row.get("player_id")
         }
     except Exception:
         return {}
@@ -826,7 +866,7 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
         index=game_index,
         result=result,
         termination=termination,
-        plies=turn,
+        turns=turn,
         pgn=pgn_text,
         final_fen=board.fen(),
         final_score=final_score,
@@ -886,6 +926,7 @@ def run_self_play(
     requested_workers = config.workers or DEFAULT_SELF_PLAY_WORKERS
     max_workers = max(1, min(int(requested_workers), config.games))
     future_to_index: dict = {}
+    rebalance_batch: list[SelfPlayGame] = []
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         for i in range(1, config.games + 1):
             game_config = _config_for_game(config, i)
@@ -907,7 +948,7 @@ def run_self_play(
                     index=index,
                     result="0-0",
                     termination="disconnect",
-                    plies=0,
+                    turns=0,
                     pgn="",
                     final_fen="",
                     final_score=0.0,
@@ -920,6 +961,13 @@ def run_self_play(
                     start_fen=config.fen or "startpos",
                 )
             save_self_play_results([game])
+            rebalance_batch.append(game)
+            if len(rebalance_batch) >= SELF_PLAY_REBALANCE_BATCH_SIZE:
+                try:
+                    rebalance_self_play_players(rebalance_batch)
+                except Exception:
+                    traceback.print_exc()
+                rebalance_batch.clear()
             completed_games[index] = game
             completed_count += 1
             ordered_games = [completed_games[i] for i in sorted(completed_games)]
@@ -944,7 +992,7 @@ def save_self_play_results(games: list[SelfPlayGame]) -> None:
             "start_fen": game.start_fen,
             "result": game.result,
             "termination": game.termination,
-            "plies": game.plies,
+            "turns": game.turns,
             "final_fen": game.final_fen,
             "final_score": game.final_score,
             "outcome": game.outcome,
@@ -970,6 +1018,24 @@ def save_self_play_results(games: list[SelfPlayGame]) -> None:
         store.save_self_play_games(payloads)
 
 
+def rebalance_self_play_players(games: list[SelfPlayGame]) -> int:
+    """Update player weights from a batch of self-play games using SHAP analysis."""
+    if not games:
+        return 0
+
+    batch_df = self_play_to_dataframe([asdict(game) for game in games])
+    if batch_df.empty:
+        return 0
+
+    updates = shap_balance_player_weights(batch_df, learning_rate=SHAP_BALANCE_LEARNING_RATE)
+    if updates.empty:
+        return 0
+
+    rows = updates.to_dict(orient="records")
+    with Neo4jStore() as store:
+        return store.update_self_play_player_weights(rows)
+
+
 def load_self_play_results(limit: int | None = 50) -> list[dict]:
     with Neo4jStore() as store:
         rows = store.load_self_play_games(limit)
@@ -986,6 +1052,10 @@ def _normalize_result(row: dict) -> dict:
     row.setdefault("duration_seconds", 0.0)
     row.setdefault("evaluations", 0)
     row.setdefault("evaluations_per_move", 0.0)
+    if "turns" not in row and "plies" in row:
+        row["turns"] = row["plies"]
+    if "plies" not in row and "turns" in row:
+        row["plies"] = row["turns"]
     row["played_at_display"] = _format_played_at(row.get("played_at", ""))
     return row
 
@@ -1311,7 +1381,7 @@ def main(argv: list[str] | None = None) -> int:
         white = game.white_weights or {}
         black = game.black_weights or {}
         print(
-            f"Game {game.index}: {game.result} after {game.plies} turns ({game.termination}); "
+            f"Game {game.index}: {game.result} after {game.turns} turns ({game.termination}); "
             f"final score {game.final_score}; "
             f"took {game.duration_seconds:.2f}s, {game.evaluations_per_move:.0f} evals/move; "
             f"W[lm={white.get('legal_moves_weight', 0):.6f}, mat={white.get('material_score_weight', 0):.6f}, fwd={white.get('forward_score_weight', 0):.6f}] "

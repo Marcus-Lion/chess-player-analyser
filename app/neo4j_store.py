@@ -31,6 +31,7 @@ class Neo4jStore:
             {elo}
             <-[:PLAYED_AS_WHITE]- (:SelfPlayGame {game_key, ...})
             <-[:PLAYED_AS_BLACK]-
+            -[:ENDED_BY]-> (:SelfPlayTermination {termination_key, label})
 
     Configuration is read from environment variables so the analytics engine
     stays unchanged when Neo4j is not configured:
@@ -132,6 +133,8 @@ class Neo4jStore:
             "FOR (g:SelfPlayGame) REQUIRE g.game_key IS UNIQUE",
             "CREATE CONSTRAINT self_play_player_id IF NOT EXISTS "
             "FOR (p:SelfPlayPlayer) REQUIRE p.player_id IS UNIQUE",
+            "CREATE CONSTRAINT self_play_termination_key IF NOT EXISTS "
+            "FOR (t:SelfPlayTermination) REQUIRE t.termination_key IS UNIQUE",
         ]
         with self._driver.session(database=self.database) as session:
             for statement in statements:
@@ -153,6 +156,8 @@ class Neo4jStore:
         row["black_material_score_weight"] = black_weights.get("material_score_weight")
         row["black_forward_score_weight"] = black_weights.get("forward_score_weight")
         row["black_center_control_weight"] = black_weights.get("center_control_weight")
+        row["termination_key"] = row.get("termination")
+        row["termination_label"] = row.get("termination")
         return row
 
     @staticmethod
@@ -195,6 +200,11 @@ class Neo4jStore:
                 black.center_control_weight = row.black_center_control_weight
             MERGE (g)-[:PLAYED_AS_BLACK]->(black)
         )
+        FOREACH (_ IN CASE WHEN row.termination_key IS NULL THEN [] ELSE [1] END |
+            MERGE (t:SelfPlayTermination {termination_key: row.termination_key})
+            SET t.label = row.termination_label
+            MERGE (g)-[:ENDED_BY]->(t)
+        )
         """
 
         self.ensure_self_play_constraints()
@@ -233,6 +243,58 @@ class Neo4jStore:
         with self._driver.session(database=self.database) as session:
             session.run(query, rows=player_rows)
         return len(player_rows)
+
+    def load_self_play_players(self) -> list[dict]:
+        """Load all self-play players with their current weights and Elo."""
+        query = """
+        MATCH (p:SelfPlayPlayer)
+        RETURN p
+        ORDER BY coalesce(p.elo, 1500.0) DESC, p.player_id
+        """
+        with self._driver.session(database=self.database) as session:
+            records = list(session.run(query))
+        return [dict(record["p"]) for record in records]
+
+    def update_self_play_player_weights(self, rows: list[dict]) -> int:
+        """Persist updated self-play weights for the provided player rows."""
+        if not rows:
+            return 0
+
+        query = """
+        UNWIND $rows AS row
+        MATCH (p:SelfPlayPlayer {player_id: row.player_id})
+        SET p.name = coalesce(row.player_name, p.name),
+            p.description = coalesce(row.player_description, p.description),
+            p.legal_moves_weight = row.updated_legal_moves_weight,
+            p.material_score_weight = row.updated_material_score_weight,
+            p.forward_score_weight = row.updated_forward_score_weight,
+            p.center_control_weight = row.updated_center_control_weight,
+            p.last_balance_games = row.games,
+            p.last_balance_score_pct = row.score_pct,
+            p.last_balance_shap_legal_moves_weight = row.shap_legal_moves_weight,
+            p.last_balance_shap_material_score_weight = row.shap_material_score_weight,
+            p.last_balance_shap_forward_score_weight = row.shap_forward_score_weight,
+            p.last_balance_shap_center_control_weight = row.shap_center_control_weight,
+            p.last_balance_delta_legal_moves_weight = row.delta_legal_moves_weight,
+            p.last_balance_delta_material_score_weight = row.delta_material_score_weight,
+            p.last_balance_delta_forward_score_weight = row.delta_forward_score_weight,
+            p.last_balance_delta_center_control_weight = row.delta_center_control_weight
+        """
+        with self._driver.session(database=self.database) as session:
+            session.run(query, rows=rows)
+        return len(rows)
+
+    def delete_self_play_players(self) -> int:
+        """Delete every saved self-play player node and detach its relationships."""
+        query = """
+        MATCH (p:SelfPlayPlayer)
+        WITH collect(p) AS players, count(p) AS deleted
+        FOREACH (player IN players | DETACH DELETE player)
+        RETURN deleted
+        """
+        with self._driver.session(database=self.database) as session:
+            record = session.run(query).single()
+        return int(record["deleted"]) if record is not None else 0
 
     def load_self_play_games(self, limit: int | None = 50) -> list[dict]:
         """Load self-play games, oldest first (matches the old JSONL append order)."""
@@ -277,10 +339,20 @@ class Neo4jStore:
                 RETURN deleted
                 """
             ).single()
+            terminations_record = session.run(
+                """
+                MATCH (t:SelfPlayTermination)
+                WHERE NOT (t)--()
+                WITH collect(t) AS terminations, count(t) AS deleted
+                FOREACH (termination IN terminations | DETACH DELETE termination)
+                RETURN deleted
+                """
+            ).single()
 
         games_deleted = int(games_record["deleted"]) if games_record is not None else 0
         players_deleted = int(players_record["deleted"]) if players_record is not None else 0
-        return games_deleted + players_deleted
+        terminations_deleted = int(terminations_record["deleted"]) if terminations_record is not None else 0
+        return games_deleted + players_deleted + terminations_deleted
 
 
 @contextmanager

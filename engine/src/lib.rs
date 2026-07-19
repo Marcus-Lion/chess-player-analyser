@@ -8,6 +8,7 @@ mod eval;
 mod search;
 
 use std::collections::HashMap;
+use std::env;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -23,8 +24,16 @@ use crate::eval::{evaluate_white, mover_material_advantage, Weights};
 use crate::search::{negamax, root_moves, SearchState};
 
 // Matches REPETITION_AVOIDANCE_* in games.py:903-904.
-const REPETITION_AVOIDANCE_MATERIAL_PAWNS: i32 = 2;
+const DEFAULT_REPETITION_AVOIDANCE_MATERIAL_PAWNS: i32 = 1;
 const REPETITION_AVOIDANCE_PENALTY: f64 = 500.0;
+
+fn repetition_avoidance_material_pawns() -> i32 {
+    env::var("REPETITION_AVOIDANCE_MATERIAL_PAWNS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<i32>().ok())
+        .unwrap_or(DEFAULT_REPETITION_AVOIDANCE_MATERIAL_PAWNS)
+        .max(0)
+}
 
 fn parse_position(fen: &str) -> PyResult<Chess> {
     let parsed: Fen = fen
@@ -99,8 +108,9 @@ fn choose_engine_move(
         checkmate: checkmate_weight,
     };
 
+    let repetition_threshold = repetition_avoidance_material_pawns();
     let avoid_repetition =
-        mover_material_advantage(&pos) >= REPETITION_AVOIDANCE_MATERIAL_PAWNS;
+        mover_material_advantage(&pos).abs() >= repetition_threshold;
     let rep_counts = if avoid_repetition {
         repetition_counts(&pos, &history_fens)
     } else {

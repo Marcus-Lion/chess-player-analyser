@@ -33,6 +33,9 @@
 
   {% if game_summary %}
     <p><strong>Outcome:</strong> {{ game_summary.status }}{% if game_summary.winner %} · Winner: {{ game_summary.winner }}{% endif %}{% if game_summary.loser %} · Loser: {{ game_summary.loser }}{% endif %}</p>
+    {% if game_summary.termination %}
+      <p><strong>Termination:</strong> <a href="/self-play/terminations/{{ game_summary.termination|urlencode }}">{{ game_summary.termination }}</a></p>
+    {% endif %}
     {% if game_summary.duration_seconds is not none %}
       <p><strong>Time to play:</strong> {{ "%.2f"|format(game_summary.duration_seconds) }}s ·
         <strong>Evaluations:</strong> {{ game_summary.evaluations }} total, {{ "%.0f"|format(game_summary.evaluations_per_move) }} per move</p>

@@ -158,6 +158,48 @@ uv run python -m app.self_play --tune-weights --tune-iterations 200 --tune-corpu
 - `Dockerfile` supports container deployment.
 - `neo4j_notes.md` documents the Neo4j setup and the self-play graph model.
 
+## GCP deployment
+
+The project is also deployed on Google Cloud Run from the repo’s `Dockerfile`.
+
+Typical deployment shape:
+
+```bash
+gcloud run deploy chess-player-analyser \
+  --source . \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --memory 2Gi --cpu 2 --timeout 1800
+```
+
+Key points:
+
+- Cloud Run is the application host.
+- The service is sized up to 2 vCPU / 2 GiB to keep self-play runs from being memory-starved.
+- The request timeout is extended to support long self-play sessions.
+- The app uses `os.process_cpu_count()` for worker sizing so container CPU limits are respected.
+- The live deployment in this repo is:
+  - project: `chess-player-502601`
+  - region: `us-central1`
+  - service: `chess-player-analyser`
+- The public URL is the Cloud Run service URL; the app is exposed without auth.
+
+Neo4j for self-play is kept private on GCP:
+
+- it runs on a Compute Engine VM with no external IP,
+- the VM is reached from Cloud Run through a VPC connector,
+- Neo4j Bolt is firewall-restricted to the connector subnet,
+- admin/browser access is intended to go through SSH tunneling rather than public exposure.
+- the VM uses Cloud NAT for outbound-only internet access so it can pull images without public ingress.
+
+Operational notes:
+
+- Cloud Run should be deployed with the same environment variables used locally for Neo4j and baseline tuning.
+- Self-play depends on Neo4j for persistent results and weight updates; if the database is unreachable, the app can still run but the closed-loop tuning path is incomplete.
+- Long self-play runs should be monitored for memory pressure and worker count; the container CPU quota should always be the source of truth.
+
+This architecture keeps the web app public while leaving the graph database private.
+
 ## Troubleshooting
 
 - If self-play updates seem to happen too often, check that `.env` is loaded before `SELF_PLAY_REBALANCE_BATCH_SIZE` is read.

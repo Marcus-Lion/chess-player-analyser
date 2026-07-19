@@ -95,6 +95,36 @@ The app reads configuration from environment variables. `.env` is loaded by the 
 5. After each batch, the SHAP-style rebalance step updates player weights.
 6. The stored history is used for player timelines, win-rate summaries, and termination tables.
 
+## Performance
+
+Performance has two layers in this project: the analytics/web layer and the self-play engine.
+
+The web app is mostly pandas + Plotly + FastAPI. Its performance is dominated by data loading, chart generation, and any optional Neo4j queries.
+
+The self-play engine is where the biggest performance work lives:
+
+- `app/self_play.py` uses a native `chess_engine` extension when it is installed.
+- That extension is a Rust port of the Python move-generation and negamax search path.
+- The Rust path is a drop-in replacement for `app.games.choose_engine_move`.
+- It keeps the same search semantics, but is much faster in practice.
+- The engine README describes it as roughly 30× faster at the same evals/move.
+- When the extension is unavailable, the app falls back to the pure-Python engine automatically.
+
+The runtime also uses process-level parallelism for multi-game runs:
+
+- each game is scheduled as a separate process-pool task,
+- `--workers` controls concurrency,
+- the default worker count is capped by the number of games being run,
+- on containerized deployments the code uses `os.process_cpu_count()` so it does not over-spawn based on the host machine’s CPU count.
+
+Useful performance signals are printed per game:
+
+- wall-clock duration in seconds,
+- average evals per move,
+- the chosen white/black player weights.
+
+That makes it possible to compare the Python fallback against the Rust extension and to spot regressions in search cost or game length.
+
 ## Important behavior to know
 
 - White/black win rates are tracked separately in self-play analytics.

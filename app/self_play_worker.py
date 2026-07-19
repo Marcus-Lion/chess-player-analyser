@@ -16,7 +16,12 @@ _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from app.self_play import SelfPlayJobClient, SelfPlayJobStatus, _run_self_play_job
+from app.self_play import (
+    SelfPlayJobClient,
+    SelfPlayJobStatus,
+    _remove_job_pid_file,
+    _run_self_play_job,
+)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -57,6 +62,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     finally:
         client.close()
+        _remove_job_pid_file(args.job_id)
     return 0
 
 

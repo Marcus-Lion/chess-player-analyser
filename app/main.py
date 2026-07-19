@@ -41,6 +41,7 @@ from app.self_play import (
     load_self_play_result,
     load_self_play_results,
     prune_old_jobs,
+    terminate_orphaned_self_play_workers,
     run_self_play,
     start_self_play_job,
     SELF_PLAY_JOBS_DIR,
@@ -93,6 +94,12 @@ except ImportError as exc:
         raise RuntimeError(
             "PYTHON_FALLBACK=false but the native chess_engine extension could not be imported"
         ) from exc
+
+
+@app.on_event("startup")
+def _startup_cleanup() -> None:
+    terminate_orphaned_self_play_workers()
+    prune_old_jobs()
 
 
 @app.get("/favicon.ico", include_in_schema=False)

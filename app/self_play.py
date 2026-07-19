@@ -14,6 +14,7 @@ import socket
 import subprocess
 import sys
 import time
+import signal
 from pathlib import Path
 from uuid import uuid4
 import threading
@@ -363,6 +364,104 @@ def _config_for_game(config: SelfPlayConfig, game_index: int) -> SelfPlayConfig:
 
 def _job_log_path(job_id: str) -> Path:
     return SELF_PLAY_JOBS_DIR / f"{job_id}.log"
+
+
+def _job_pid_path(job_id: str) -> Path:
+    return SELF_PLAY_JOBS_DIR / f"{job_id}.pid"
+
+
+def _write_job_pid_file(job_id: str, run_id: str, pid: int, cmd: list[str]) -> None:
+    payload = {
+        "job_id": job_id,
+        "run_id": run_id,
+        "pid": pid,
+        "cmd": cmd,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        _job_pid_path(job_id).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _remove_job_pid_file(job_id: str) -> None:
+    try:
+        _job_pid_path(job_id).unlink()
+    except OSError:
+        pass
+
+
+def _read_job_pid(pid_path: Path) -> int | None:
+    try:
+        raw = pid_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+    if not raw.strip():
+        return None
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        try:
+            return int(raw.strip())
+        except ValueError:
+            return None
+
+    try:
+        return int(data["pid"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _terminate_process_tree(pid: int) -> None:
+    if pid <= 0:
+        return
+
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return
+
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pid, sig)
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            return
+        except OSError:
+            return
+        if sig == signal.SIGTERM:
+            time.sleep(0.5)
+
+
+def terminate_orphaned_self_play_workers() -> None:
+    """Kill detached worker trees left behind by earlier app runs."""
+
+    try:
+        pid_files = list(SELF_PLAY_JOBS_DIR.glob("*.pid"))
+    except OSError:
+        return
+
+    for pid_path in pid_files:
+        pid = _read_job_pid(pid_path)
+        if pid is None:
+            try:
+                pid_path.unlink()
+            except OSError:
+                pass
+            continue
+
+        _terminate_process_tree(pid)
+        try:
+            pid_path.unlink()
+        except OSError:
+            pass
 
 
 def _prune_old_logs(max_age_seconds: int = JOB_RETENTION_SECONDS) -> None:
@@ -973,7 +1072,7 @@ def run_self_play(
     if config.games <= 1:
         game_config = _config_for_game(config, 1)
         game = _play_and_save_game(game_config, 1, run_id, played_at)
-        save_self_play_results([game])
+        save_self_play_results([game], refresh_player_elos=True)
         games.append(game)
         if progress_callback is not None:
             progress_callback(1, game, games)
@@ -1017,7 +1116,7 @@ def run_self_play(
                     max_turns=config.max_turns,
                     start_fen=config.fen or "startpos",
                 )
-            save_self_play_results([game])
+            save_self_play_results([game], refresh_player_elos=False)
             rebalance_batch.append(game)
             if len(rebalance_batch) >= SELF_PLAY_REBALANCE_BATCH_SIZE:
                 rebalance_batch_number += 1
@@ -1025,6 +1124,10 @@ def run_self_play(
                 try:
                     updated = rebalance_self_play_players(rebalance_batch)
                     print(f"  updated {updated} players")
+                except Exception:
+                    traceback.print_exc()
+                try:
+                    refresh_self_play_player_elos()
                 except Exception:
                     traceback.print_exc()
                 rebalance_batch.clear()
@@ -1042,11 +1145,20 @@ def run_self_play(
             print(f"  updated {updated} players")
         except Exception:
             traceback.print_exc()
+        try:
+            refresh_self_play_player_elos()
+        except Exception:
+            traceback.print_exc()
 
     return [completed_games[i] for i in sorted(completed_games)]
 
 
-def save_self_play_results(games: list[SelfPlayGame]) -> None:
+def refresh_self_play_player_elos() -> int:
+    with Neo4jStore() as store:
+        return store.refresh_self_play_player_elos()
+
+
+def save_self_play_results(games: list[SelfPlayGame], *, refresh_player_elos: bool = True) -> None:
     if not games:
         return
 
@@ -1085,6 +1197,8 @@ def save_self_play_results(games: list[SelfPlayGame]) -> None:
 
     with Neo4jStore() as store:
         store.save_self_play_games(payloads)
+        if refresh_player_elos:
+            store.refresh_self_play_player_elos()
 
 
 def rebalance_self_play_players(games: list[SelfPlayGame]) -> int:
@@ -1320,7 +1434,9 @@ def start_self_play_job(config: SelfPlayConfig) -> dict:
             stdin=subprocess.PIPE,
             creationflags=creationflags,
             close_fds=True,
+            start_new_session=os.name != "nt",
         )
+        _write_job_pid_file(job_id, run_id, proc.pid, cmd)
 
         # Tee worker output to both the log file and the main process's stdout
         # so it's visible in Cloud Run logs.
@@ -1336,6 +1452,7 @@ def start_self_play_job(config: SelfPlayConfig) -> dict:
         proc.stdin.close()
     except Exception as e:
         print(f"FAILED to launch worker: {e}", flush=True)
+        _remove_job_pid_file(job_id)
         log_handle.close()
         raise
     return asdict(status)

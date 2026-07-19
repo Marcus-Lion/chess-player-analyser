@@ -19,6 +19,12 @@ SHAP_BALANCE_MAX_STEP = 0.20
 SHAP_BALANCE_MIN_GAMES = 2
 
 
+def display_termination_label(termination: str | None) -> str:
+    if termination is None or pd.isna(termination):
+        return ""
+    return "3-fold repetition" if termination == "threefold repetition" else termination
+
+
 def _elo_baseline() -> float:
     raw = (os.getenv("BASELINE_ELO") or os.getenv("ELO_BASELINE") or "1500").strip()
     try:
@@ -608,7 +614,7 @@ def summary(df: pd.DataFrame) -> dict:
 
     games = len(df)
     decisive = int((~df["is_draw"]).sum())
-    top_termination = df["termination"].value_counts().idxmax()
+    top_termination = display_termination_label(df["termination"].value_counts().idxmax())
     return {
         "games": games,
         "decisive_pct": decisive / games,
@@ -631,22 +637,28 @@ def outcome_counts(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def termination_counts(df: pd.DataFrame) -> pd.DataFrame:
-    return (
+    table = (
         df["termination"].value_counts()
         .rename_axis("termination")
         .reset_index(name="games")
         .sort_values("games", ascending=False)
     )
+    if not table.empty:
+        table["termination"] = table["termination"].map(display_termination_label)
+    return table
 
 
 def turns_by_termination(df: pd.DataFrame) -> pd.DataFrame:
-    return (
+    table = (
         df.groupby("termination")["turns"]
         .mean()
         .rename("avg_turns")
         .reset_index()
         .sort_values("avg_turns", ascending=False)
     )
+    if not table.empty:
+        table["termination"] = table["termination"].map(display_termination_label)
+    return table
 
 
 def plies_by_termination(df: pd.DataFrame) -> pd.DataFrame:

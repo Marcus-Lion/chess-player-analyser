@@ -48,6 +48,7 @@ from app.self_play import (
 from app.self_play_metrics import (
     OUTCOME_ORDER,
     WEIGHT_DIMENSIONS,
+    display_termination_label,
     final_score_by_outcome,
     outcome_counts,
     turns_by_termination,
@@ -147,10 +148,13 @@ def _self_play_page_context(request: Request, notice: str | None = None) -> dict
     results = load_self_play_results()
     df = self_play_to_dataframe(results)
     table_df = self_play_export_dataframe(df)
+    table_rows = table_df.to_dict(orient="records")
+    for row in table_rows:
+        row["termination_display"] = display_termination_label(row.get("termination"))
     elo = estimate_side_elos(df)
     context = {
         "request": request,
-        "results": table_df.to_dict(orient="records"),
+        "results": table_rows,
         "recent_games": [],
         "config": None,
         "elo": elo,
@@ -326,7 +330,7 @@ def _make_player_timeline_chart(timeline: pd.DataFrame, player_name: str) -> str
 
 def _self_play_termination_table(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty or "termination" not in df.columns:
-        return pd.DataFrame(columns=["termination", "games", "avg_turns", "white_win_pct", "draw_pct", "black_win_pct"])
+        return pd.DataFrame(columns=["termination", "termination_display", "games", "avg_turns", "white_win_pct", "draw_pct", "black_win_pct"])
 
     grouped = df.groupby("termination", dropna=False).agg(
         games=("termination", "size"),
@@ -335,6 +339,7 @@ def _self_play_termination_table(df: pd.DataFrame) -> pd.DataFrame:
         draw_pct=("is_draw", "mean"),
         black_win_pct=("black_won", "mean"),
     ).reset_index()
+    grouped["termination_display"] = grouped["termination"].map(display_termination_label)
     return grouped.sort_values(["games", "termination"], ascending=[False, True]).reset_index(drop=True)
 
 
@@ -574,6 +579,8 @@ def self_play_run(
         black_center_control_weight=_parse_optional_float(black_center_control_weight),
     )
     recent_games = run_self_play(config)
+    for game in recent_games:
+        game["termination_display"] = display_termination_label(game.get("termination"))
     page_context = _self_play_page_context(request)
     page_context["recent_games"] = recent_games
     page_context["config"] = config
@@ -822,6 +829,7 @@ def self_play_termination(request: Request, termination_key: str):
 
     overview = {
         "termination": termination_key,
+        "termination_display": display_termination_label(termination_key),
         "games": int(len(term_df)),
         "avg_turns": float(term_df["turns"].mean()),
         "white_win_pct": float(term_df["white_won"].mean()),
@@ -975,6 +983,7 @@ def view_self_play_game(request: Request, run_id: str, index: int):
         "winner": row.get("winner") or "",
         "loser": row.get("loser") or "",
         "termination": row.get("termination") or "",
+        "termination_display": display_termination_label(row.get("termination")),
         "white_weights": row.get("white_weights"),
         "black_weights": row.get("black_weights"),
         "duration_seconds": row.get("duration_seconds"),

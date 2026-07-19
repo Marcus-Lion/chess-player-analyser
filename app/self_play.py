@@ -733,7 +733,7 @@ def _terminal_reason(board: chess.Board) -> tuple[str, str]:
     if board.is_seventyfive_moves():
         return ("1/2-1/2", "75-move rule")
     if board.can_claim_threefold_repetition():
-        return ("1/2-1/2", "threefold repetition")
+        return ("1/2-1/2", "3-fold repetition")
     if board.can_claim_fifty_moves():
         return ("1/2-1/2", "fifty-move rule")
     return ("", "")

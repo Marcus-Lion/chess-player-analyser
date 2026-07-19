@@ -172,7 +172,7 @@
           <b><a href="/self-play/view/{{ game.run_id }}/{{ game.index }}">Game {{ game.index }} · {{ game.result }} · {{ game.turns }} turns</a></b>
           <div>Outcome: {{ game.outcome }}{% if game.winner %} · Winner: {{ game.winner }}{% endif %}{% if game.loser %} · Loser: {{ game.loser }}{% endif %}</div>
           <div>Players: {% if game.white_player_id %}<a href="/self-play/players/{{ game.white_player_id }}">{{ game.white_player_name }}</a>{% else %}{{ game.white_player_name }}{% endif %} vs {% if game.black_player_id %}<a href="/self-play/players/{{ game.black_player_id }}">{{ game.black_player_name }}</a>{% else %}{{ game.black_player_name }}{% endif %}</div>
-          <div>Termination: {{ game.termination }}</div>
+          <div>Termination: {{ game.termination_display or game.termination }}</div>
           <div>Final score: {{ "%.2f"|format(game.final_score) }}</div>
           <div>Time to play: {{ "%.2f"|format(game.duration_seconds) }}s · Evaluations: {{ game.evaluations }} total, {{ "%.0f"|format(game.evaluations_per_move) }} per move</div>
           {% if game.white_weights and game.black_weights %}
@@ -265,7 +265,7 @@
               <td>{{ "%.0f"|format(row.WhiteElo if row.WhiteElo is not none else 0) }}</td>
               <td>{{ "%.0f"|format(row.BlackElo if row.BlackElo is not none else 0) }}</td>
               <td>{{ row.turns }}</td>
-              <td><a href="/self-play/terminations/{{ row.termination|urlencode }}">{{ row.termination }}</a></td>
+              <td><a href="/self-play/terminations/{{ row.termination|urlencode }}">{{ row.termination_display or row.termination }}</a></td>
               <td>{{ "%.2f"|format(row.final_score) }}</td>
               <td>{{ "%.2f"|format(row.duration_seconds) }}s</td>
               <td>{{ "%.0f"|format(row.evaluations_per_move) }}</td>
@@ -525,7 +525,7 @@
         values.forEach((value) => {
           const option = document.createElement('option');
           option.value = value;
-          option.textContent = value;
+          option.textContent = key === 'termination' && value === 'threefold repetition' ? '3-fold repetition' : value;
           select.appendChild(option);
         });
       }

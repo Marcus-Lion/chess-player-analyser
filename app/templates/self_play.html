@@ -259,7 +259,7 @@
                 data-termination="{{ row.termination }}"
                 data-turns="{{ row.turns }}"
                 data-final-score="{{ row.final_score }}">
-              <td>{{ row.played_at }}</td>
+              <td data-local-timestamp>{{ row.played_at }}</td>
               <td>{% if row.white_player_id %}<a href="/self-play/players/{{ row.white_player_id }}">{{ row.white_player_name or "" }}</a>{% else %}{{ row.white_player_name or "" }}{% endif %}</td>
               <td>{% if row.black_player_id %}<a href="/self-play/players/{{ row.black_player_id }}">{{ row.black_player_name or "" }}</a>{% else %}{{ row.black_player_name or "" }}{% endif %}</td>
               <td><a href="/self-play/view/{{ row.run_id }}/{{ row.index }}">{{ row.result }}</a></td>
@@ -295,6 +295,22 @@
     // waiting on the socket forever.
     const NO_PROGRESS_TIMEOUT_MS = 1000000;
 
+    function formatLocalTimestamp(value) {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return value ? String(value) : '';
+      }
+      const pad = (number) => String(number).padStart(2, '0');
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    }
+
+    function applyLocalTimestamps(root = document) {
+      root.querySelectorAll('[data-local-timestamp]').forEach((element) => {
+        const raw = element.getAttribute('data-local-timestamp') || element.textContent || '';
+        element.textContent = formatLocalTimestamp(raw);
+      });
+    }
+
     function readSavedFormState() {
       try {
         const raw = localStorage.getItem(formStateKey);
@@ -327,6 +343,8 @@
         el.value = saved[el.name];
       });
     }
+
+    applyLocalTimestamps();
 
     function releaseJob() {
       // Stop tracking whatever job was active and re-enable the form so the

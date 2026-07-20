@@ -17,6 +17,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-turns", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--replay-capacity", type=int, default=None)
+    parser.add_argument("--self-play-workers", type=int, default=None)
     parser.add_argument("--learning-rate", type=float, default=None)
     parser.add_argument("--policy-hidden-dim", type=int, default=128)
     parser.add_argument("--value-hidden-dim", type=int, default=64)
@@ -43,6 +44,7 @@ def main(argv: list[str] | None = None) -> int:
         max_turns=max(2, int(pick("max_turns", 80))),
         replay_capacity=max(1, int(pick("replay_capacity", 10_000))),
         batch_size=max(1, int(pick("batch_size", 32))),
+        self_play_workers=max(1, int(pick("self_play_workers", 1))),
         self_play_temperature=max(0.0, float(pick("temperature", 1.0))),
         self_play_exploration=max(0.0, float(pick("exploration", 0.1))),
         learning_rate=max(1e-6, float(pick("learning_rate", 1e-3))),

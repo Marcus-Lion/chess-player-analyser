@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from dataclasses import asdict
+from concurrent.futures import ProcessPoolExecutor
 import json
 from pathlib import Path
 import random
@@ -10,7 +11,7 @@ from collections.abc import Callable
 from app.rl.config import RLConfig
 from app.rl.model import ChessRLModel, TrainMetrics
 from app.rl.replay_buffer import ReplayBuffer
-from app.rl.self_play_rl import generate_self_play_batch
+from app.rl.self_play_rl import play_self_play_game
 
 
 @dataclass(slots=True)
@@ -30,6 +31,40 @@ class TrainingRun:
         return self.steps[-1] if self.steps else None
 
 
+def _apply_episode_result(
+    *,
+    model: ChessRLModel,
+    config: RLConfig,
+    buffer: ReplayBuffer,
+    samples_file: Path | None,
+    rng: random.Random,
+    run: TrainingRun,
+    episode_number: int,
+    episode_samples,
+    save_path: str | Path | None,
+    progress_callback: Callable[[TrainingStep], None] | None,
+) -> None:
+    buffer.add_many(episode_samples)
+    if samples_file is not None and episode_samples:
+        with samples_file.open("a", encoding="utf-8") as handle:
+            for sample in episode_samples:
+                handle.write(json.dumps(asdict(sample), ensure_ascii=False))
+                handle.write("\n")
+    batch = buffer.sample(config.batch_size, rng=rng)
+    metrics = model.train_batch(batch, learning_rate=config.learning_rate) if batch else TrainMetrics()
+    step = TrainingStep(
+        episode=episode_number,
+        samples=len(episode_samples),
+        policy_loss=metrics.policy_loss,
+        value_loss=metrics.value_loss,
+    )
+    run.steps.append(step)
+    if progress_callback is not None:
+        progress_callback(step)
+    if save_path is not None and episode_number % max(1, config.save_every) == 0:
+        model.save(save_path)
+
+
 def train_from_self_play(
     model: ChessRLModel,
     config: RLConfig,
@@ -46,28 +81,58 @@ def train_from_self_play(
     if samples_file is not None:
         samples_file.parent.mkdir(parents=True, exist_ok=True)
 
-    for episode in range(1, config.episodes + 1):
-        samples = generate_self_play_batch(model, config, episodes=1, seed=rng.randint(0, 2**31 - 1))
-        buffer.add_many(samples)
-        if samples_file is not None and samples:
-            with samples_file.open("a", encoding="utf-8") as handle:
-                for sample in samples:
-                    handle.write(json.dumps(asdict(sample), ensure_ascii=False))
-                    handle.write("\n")
-        batch = buffer.sample(config.batch_size, rng=rng)
-        metrics = model.train_batch(batch, learning_rate=config.learning_rate) if batch else TrainMetrics()
-        run.steps.append(
-            TrainingStep(
-                episode=episode,
-                samples=len(samples),
-                policy_loss=metrics.policy_loss,
-                value_loss=metrics.value_loss,
+    worker_count = max(1, int(config.self_play_workers))
+
+    if worker_count == 1:
+        for episode in range(1, config.episodes + 1):
+            episode_result = play_self_play_game(
+                model,
+                config,
+                seed=rng.randint(0, 2**31 - 1),
+                game_id=f"{seed or 'rl'}-{episode}",
             )
-        )
-        if progress_callback is not None:
-            progress_callback(run.steps[-1])
-        if save_path is not None and episode % max(1, config.save_every) == 0:
-            model.save(save_path)
+            _apply_episode_result(
+                model=model,
+                config=config,
+                buffer=buffer,
+                samples_file=samples_file,
+                rng=rng,
+                run=run,
+                episode_number=episode,
+                episode_samples=episode_result.samples,
+                save_path=save_path,
+                progress_callback=progress_callback,
+            )
+    else:
+        with ProcessPoolExecutor(max_workers=min(worker_count, config.episodes)) as executor:
+            episode_number = 1
+            while episode_number <= config.episodes:
+                chunk_size = min(worker_count, config.episodes - episode_number + 1)
+                futures = [
+                    executor.submit(
+                        play_self_play_game,
+                        model,
+                        config,
+                        seed=rng.randint(0, 2**31 - 1),
+                        game_id=f"{seed or 'rl'}-{episode_number + offset}",
+                    )
+                    for offset in range(chunk_size)
+                ]
+                for offset, future in enumerate(futures):
+                    episode_result = future.result()
+                    _apply_episode_result(
+                        model=model,
+                        config=config,
+                        buffer=buffer,
+                        samples_file=samples_file,
+                        rng=rng,
+                        run=run,
+                        episode_number=episode_number + offset,
+                        episode_samples=episode_result.samples,
+                        save_path=save_path,
+                        progress_callback=progress_callback,
+                    )
+                episode_number += chunk_size
 
     if save_path is not None:
         model.save(save_path)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 import threading
@@ -29,6 +29,7 @@ class RLRunStatus:
     episodes: int = 0
     latest_policy_loss: float = 0.0
     latest_value_loss: float = 0.0
+    training_history: list[TrainingStep] = field(default_factory=list)
     eval_white_wins: int = 0
     eval_black_wins: int = 0
     eval_draws: int = 0
@@ -89,6 +90,7 @@ class RLRunHub:
         self._set(status)
 
         def _progress(step: TrainingStep) -> None:
+            history = [*status.training_history, step]
             self._update(
                 state="running",
                 completed=step.episode,
@@ -96,6 +98,7 @@ class RLRunHub:
                 message=f"Training episode {step.episode} of {status.total}",
                 latest_policy_loss=step.policy_loss,
                 latest_value_loss=step.value_loss,
+                training_history=history,
             )
 
         def _worker() -> None:

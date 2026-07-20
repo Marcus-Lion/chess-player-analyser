@@ -9,10 +9,15 @@ The RL layer replaces hand-tuned move weights with a learnable policy/value mode
 The current implementation is intentionally minimal:
 
 - self-play generates training samples
+- self-play uses MCTS visit counts as the policy target
+- self-play episodes can run in parallel worker processes
 - a small NumPy policy/value network trains on those samples
 - checkpoints and sample logs are written to disk
 - evaluation plays the model against the existing heuristic engine
 - a FastAPI page lets you launch runs from the web UI
+
+There is now also a Gymnasium/SB3 track for experimenting with PPO against the
+heuristic baseline using action masking.
 
 ## What is currently implemented
 
@@ -28,6 +33,8 @@ The RL code lives in `app/rl/`.
 - `self_play_rl.py` — self-play generation
 - `training.py` — training loop
 - `evaluate.py` — evaluation against the heuristic engine
+- `gym_env.py` — Gymnasium chess environment with invalid-action masking
+- `sb3_train.py` — SB3/PPO training entrypoint for the Gym environment
 - `service.py` — background job wrapper for the web app
 - `presets.py` — named run presets
 - `__main__.py` — CLI entrypoint
@@ -106,6 +113,7 @@ Useful options:
 - `--save-path` — checkpoint output path
 - `--samples-path` — JSONL sample log path
 - `--load-path` — resume from a saved checkpoint
+- `--self-play-workers` — parallel self-play processes per training chunk
 - `--episodes` — override preset episode count
 - `--max-turns` — override maximum turns per game
 
@@ -115,6 +123,29 @@ Example:
 python -m app.rl --preset quick --save-path cache/rl_model.npz --samples-path cache/rl_samples.jsonl
 ```
 
+### Gymnasium + SB3 track
+
+The alternative PPO path uses a custom chess environment that plays the
+baseline engine as the opponent and exposes an action mask for legal moves.
+
+Run it with:
+
+```bash
+python -m app.rl.sb3_train --timesteps 100000 --eval-games 20
+```
+
+Useful options:
+
+- `--agent-color` — `white`, `black`, or `random`
+- `--max-agent-turns` — cap the number of agent decisions per game
+- `--opponent-depth` — baseline opponent search depth
+- `--save-path` — SB3 checkpoint output path
+- `--load-path` — resume from a saved SB3 checkpoint
+
+The environment is designed around the current heuristic engine and keeps the
+reward signal small and shaped, so it is a scaffold rather than a finished
+AlphaZero-style setup.
+
 ## Web usage
 
 Open `/rl` in the app and submit a run. The page shows:
@@ -122,7 +153,11 @@ Open `/rl` in the app and submit a run. The page shows:
 - current state
 - progress
 - last policy/value losses
+- training curves for policy and value loss
 - evaluation summary
+
+The form includes a `Self-play workers` field so you can run more than one
+episode at a time using processes.
 
 The job runs in a background thread, so the request returns immediately.
 
@@ -146,17 +181,16 @@ Current limitations:
 - no distributed training
 - no adversarial evaluation pool
 - no GPU-accelerated backend
+- no full self-play PPO opponent pool yet
 - no opening book or curriculum yet
 
 The model is useful as a scaffold, not as a final chess engine.
 
 ## Suggested next steps
 
-1. Replace the plain self-play policy target with MCTS visit counts.
-2. Add persistent replay storage.
-3. Add checkpoint-versus-checkpoint evaluation.
-4. Add training curves to the UI.
-5. Introduce a stronger model backend if needed.
+1. Add persistent replay storage.
+2. Add checkpoint-versus-checkpoint evaluation.
+3. Introduce a stronger model backend if needed.
 
 ## Related files
 

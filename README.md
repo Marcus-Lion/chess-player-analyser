@@ -40,8 +40,8 @@ This reuses the same `NEO4J_URI`/`NEO4J_USER`/`NEO4J_PASSWORD`/`NEO4J_DATABASE`
 environment variables as the [Neo4j option](#neo4j-option) below (same
 defaults), but is **not** gated by `NEO4J_ENABLED` — that flag only controls
 the separate, opt-in export of real chess.com games from `/analyse`. See
-[`neo4j_notes.md`](neo4j_notes.md) for local setup and the `:SelfPlayGame`
-schema.
+[`docs/neo4j_notes.md`](docs/neo4j_notes.md) for local setup and the
+`:SelfPlayGame` schema.
 
 ```bash
 uv run python -m app.self_play --games 10 --max-turns 55
@@ -61,7 +61,7 @@ starting value for one side -- biggest branching factor, most expensive to
 search) up to depth 7 once a side is down to material 0 (smallest branching
 factor, and deeper search matters most for endgame precision). Pass
 `--depth` to pin a fixed depth for the whole game instead (higher is slower
-but stronger). See [`gameplay_rules.md`](gameplay_rules.md) for the full
+but stronger). See [`docs/gameplay_rules.md`](docs/gameplay_rules.md) for the full
 move-selection and game-termination rules:
 
 ```bash
@@ -300,5 +300,5 @@ export NEO4J_PASSWORD=password
 ```
 
 When enabled, each `/analyse` request upserts the parsed games into Neo4j.
-See [`neo4j_notes.md`](neo4j_notes.md) for the graph model and example
-Cypher queries.
+See [`docs/neo4j_notes.md`](docs/neo4j_notes.md) for the graph model and
+example Cypher queries.

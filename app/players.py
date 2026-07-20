@@ -55,10 +55,6 @@ _PLAYER_SPECS: list[tuple[str, str, str, int]] = [
     ("hollow-atlas", "Hollow Atlas", "Flexible and evasive, content to reshape the board around the opponent.", 114),
     ("cinder-monk", "Cinder Monk", "Minimalist grinder that values piece activity over raw force.", 115),
     ("frost-herald", "Frost Herald", "Cool under pressure and hard to rush; favors balance and restraint.", 116),
-    ("orchid-engine", "Orchid Engine", "Elegant but relentless, blending positional pressure with calculated force.", 117),
-    ("drift-hawk", "Drift Hawk", "Keeps options open and converts loose positions into attacking chances.", 118),
-    ("titan-moth", "Titan Moth", "Large, repetitive pressure; exhausts the opponent by occupying every lane.", 119),
-    ("mirror-jackal", "Mirror Jackal", "Reflects the opponent’s plan and beats it at its own tempo.", 120),
 ]
 
 

@@ -165,9 +165,9 @@ uv run python -m app.self_play --tune-weights --tune-iterations 200 --tune-corpu
 
 ## Deployment notes
 
-- `DEPLOY.md` covers the Hostinger VPS path.
+- [`DEPLOY.md`](DEPLOY.md) covers the Hostinger VPS path.
 - `Dockerfile` supports container deployment.
-- `neo4j_notes.md` documents the Neo4j setup and the self-play graph model.
+- [`neo4j_notes.md`](neo4j_notes.md) documents the Neo4j setup and the self-play graph model.
 
 ## GCP deployment
 

@@ -193,7 +193,7 @@ PIECE_POINTS = {
     chess.KING: 0,
 }
 
-LEGAL_MOVES_WEIGHT:float = 2.0
+LEGAL_MOVES_WEIGHT:float = -2.0
 MATERIAL_SCORE_WEIGHT:float = 1.0
 FORWARD_SCORE_WEIGHT:float = 1.0
 CENTER_CONTROL_WEIGHT:float = 1.0
@@ -823,16 +823,11 @@ def _negamax(
     if depth <= 0:
         if eval_counter is not None:
             eval_counter[0] += 1
-        score = _evaluate_position(
-            board,
-            legal_moves_weight=legal_moves_weight,
-            material_score_weight=material_score_weight,
-            forward_score_weight=forward_score_weight,
-            center_control_weight=center_control_weight,
-            checkmate_weight=checkmate_weight,
-            material_memo=material_memo,
-            mate_pressure_memo=mate_pressure_memo,
-        )
+        # Use the terminal-aware evaluator at the horizon so a search cutoff
+        # does not misread an already-forced mate or draw as a material-only
+        # position. This keeps stalemate lines and mating lines exact even
+        # when they land on the leaf boundary.
+        score = _terminal_aware_evaluate(board)
         return score if board.turn == chess.WHITE else -score
 
     original_alpha = alpha

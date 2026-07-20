@@ -101,7 +101,8 @@ CACHE_DIR = BASE_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 SELF_PLAY_JOBS_DIR = CACHE_DIR / "self_play_jobs"
 SELF_PLAY_JOBS_DIR.mkdir(parents=True, exist_ok=True)
-DEFAULT_SELF_PLAY_WORKERS = max(1, os.process_cpu_count() or 1)
+DEFAULT_SELF_PLAY_WORKERS = max(1, os.process_cpu_count()*2 or 1)
+DEFAULT_SELF_PLAY_WORKERS = min(DEFAULT_SELF_PLAY_WORKERS,61)
 # Job status lives in memory (see SelfPlayJobHub); only each job's worker log
 # file is on disk. Delete a job's status/log once it has been idle for this
 # long so neither grows without bound.
@@ -175,6 +176,7 @@ class SelfPlayConfig:
     black_material_score_weight: float | None = None
     black_forward_score_weight: float | None = None
     black_center_control_weight: float | None = None
+    mirror_colors: bool = False
 
 
 @dataclass
@@ -335,13 +337,25 @@ def _seed_for_game(config: SelfPlayConfig, game_index: int) -> int | None:
     return config.seed + game_index - 1
 
 
-def _config_for_game(config: SelfPlayConfig, game_index: int) -> SelfPlayConfig:
+def _paired_game_count(requested_games: int) -> int:
+    if requested_games <= 1:
+        return max(1, requested_games)
+    return requested_games if requested_games % 2 == 0 else requested_games + 1
+
+
+def _config_for_game(
+    config: SelfPlayConfig,
+    game_index: int,
+    *,
+    seed: int | None = None,
+    mirror_colors: bool = False,
+) -> SelfPlayConfig:
     return SelfPlayConfig(
         games=1,
         max_turns=config.max_turns,
         top_k=config.top_k,
         depth=config.depth,
-        seed=_seed_for_game(config, game_index),
+        seed=_seed_for_game(config, game_index) if seed is None else seed,
         fen=config.fen,
         legal_moves_weight=config.legal_moves_weight,
         material_score_weight=config.material_score_weight,
@@ -359,6 +373,7 @@ def _config_for_game(config: SelfPlayConfig, game_index: int) -> SelfPlayConfig:
         black_material_score_weight=config.black_material_score_weight,
         black_forward_score_weight=config.black_forward_score_weight,
         black_center_control_weight=config.black_center_control_weight,
+        mirror_colors=mirror_colors,
     )
 
 
@@ -934,6 +949,9 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
     rng = rng or random.Random(config.seed)
     board = chess.Board(config.fen) if config.fen else chess.Board()
     white_player, white_weights, black_player, black_weights = _player_weight_sets(config, rng)
+    if config.mirror_colors:
+        white_player, black_player = black_player, white_player
+        white_weights, black_weights = black_weights, white_weights
     white_player_name = white_player.name if white_player is not None else "Custom White"
     black_player_name = black_player.name if black_player is not None else "Custom Black"
     game = chess.pgn.Game()
@@ -1078,21 +1096,31 @@ def run_self_play(
             progress_callback(1, game, games)
         return games
 
+    total_games = _paired_game_count(config.games)
+    if total_games != config.games:
+        print(f"Mirrored self-play requires an even game count; rounding {config.games} up to {total_games}.")
+
     requested_workers = config.workers or DEFAULT_SELF_PLAY_WORKERS
-    max_workers = max(1, min(int(requested_workers), config.games))
-    future_to_index: dict = {}
+    max_workers = max(1, min(int(requested_workers), total_games))
+    future_to_game: dict = {}
     rebalance_batch: list[SelfPlayGame] = []
     rebalance_batch_number = 0
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        for i in range(1, config.games + 1):
-            game_config = _config_for_game(config, i)
-            future = executor.submit(_play_and_save_game, game_config, i, run_id, played_at)
-            future_to_index[future] = i
+        game_index = 1
+        for pair_index in range(1, total_games // 2 + 1):
+            pair_seed = _seed_for_game(config, pair_index)
+            first_config = _config_for_game(config, game_index, seed=pair_seed, mirror_colors=False)
+            second_config = _config_for_game(config, game_index + 1, seed=pair_seed, mirror_colors=True)
+            future = executor.submit(_play_and_save_game, first_config, game_index, run_id, played_at)
+            future_to_game[future] = (game_index, first_config)
+            future = executor.submit(_play_and_save_game, second_config, game_index + 1, run_id, played_at)
+            future_to_game[future] = (game_index + 1, second_config)
+            game_index += 2
 
         completed_games: dict[int, SelfPlayGame] = {}
         completed_count = 0
-        for future in as_completed(future_to_index):
-            index = future_to_index[future]
+        for future in as_completed(future_to_game):
+            index, game_config = future_to_game[future]
             try:
                 game = future.result()
             except Exception:
@@ -1111,7 +1139,7 @@ def run_self_play(
                     outcome="Disconnected",
                     run_id=run_id,
                     played_at=played_at,
-                    seed=config.seed,
+                    seed=game_config.seed,
                     top_k=config.top_k,
                     max_turns=config.max_turns,
                     start_fen=config.fen or "startpos",
@@ -1272,7 +1300,7 @@ def _run_self_play_job(job_id: str, run_id: str, config_data: dict, reporter: "S
     status = SelfPlayJobStatus(
         job_id=job_id,
         state="running",
-        total=max(1, config.games),
+        total=_paired_game_count(config.games),
         completed=0,
         message="Running",
         played_at=datetime.now(timezone.utc).isoformat(),
@@ -1369,7 +1397,7 @@ def start_self_play_job(config: SelfPlayConfig) -> dict:
     status = SelfPlayJobStatus(
         job_id=job_id,
         state="queued",
-        total=max(1, config.games),
+        total=_paired_game_count(config.games),
         message="Queued",
         played_at=datetime.now(timezone.utc).isoformat(),
         run_id=run_id,
@@ -1460,7 +1488,12 @@ def start_self_play_job(config: SelfPlayConfig) -> dict:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the position scorer against itself.")
-    parser.add_argument("--games", type=int, default=5, help="Number of self-play games to run.")
+    parser.add_argument(
+        "--games",
+        type=int,
+        default=5,
+        help="Number of self-play games to run; multi-game runs are mirrored so odd values are rounded up.",
+    )
     parser.add_argument("--max-turns", type=int, default=100, help="Stop each game after this many turns.")
     parser.add_argument("--top-k", type=int, default=1, help="Randomly choose among the top K evaluated moves.")
     parser.add_argument(

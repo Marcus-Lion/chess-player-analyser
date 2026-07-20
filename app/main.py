@@ -6,6 +6,7 @@ import os
 import random
 from dataclasses import asdict
 from pathlib import Path
+import threading
 import pandas as pd
 import chess
 import plotly.express as px
@@ -65,6 +66,9 @@ from app.self_play_metrics import (
     absolute_weight_scores,
     win_rate_by_weight_advantage_all,
 )
+from app.rl.config import RLConfig
+from app.rl.presets import PRESETS as RL_PRESETS
+from app.rl.service import RL_HUB
 from app.metrics import (
     summarize,
     monthly_performance,
@@ -175,6 +179,66 @@ def _self_play_page_context(request: Request, notice: str | None = None) -> dict
     if notice:
         context["notice"] = notice
     return context
+
+
+def _rl_page_context(request: Request, notice: str | None = None) -> dict:
+    status = RL_HUB.get()
+    context = {
+        "request": request,
+        "notice": notice,
+        "status": asdict(status) if status is not None else None,
+        "preset_names": sorted(RL_PRESETS),
+    }
+    return context
+
+
+def _rl_parse_optional_int(value: str | None) -> int | None:
+    if value is None or not value.strip():
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _rl_parse_optional_float(value: str | None) -> float | None:
+    if value is None or not value.strip():
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def _rl_config_from_form(
+    *,
+    preset: str,
+    episodes: str | None,
+    max_turns: str | None,
+    batch_size: str | None,
+    replay_capacity: str | None,
+    learning_rate: str | None,
+    policy_hidden_dim: str | None,
+    value_hidden_dim: str | None,
+    temperature: str | None,
+    exploration: str | None,
+    eval_games: str | None,
+    seed: str | None,
+) -> RLConfig:
+    preset_defaults = RL_PRESETS[preset]
+    return RLConfig(
+        episodes=max(1, _rl_parse_optional_int(episodes) or int(preset_defaults["episodes"])),
+        max_turns=max(2, _rl_parse_optional_int(max_turns) or int(preset_defaults["max_turns"])),
+        replay_capacity=max(1, _rl_parse_optional_int(replay_capacity) or int(preset_defaults["replay_capacity"])),
+        batch_size=max(1, _rl_parse_optional_int(batch_size) or int(preset_defaults["batch_size"])),
+        learning_rate=max(1e-6, _rl_parse_optional_float(learning_rate) or float(preset_defaults["learning_rate"])),
+        self_play_temperature=max(0.0, _rl_parse_optional_float(temperature) or float(preset_defaults["temperature"])),
+        self_play_exploration=max(0.0, _rl_parse_optional_float(exploration) or float(preset_defaults["exploration"])),
+        policy_hidden_dim=max(8, _rl_parse_optional_int(policy_hidden_dim) or 128),
+        value_hidden_dim=max(8, _rl_parse_optional_int(value_hidden_dim) or 64),
+        eval_games=max(1, _rl_parse_optional_int(eval_games) or int(preset_defaults["eval_games"])),
+        seed=_rl_parse_optional_int(seed),
+    )
 
 
 def _make_charts(df: pd.DataFrame) -> dict[str, str]:
@@ -735,6 +799,62 @@ def self_play_start(
         black_center_control_weight=_parse_optional_float(black_center_control_weight),
     )
     return JSONResponse(start_self_play_job(config))
+
+
+@app.get("/rl", response_class=HTMLResponse)
+def rl_page(request: Request):
+    return templates.TemplateResponse("rl.html", _rl_page_context(request))
+
+
+@app.post("/rl/start", response_class=HTMLResponse)
+def rl_start(
+    request: Request,
+    preset: str = Form("standard"),
+    episodes: str | None = Form(None),
+    max_turns: str | None = Form(None),
+    batch_size: str | None = Form(None),
+    replay_capacity: str | None = Form(None),
+    learning_rate: str | None = Form(None),
+    policy_hidden_dim: str | None = Form(None),
+    value_hidden_dim: str | None = Form(None),
+    temperature: str | None = Form(None),
+    exploration: str | None = Form(None),
+    eval_games: str | None = Form(None),
+    seed: str | None = Form(None),
+    save_path: str = Form("cache/rl_model.npz"),
+    samples_path: str = Form("cache/rl_samples.jsonl"),
+    load_path: str | None = Form(None),
+):
+    preset_name = preset if preset in RL_PRESETS else "standard"
+    config = _rl_config_from_form(
+        preset=preset_name,
+        episodes=episodes,
+        max_turns=max_turns,
+        batch_size=batch_size,
+        replay_capacity=replay_capacity,
+        learning_rate=learning_rate,
+        policy_hidden_dim=policy_hidden_dim,
+        value_hidden_dim=value_hidden_dim,
+        temperature=temperature,
+        exploration=exploration,
+        eval_games=eval_games,
+        seed=seed,
+    )
+    status = RL_HUB.start(
+        config,
+        preset=preset_name,
+        save_path=Path(save_path),
+        samples_path=Path(samples_path),
+        load_path=(Path(load_path) if load_path and load_path.strip() else None),
+    )
+    notice = f"RL run {status.job_id[:8]} started in {status.state} state."
+    return templates.TemplateResponse("rl.html", _rl_page_context(request, notice=notice))
+
+
+@app.get("/rl/status")
+def rl_status():
+    status = RL_HUB.get()
+    return JSONResponse(asdict(status) if status is not None else {"state": "idle"})
 
 
 @app.get("/self-play/log/{job_id}")

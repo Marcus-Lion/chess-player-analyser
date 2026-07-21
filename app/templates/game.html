@@ -11,7 +11,32 @@
     .metrics { display: grid; grid-template-columns: repeat(2, minmax(120px, 1fr)); gap: .75rem; margin: 1rem 0; }
     .metric { border: 1px solid #eee; border-radius: 10px; padding: .75rem; }
     .metric b { display: block; font-size: 1.1rem; }
-    .forward-list { list-style: none; padding: 0; margin: .25rem 0 0; font-size: 1.1rem; }
+    .metric-head { display: flex; justify-content: space-between; align-items: baseline; gap: .75rem; }
+    .metric-head .value { font-weight: 700; font-size: 1.1rem; }
+    .metric-subtle { color: #6b7280; font-size: .95rem; margin-top: .35rem; }
+    .forward-list { list-style: none; padding: 0; margin: .25rem 0 0; font-size: 1.05rem; }
+    .help-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.15rem;
+      height: 1.15rem;
+      margin-left: .35rem;
+      border-radius: 999px;
+      border: 1px solid #cbd5e1;
+      color: #475569;
+      font-size: .78rem;
+      line-height: 1;
+      cursor: help;
+      background: #fff;
+      vertical-align: middle;
+      user-select: none;
+    }
+    .help-icon:hover { background: #f8fafc; border-color: #94a3b8; }
+    .breakdown { width: 100%; border-collapse: collapse; margin-top: .55rem; font-size: .95rem; }
+    .breakdown th, .breakdown td { padding: .22rem 0; border-bottom: 1px solid #f1f5f9; }
+    .breakdown th { text-align: left; color: #6b7280; font-weight: 600; }
+    .breakdown td.num, .breakdown th.num { text-align: right; font-variant-numeric: tabular-nums; }
     .controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .75rem 0; }
     .controls button { padding: .35rem .6rem; }
     .controls input[type="range"] { width: 100%; }
@@ -52,20 +77,52 @@
       <div class="panel">
         <div class="metrics">
           <div class="metric">
-            Forward
-            <ul id="forward_list" class="forward-list">
-              <li>1st order: White {{ detail.positions[0].forward_1.White }} / Black {{ detail.positions[0].forward_1.Black }}</li>
-              <li>2nd order: White {{ detail.positions[0].forward_2.White }} / Black {{ detail.positions[0].forward_2.Black }}</li>
-              <li>3rd order: White {{ detail.positions[0].forward_3.White }} / Black {{ detail.positions[0].forward_3.Black }}</li>
-            </ul>
+            <div class="metric-head">
+              <span>Forward control <span class="help-icon" title="Forward control counts how much each side controls the forward ranks. The rows below show 1st, 2nd, and 3rd order control; the net value is White minus Black across those orders.">?</span></span>
+              <span class="value" id="forward_net">{{ detail.positions[0].forward_score }}</span>
+            </div>
+            <div class="metric-subtle" id="forward_summary">
+              White {{ detail.positions[0].forward_1.White + detail.positions[0].forward_2.White + detail.positions[0].forward_3.White }}
+              vs Black {{ detail.positions[0].forward_1.Black + detail.positions[0].forward_2.Black + detail.positions[0].forward_3.Black }}
+            </div>
+            <table class="breakdown" id="forward_breakdown">
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th class="num">White</th>
+                  <th class="num">Black</th>
+                  <th class="num">Net</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1st</td>
+                  <td class="num">{{ detail.positions[0].forward_1.White }}</td>
+                  <td class="num">{{ detail.positions[0].forward_1.Black }}</td>
+                  <td class="num">{{ detail.positions[0].forward_1.White - detail.positions[0].forward_1.Black }}</td>
+                </tr>
+                <tr>
+                  <td>2nd</td>
+                  <td class="num">{{ detail.positions[0].forward_2.White }}</td>
+                  <td class="num">{{ detail.positions[0].forward_2.Black }}</td>
+                  <td class="num">{{ detail.positions[0].forward_2.White - detail.positions[0].forward_2.Black }}</td>
+                </tr>
+                <tr>
+                  <td>3rd</td>
+                  <td class="num">{{ detail.positions[0].forward_3.White }}</td>
+                  <td class="num">{{ detail.positions[0].forward_3.Black }}</td>
+                  <td class="num">{{ detail.positions[0].forward_3.White - detail.positions[0].forward_3.Black }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-          <div class="metric">Material <b id="material">{{ detail.positions[0].material.White }} / {{ detail.positions[0].material.Black }}</b></div>
-          <div class="metric">Center <b id="center">{{ detail.positions[0].center.White }} / {{ detail.positions[0].center.Black }}</b></div>
-          <div class="metric">Legal Moves <b id="legal_score">{{ detail.positions[0].score }}</b></div>
-          <div class="metric">Score <b id="score">{{ "%.2f"|format(detail.positions[0].total_score) }}</b></div>
+          <div class="metric">Material <span class="help-icon" title="Material is the material balance score for White / Black in the current position. Higher means the side has more remaining piece value.">?</span><b id="material">{{ detail.positions[0].material.White }} / {{ detail.positions[0].material.Black }}</b></div>
+          <div class="metric">Center <span class="help-icon" title="Center control counts control of central squares for each side. It is a positional pressure metric, not a material count.">?</span><b id="center">{{ detail.positions[0].center.White }} / {{ detail.positions[0].center.Black }}</b></div>
+          <div class="metric">Legal Moves <span class="help-icon" title="Legal Moves is the count of legal options available to the side to move. More legal moves usually means more mobility and flexibility.">?</span><b id="legal_score">{{ detail.positions[0].score }}</b></div>
+          <div class="metric">Score <span class="help-icon" title="Score is the weighted blend used by the self-play engine to rank positions. It combines legal moves, material, forward control, and center control.">?</span><b id="score">{{ "%.2f"|format(detail.positions[0].total_score) }}</b></div>
           {% if game_summary and game_summary.white_weights and game_summary.black_weights %}
             <div class="metric">
-              Weights
+              Weights <span class="help-icon" title="These are the engine weights used to score positions in this game. If both sides share the same weights, the page shows one row; otherwise it shows white and black separately.">?</span>
               <ul id="weights_list" class="forward-list">
                 {% if game_summary.white_weights.legal_moves_weight == game_summary.black_weights.legal_moves_weight and game_summary.white_weights.material_score_weight == game_summary.black_weights.material_score_weight and game_summary.white_weights.forward_score_weight == game_summary.black_weights.forward_score_weight and game_summary.white_weights.get('center_control_weight') == game_summary.black_weights.get('center_control_weight') %}
                   <li>lm={{ "%.3f"|format(game_summary.white_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(game_summary.white_weights.material_score_weight) }}, fwd={{ "%.3f"|format(game_summary.white_weights.forward_score_weight) }}{% if game_summary.white_weights.get('center_control_weight') %}, cc={{ "%.3f"|format(game_summary.white_weights.center_control_weight) }}{% endif %}</li>
@@ -127,7 +184,8 @@
       const boardWrap = document.getElementById('board-wrap');
       const slider = document.getElementById('position_slider');
       const label = document.getElementById('position_label');
-      const forwardList = document.getElementById('forward_list');
+      const forwardNet = document.getElementById('forward_net');
+      const forwardSummary = document.getElementById('forward_summary');
       const material = document.getElementById('material');
       const center = document.getElementById('center');
       const score = document.getElementById('score');
@@ -160,16 +218,21 @@
         return `${pos.ply}. ${pos.side} ${pos.san}${pos.severity ? ' ' + pos.severity : ''}`;
       }
 
+      function forwardTotals(pos) {
+        return {
+          white: (pos.forward_1.White || 0) + (pos.forward_2.White || 0) + (pos.forward_3.White || 0),
+          black: (pos.forward_1.Black || 0) + (pos.forward_2.Black || 0) + (pos.forward_3.Black || 0),
+        };
+      }
+
       function render(index) {
         const pos = positions[index];
         current = index;
         slider.value = String(index);
         boardWrap.innerHTML = boardControlToggle.checked ? pos.svg_moves : pos.svg;
-        forwardList.innerHTML = `
-          <li>1st order: White ${pos.forward_1.White} / Black ${pos.forward_1.Black}</li>
-          <li>2nd order: White ${pos.forward_2.White} / Black ${pos.forward_2.Black}</li>
-          <li>3rd order: White ${pos.forward_3.White} / Black ${pos.forward_3.Black}</li>
-        `;
+        const totals = forwardTotals(pos);
+        forwardNet.textContent = String(pos.forward_score);
+        forwardSummary.textContent = `White ${totals.white} vs Black ${totals.black}`;
         material.textContent = `${pos.material.White} / ${pos.material.Black}`;
         center.textContent = `${pos.center.White} / ${pos.center.Black}`;
         score.textContent = Number(pos.total_score).toFixed(2);

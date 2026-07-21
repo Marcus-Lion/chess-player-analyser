@@ -1,0 +1,670 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="/static/favicon.png" type="image/png" />
+  <title>RL training</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 1100px; }
+    input, button, select, textarea { font-size: 1rem; padding: .55rem; margin: .25rem 0; }
+    label { display: block; margin-top: 1rem; font-weight: 600; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: .75rem; }
+    .muted { color: #666; }
+    .notice {
+      padding: .75rem .9rem;
+      border: 1px solid #d1fae5;
+      background: #ecfdf5;
+      border-radius: 10px;
+      color: #065f46;
+      margin: 0 0 1rem 0;
+    }
+    .metric { border: 1px solid #eee; border-radius: 10px; padding: .75rem; margin-top: .75rem; }
+    .metric b { display: block; font-size: 1.05rem; }
+    .chart-wrap {
+      margin-top: .75rem;
+      border: 1px solid #eee;
+      border-radius: 10px;
+      padding: .75rem;
+      background: #fff;
+    }
+    .chart-wrap svg {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    .chart-empty {
+      color: #666;
+      font-size: .95rem;
+      padding: .75rem 0 .25rem;
+    }
+    .chart-legend {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-top: .5rem;
+      color: #374151;
+      font-size: .92rem;
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: .4rem;
+    }
+    .legend-swatch {
+      width: .9rem;
+      height: .9rem;
+      border-radius: 999px;
+      display: inline-block;
+    }
+    .metric-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .75rem;
+      flex-wrap: wrap;
+    }
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      flex-wrap: wrap;
+      margin-top: .2rem;
+    }
+    .status-row code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: .92rem;
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      padding: .15rem .35rem;
+      word-break: break-all;
+    }
+    .copy-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.9rem;
+      height: 1.9rem;
+      padding: 0;
+      margin: 0;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      background: #fff;
+      color: #374151;
+      cursor: pointer;
+    }
+    .copy-btn:hover { background: #f9fafb; }
+    .copy-btn svg { width: 1rem; height: 1rem; }
+    .copy-btn.copied {
+      border-color: #86efac;
+      background: #f0fdf4;
+      color: #166534;
+    }
+    pre { white-space: pre-wrap; word-break: break-word; background: #fafafa; padding: .75rem; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <p><a href="/">← Back home</a> · <a href="/self-play">Self-play harness</a></p>
+  <h1>RL training</h1>
+  <p class="muted">Run a minimal self-play RL loop with a small policy/value model and save checkpoints to disk.</p>
+
+  <div class="card">
+    <form method="post" action="/rl/start">
+      <div class="grid">
+        <div>
+          <label>Preset</label>
+          <select name="preset">
+            {% for name in preset_names %}
+              <option value="{{ name }}">{{ name|title }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Episodes</label>
+          <input name="episodes" type="number" min="1" placeholder="preset default" />
+        </div>
+        <div>
+          <label>Max turns</label>
+          <input name="max_turns" type="number" min="2" placeholder="preset default" />
+        </div>
+        <div>
+          <label>Batch size</label>
+          <input name="batch_size" type="number" min="1" placeholder="preset default" />
+        </div>
+        <div>
+          <label>Self-play workers</label>
+          <input name="self_play_workers" type="number" min="1" value="1" />
+        </div>
+        <div>
+          <label>Replay capacity</label>
+          <input name="replay_capacity" type="number" min="1" placeholder="preset default" />
+        </div>
+        <div>
+          <label>Learning rate</label>
+          <input name="learning_rate" type="number" step="any" min="0" placeholder="preset default" />
+        </div>
+        <div>
+          <label>Policy hidden dim</label>
+          <input name="policy_hidden_dim" type="number" min="8" value="128" />
+        </div>
+        <div>
+          <label>Value hidden dim</label>
+          <input name="value_hidden_dim" type="number" min="8" value="64" />
+        </div>
+        <div>
+          <label>Temperature</label>
+          <input name="temperature" type="number" step="any" min="0" placeholder="preset default" />
+        </div>
+        <div>
+          <label>Exploration</label>
+          <input name="exploration" type="number" step="any" min="0" placeholder="preset default" />
+        </div>
+        <div>
+          <label>Repetition avoid</label>
+          <input name="repetition_avoidance" type="number" step="any" min="0" placeholder="0.35" />
+        </div>
+        <div>
+          <label>Repetition threshold</label>
+          <input name="repetition_threshold" type="number" step="any" min="-1" max="1" placeholder="0.20" />
+        </div>
+        <div>
+          <label>Eval games</label>
+          <input name="eval_games" type="number" min="1" placeholder="preset default" />
+        </div>
+        <div>
+          <label>Seed</label>
+          <input name="seed" type="number" value="" />
+        </div>
+        <div>
+          <label>Run name</label>
+          <input name="run_name" type="text" placeholder="rl" />
+        </div>
+      </div>
+
+      <label>Load checkpoint (optional)</label>
+      <input name="load_path" type="text" placeholder="cache/rl_runs/YYYY-MM-DD/name/run_id/model.npz" />
+
+      <label>Save checkpoint</label>
+      <input name="save_path" type="text" placeholder="grouped default" />
+
+      <label>Samples log</label>
+      <input name="samples_path" type="text" placeholder="grouped default" />
+
+      <button type="submit">Start RL run</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Current run</h2>
+    {% if notice %}
+      <div class="notice">{{ notice }}</div>
+    {% endif %}
+    <div id="status_body">
+      {% if status %}
+        <div class="metric">
+          <div class="metric-header">
+            <b>{{ status.state|title }} · {{ status.preset|title }}</b>
+            <button
+              class="copy-btn"
+              type="button"
+              data-copy-block
+              data-status-state="{{ status.state }}"
+              data-status-preset="{{ status.preset }}"
+              data-status-run-id="{{ status.run_id }}"
+              data-status-run-name="{{ status.run_name }}"
+              data-status-run-date="{{ status.run_date }}"
+              data-status-run-group="{{ status.run_group }}"
+              data-status-job-id="{{ status.job_id }}"
+              data-status-started-at="{{ status.started_at }}"
+              data-status-finished-at="{{ status.finished_at }}"
+              data-status-completed="{{ status.completed }}"
+              data-status-total="{{ status.total }}"
+              data-status-message="{{ status.message }}"
+              data-status-save-path="{{ status.save_path }}"
+              data-status-samples-path="{{ status.samples_path }}"
+              data-status-policy-loss="{{ status.latest_policy_loss }}"
+              data-status-value-loss="{{ status.latest_value_loss }}"
+              data-status-white-wins="{{ status.eval_white_wins }}"
+              data-status-black-wins="{{ status.eval_black_wins }}"
+              data-status-draws="{{ status.eval_draws }}"
+              data-status-white-score="{{ status.white_score }}"
+              data-status-error="{{ status.error }}"
+              aria-label="Copy status block"
+              title="Copy status block"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="10" height="10" rx="2"></rect>
+                <path d="M5 15V7a2 2 0 0 1 2-2h8"></path>
+              </svg>
+            </button>
+          </div>
+          <div class="status-row">
+            <span>Run ID:</span>
+            <code>{{ status.run_id }}</code>
+            <button
+              class="copy-btn"
+              type="button"
+              data-copy-text="{{ status.run_id }}"
+              data-copy-label="Run ID"
+              aria-label="Copy run ID"
+              title="Copy run ID"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="10" height="10" rx="2"></rect>
+                <path d="M5 15V7a2 2 0 0 1 2-2h8"></path>
+              </svg>
+            </button>
+          </div>
+          <div>Run name: {{ status.run_name }}</div>
+          <div>Run date: {{ status.run_date }}</div>
+          <div>Run group: {{ status.run_group }}</div>
+          <div>Status started: <span data-local-timestamp>{{ status.started_at }}</span></div>
+          <div>Status finished: <span data-local-timestamp>{{ status.finished_at }}</span></div>
+          <div>Job: {{ status.job_id }}</div>
+          <div>Progress: {{ status.completed }} / {{ status.total }}</div>
+          <div>Message: {{ status.message }}</div>
+          <div>Save path: {{ status.save_path }}</div>
+          <div>Samples path: {{ status.samples_path }}</div>
+          <div>Latest losses: policy {{ "%.4f"|format(status.latest_policy_loss) }}, value {{ "%.4f"|format(status.latest_value_loss) }}</div>
+          {% if status.state == 'completed' %}
+            <div>Evaluation: white {{ status.eval_white_wins }}, black {{ status.eval_black_wins }}, draws {{ status.eval_draws }}, white score {{ "%.3f"|format(status.white_score) }}</div>
+          {% else %}
+            <div>Evaluation: {{ status.state|title }}{% if status.message %} — {{ status.message }}{% endif %}</div>
+          {% endif %}
+          {% if status.error %}
+            <div class="muted">Error: {{ status.error }}</div>
+          {% endif %}
+        </div>
+      {% else %}
+        <p class="muted">No active RL run.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="metric-header">
+      <h2 style="margin: 0;">Training curves</h2>
+      <span class="muted">Policy and value loss by episode</span>
+    </div>
+    <div id="training_chart" class="chart-wrap"></div>
+  </div>
+
+  <script>
+    const RL_FORM_STORAGE_KEY = 'chess-player-analyser:rl-training-form:v1';
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function formatNumber(value, digits = 4) {
+      const number = Number(value);
+      return Number.isFinite(number) ? number.toFixed(digits) : `0.${'0'.repeat(digits)}`;
+    }
+
+    function formatLocalTimestamp(value) {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return value ? String(value) : '';
+      }
+      const pad = (number) => String(number).padStart(2, '0');
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    }
+
+    function applyLocalTimestamps(root = document) {
+      root.querySelectorAll('[data-local-timestamp]').forEach((element) => {
+        const raw = element.getAttribute('data-local-timestamp') || element.textContent || '';
+        element.textContent = formatLocalTimestamp(raw);
+      });
+    }
+
+    function getTrainingForm() {
+      return document.querySelector('form[action="/rl/start"]');
+    }
+
+    function loadTrainingFormState() {
+      try {
+        return JSON.parse(localStorage.getItem(RL_FORM_STORAGE_KEY) || '{}') || {};
+      } catch (error) {
+        return {};
+      }
+    }
+
+    function saveTrainingFormState() {
+      const form = getTrainingForm();
+      if (!form) {
+        return;
+      }
+      const state = {};
+      form.querySelectorAll('input[name], select[name], textarea[name]').forEach((field) => {
+        if (!field.name) {
+          return;
+        }
+        if (field.type === 'checkbox') {
+          state[field.name] = field.checked;
+          return;
+        }
+        if (field.type === 'radio') {
+          if (field.checked) {
+            state[field.name] = field.value;
+          }
+          return;
+        }
+        state[field.name] = field.value;
+      });
+      localStorage.setItem(RL_FORM_STORAGE_KEY, JSON.stringify(state));
+    }
+
+    function restoreTrainingFormState() {
+      const form = getTrainingForm();
+      if (!form) {
+        return;
+      }
+      const state = loadTrainingFormState();
+      form.querySelectorAll('input[name], select[name], textarea[name]').forEach((field) => {
+        if (!field.name || !(field.name in state)) {
+          return;
+        }
+        const value = state[field.name];
+        if (field.type === 'checkbox') {
+          field.checked = Boolean(value);
+          return;
+        }
+        if (field.type === 'radio') {
+          field.checked = field.value === value;
+          return;
+        }
+        field.value = value;
+      });
+    }
+
+    function bindTrainingFormPersistence() {
+      const form = getTrainingForm();
+      if (!form) {
+        return;
+      }
+      restoreTrainingFormState();
+      form.addEventListener('input', saveTrainingFormState);
+      form.addEventListener('change', saveTrainingFormState);
+      form.addEventListener('submit', saveTrainingFormState);
+    }
+
+    function renderTrainingChart(history) {
+      const container = document.getElementById('training_chart');
+      if (!container) {
+        return;
+      }
+
+      const points = Array.isArray(history)
+        ? history
+            .map((step) => ({
+              episode: Number(step?.episode),
+              policyLoss: Number(step?.policy_loss),
+              valueLoss: Number(step?.value_loss),
+            }))
+            .filter((step) => Number.isFinite(step.episode) && Number.isFinite(step.policyLoss) && Number.isFinite(step.valueLoss))
+        : [];
+
+      if (!points.length) {
+        container.innerHTML = '<div class="chart-empty">Training curves will appear after the first episode completes.</div>';
+        return;
+      }
+
+      const width = 1000;
+      const height = 320;
+      const pad = { top: 18, right: 20, bottom: 42, left: 58 };
+      const innerWidth = width - pad.left - pad.right;
+      const innerHeight = height - pad.top - pad.bottom;
+      const episodes = points.map((point) => point.episode);
+      const losses = points.flatMap((point) => [point.policyLoss, point.valueLoss]);
+      const xMin = Math.min(...episodes);
+      const xMax = Math.max(...episodes);
+      const xSpan = xMax - xMin || 1;
+      const minLoss = Math.min(...losses);
+      const maxLoss = Math.max(...losses);
+      const lossSpan = maxLoss - minLoss || 1;
+      const yMin = minLoss - lossSpan * 0.12;
+      const yMax = maxLoss + lossSpan * 0.12;
+      const ySpan = yMax - yMin || 1;
+
+      const x = (episode) => pad.left + ((episode - xMin) / xSpan) * innerWidth;
+      const y = (loss) => pad.top + (1 - ((loss - yMin) / ySpan)) * innerHeight;
+
+      const axisTicks = 5;
+      const xTicks = [];
+      const yTicks = [];
+
+      for (let index = 0; index < axisTicks; index += 1) {
+        const ratio = axisTicks === 1 ? 0 : index / (axisTicks - 1);
+        const episode = xMin + ratio * xSpan;
+        const loss = yMin + (1 - ratio) * ySpan;
+        xTicks.push({ episode: Math.round(episode), xpos: x(episode) });
+        yTicks.push({ loss, ypos: y(loss) });
+      }
+
+      const buildLine = (values, color) => {
+        const pointsAttr = values.map((value) => `${x(value.episode)},${y(value.loss)}`).join(' ');
+        return `
+          <polyline fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="${pointsAttr}"></polyline>
+          ${values.map((value) => `<circle cx="${x(value.episode)}" cy="${y(value.loss)}" r="3.5" fill="${color}" stroke="#fff" stroke-width="1.5"></circle>`).join('')}
+        `;
+      };
+
+      const policyPoints = points.map((point) => ({ episode: point.episode, loss: point.policyLoss }));
+      const valuePoints = points.map((point) => ({ episode: point.episode, loss: point.valueLoss }));
+      const latest = points[points.length - 1];
+
+      const xLabels = xTicks.map((tick) => `
+        <text x="${tick.xpos}" y="${height - 14}" text-anchor="middle" font-size="12" fill="#6b7280">${tick.episode}</text>
+      `).join('');
+
+      const yLabels = yTicks.map((tick) => `
+        <text x="${pad.left - 10}" y="${tick.ypos + 4}" text-anchor="end" font-size="12" fill="#6b7280">${tick.loss.toFixed(3)}</text>
+      `).join('');
+
+      const gridLines = yTicks.map((tick) => `
+        <line x1="${pad.left}" y1="${tick.ypos}" x2="${width - pad.right}" y2="${tick.ypos}" stroke="#e5e7eb" stroke-width="1"></line>
+      `).join('');
+
+      container.innerHTML = `
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="RL training loss curves">
+          <rect x="0" y="0" width="${width}" height="${height}" fill="#fff"></rect>
+          ${gridLines}
+          <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}" stroke="#9ca3af" stroke-width="1.2"></line>
+          <line x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" stroke="#9ca3af" stroke-width="1.2"></line>
+          ${yLabels}
+          ${xLabels}
+          ${buildLine(policyPoints, '#2563eb')}
+          ${buildLine(valuePoints, '#f59e0b')}
+          <text x="${pad.left}" y="14" font-size="12" fill="#6b7280">Loss</text>
+          <text x="${width - pad.right}" y="${height - 8}" text-anchor="end" font-size="12" fill="#6b7280">Episode</text>
+        </svg>
+        <div class="chart-legend">
+          <span class="legend-item"><span class="legend-swatch" style="background:#2563eb"></span>Policy loss ${formatNumber(latest.policyLoss)}</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:#f59e0b"></span>Value loss ${formatNumber(latest.valueLoss)}</span>
+          <span class="legend-item">Episodes tracked ${points.length}</span>
+        </div>
+      `;
+    }
+
+    async function copyText(text, button) {
+      if (!text) {
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(text);
+        if (button) {
+          button.classList.add('copied');
+          const originalLabel = button.getAttribute('aria-label') || 'Copy';
+          button.setAttribute('aria-label', 'Copied');
+          button.title = 'Copied';
+          setTimeout(() => {
+            button.classList.remove('copied');
+            button.setAttribute('aria-label', originalLabel);
+            button.title = originalLabel;
+          }, 1200);
+        }
+      } catch (error) {
+        // ignore clipboard failures in browsers without permissions
+      }
+    }
+
+    const initialStatus = {{ status | tojson if status else 'null' }};
+    bindTrainingFormPersistence();
+    applyLocalTimestamps();
+
+    document.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-copy-text], [data-copy-block]');
+      if (!button) {
+        return;
+      }
+      if (button.hasAttribute('data-copy-block')) {
+        const payload = buildStatusBlockText(button);
+        copyText(payload, button);
+        return;
+      }
+      copyText(button.getAttribute('data-copy-text') || '', button);
+    });
+
+    function buildStatusBlockText(source) {
+      const startedAt = formatLocalTimestamp(source.getAttribute('data-status-started-at') || '');
+      const finishedAt = formatLocalTimestamp(source.getAttribute('data-status-finished-at') || '');
+      const lines = [
+        `${source.getAttribute('data-status-state') || ''} · ${source.getAttribute('data-status-preset') || ''}`,
+        `Run ID: ${source.getAttribute('data-status-run-id') || ''}`,
+        `Status started: ${startedAt}`,
+        `Status finished: ${finishedAt}`,
+        `Job: ${source.getAttribute('data-status-job-id') || ''}`,
+        `Progress: ${source.getAttribute('data-status-completed') || 0} / ${source.getAttribute('data-status-total') || 0}`,
+        `Message: ${source.getAttribute('data-status-message') || ''}`,
+        `Save path: ${source.getAttribute('data-status-save-path') || ''}`,
+        `Samples path: ${source.getAttribute('data-status-samples-path') || ''}`,
+        `Latest losses: policy ${Number(source.getAttribute('data-status-policy-loss') || 0).toFixed(4)}, value ${Number(source.getAttribute('data-status-value-loss') || 0).toFixed(4)}`,
+      ];
+      if (String(source.getAttribute('data-status-state') || '').toLowerCase() === 'completed') {
+        lines.push(
+          `Evaluation: white ${source.getAttribute('data-status-white-wins') || 0}, black ${source.getAttribute('data-status-black-wins') || 0}, draws ${source.getAttribute('data-status-draws') || 0}, white score ${Number(source.getAttribute('data-status-white-score') || 0).toFixed(3)}`
+        );
+      } else {
+        const state = String(source.getAttribute('data-status-state') || '').toUpperCase();
+        const message = source.getAttribute('data-status-message') || '';
+        lines.push(`Evaluation: ${state}${message ? ` — ${message}` : ''}`);
+      }
+      const error = source.getAttribute('data-status-error') || '';
+      if (error) {
+        lines.push(`Error: ${error}`);
+      }
+      return lines.join('\n');
+    }
+
+    function renderStatusCard(data) {
+      const state = String(data.state || '').toUpperCase();
+      const preset = String(data.preset || '').toUpperCase();
+      const runId = escapeHtml(data.run_id || '');
+      const jobId = escapeHtml(data.job_id || '');
+      const startedAt = escapeHtml(formatLocalTimestamp(data.started_at || ''));
+      const finishedAt = escapeHtml(formatLocalTimestamp(data.finished_at || ''));
+      const message = escapeHtml(data.message || '');
+      const savePath = escapeHtml(data.save_path || '');
+      const samplesPath = escapeHtml(data.samples_path || '');
+      const latestPolicyLoss = (Number(data.latest_policy_loss) || 0).toFixed(4);
+      const latestValueLoss = (Number(data.latest_value_loss) || 0).toFixed(4);
+      const error = data.error ? `<div class="muted">Error: ${escapeHtml(data.error)}</div>` : '';
+      const evaluation = String(data.state || '').toLowerCase() === 'completed'
+        ? `<div>Evaluation: white ${Number(data.eval_white_wins) || 0}, black ${Number(data.eval_black_wins) || 0}, draws ${Number(data.eval_draws) || 0}, white score ${(Number(data.white_score) || 0).toFixed(3)}</div>`
+        : `<div>Evaluation: ${state}${data.message ? ` — ${escapeHtml(data.message)}` : ''}</div>`;
+
+      return `
+        <div class="metric">
+          <div class="metric-header">
+            <b>${state} · ${preset}</b>
+            <button
+              class="copy-btn"
+              type="button"
+              data-copy-block
+              data-status-state="${escapeHtml(data.state || '')}"
+              data-status-preset="${escapeHtml(data.preset || '')}"
+              data-status-run-id="${runId}"
+              data-status-job-id="${jobId}"
+              data-status-started-at="${escapeHtml(data.started_at || '')}"
+              data-status-finished-at="${escapeHtml(data.finished_at || '')}"
+              data-status-completed="${escapeHtml(data.completed ?? 0)}"
+              data-status-total="${escapeHtml(data.total ?? 0)}"
+              data-status-message="${message}"
+              data-status-save-path="${savePath}"
+              data-status-samples-path="${samplesPath}"
+              data-status-policy-loss="${escapeHtml(data.latest_policy_loss ?? 0)}"
+              data-status-value-loss="${escapeHtml(data.latest_value_loss ?? 0)}"
+              data-status-white-wins="${escapeHtml(data.eval_white_wins ?? 0)}"
+              data-status-black-wins="${escapeHtml(data.eval_black_wins ?? 0)}"
+              data-status-draws="${escapeHtml(data.eval_draws ?? 0)}"
+              data-status-white-score="${escapeHtml(data.white_score ?? 0)}"
+              data-status-error="${escapeHtml(data.error || '')}"
+              aria-label="Copy status block"
+              title="Copy status block"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="10" height="10" rx="2"></rect>
+                <path d="M5 15V7a2 2 0 0 1 2-2h8"></path>
+              </svg>
+            </button>
+          </div>
+          <div class="status-row">
+            <span>Run ID:</span>
+            <code>${runId}</code>
+            <button
+              class="copy-btn"
+              type="button"
+              data-copy-text="${runId}"
+              data-copy-label="Run ID"
+              aria-label="Copy run ID"
+              title="Copy run ID"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="10" height="10" rx="2"></rect>
+                <path d="M5 15V7a2 2 0 0 1 2-2h8"></path>
+              </svg>
+            </button>
+          </div>
+          <div>Status started: ${startedAt}</div>
+          <div>Status finished: ${finishedAt}</div>
+          <div>Job: ${jobId}</div>
+          <div>Progress: ${Number(data.completed) || 0} / ${Number(data.total) || 0}</div>
+          <div>Message: ${message}</div>
+          <div>Save path: ${savePath}</div>
+          <div>Samples path: ${samplesPath}</div>
+          <div>Latest losses: policy ${latestPolicyLoss}, value ${latestValueLoss}</div>
+          ${evaluation}
+          ${error}
+        </div>
+      `;
+    }
+
+    async function refreshStatus() {
+      try {
+        const response = await fetch('/rl/status', { cache: 'no-store' });
+        const data = await response.json();
+        if (!data || data.state === 'idle') {
+          renderTrainingChart([]);
+          return;
+        }
+        const body = document.getElementById('status_body');
+        body.innerHTML = renderStatusCard(data);
+        applyLocalTimestamps(body);
+        renderTrainingChart(data.training_history || []);
+      } catch (error) {
+        // ignore transient fetch errors
+      }
+    }
+
+    renderTrainingChart(initialStatus?.training_history || []);
+    refreshStatus();
+    setInterval(refreshStatus, 3000);
+  </script>
+</body>
+</html>

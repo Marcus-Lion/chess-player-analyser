@@ -1,0 +1,145 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="/static/favicon.png" type="image/png" />
+  <title>Self-play players</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 1rem; padding: 0 1rem; max-width: none; width: 100%; box-sizing: border-box; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem; width: 100%; box-sizing: border-box; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid #eee; padding: .5rem .6rem; text-align: left; vertical-align: top; }
+    th {
+      position: sticky;
+      top: 0;
+      background: #fafafa;
+      z-index: 1;
+      cursor: pointer;
+      user-select: none;
+    }
+    th.sort-asc::after { content: " ▲"; font-size: .8em; }
+    th.sort-desc::after { content: " ▼"; font-size: .8em; }
+    .muted { color: #666; }
+    .table-wrap { overflow: auto; max-width: 100%; border: 1px solid #ddd; border-radius: 12px; }
+    .weights { font-size: .9rem; color: #444; }
+    .danger {
+      background: #b91c1c;
+      color: white;
+      border: 1px solid #991b1b;
+      border-radius: 8px;
+      padding: .55rem .85rem;
+      cursor: pointer;
+    }
+    .danger:hover { background: #991b1b; }
+  </style>
+</head>
+<body>
+  <p><a href="/self-play">← Back to self-play</a></p>
+  <h1>Self-play players</h1>
+  <p class="muted">Sixteen named player profiles are used as the opponent pool for self-play. Each game now prefers players with similar Elo estimates, then uses their fixed weight sets.</p>
+
+  {% if notice %}
+    <div class="card" style="background:#fdf2f2;border-color:#f5c2c7;color:#7f1d1d;">{{ notice }}</div>
+  {% endif %}
+
+  <form method="post" action="/self-play/players/delete-all" onsubmit="return confirm('Delete all saved self-play player nodes? This cannot be undone.');" style="margin: 0 0 1rem 0;">
+    <button type="submit" class="danger">Delete all players</button>
+  </form>
+
+  <div class="card">
+    <div class="table-wrap">
+      <table id="players_table">
+        <thead>
+          <tr>
+            <th data-sort="text">Player</th>
+            <th data-sort="number">Games</th>
+            <th data-sort="number">W</th>
+            <th data-sort="number">D</th>
+            <th data-sort="number">L</th>
+            <th data-sort="number" class="sort-desc">Score</th>
+            <th data-sort="number">Elo</th>
+            <th data-sort="text">Weights</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for player in players %}
+            <tr>
+              <td data-value="{{ player.name|e }}"><a href="/self-play/players/{{ player.player_id }}">{{ player.name }}</a></td>
+              <td data-value="{{ player.games }}">{{ player.games }}</td>
+              <td data-value="{{ player.wins }}">{{ player.wins }}</td>
+              <td data-value="{{ player.draws }}">{{ player.draws }}</td>
+              <td data-value="{{ player.losses }}">{{ player.losses }}</td>
+              <td data-value="{{ player.score_pct }}">{{ "%.1f"|format(player.score_pct * 100) }}%</td>
+              <td data-value="{{ player.elo }}">{{ "%.0f"|format(player.elo) }}</td>
+              <td class="weights" data-value="lm={{ "%.2f"|format(player.legal_moves_weight) }}, mat={{ "%.2f"|format(player.material_score_weight) }}, fwd={{ "%.2f"|format(player.forward_score_weight) }}, cc={{ "%.2f"|format(player.center_control_weight) }}">
+                lm={{ "%.2f"|format(player.legal_moves_weight) }},
+                mat={{ "%.2f"|format(player.material_score_weight) }},
+                fwd={{ "%.2f"|format(player.forward_score_weight) }},
+                cc={{ "%.2f"|format(player.center_control_weight) }}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const table = document.getElementById('players_table');
+      if (!table) return;
+      const headers = Array.from(table.querySelectorAll('th'));
+      const tbody = table.querySelector('tbody');
+      const sortState = { index: 5, dir: -1 };
+
+      function getCellValue(row, index, type) {
+        const cell = row.children[index];
+        const raw = (cell && cell.dataset && cell.dataset.value) ? cell.dataset.value : (cell ? cell.textContent : '');
+        if (type === 'number') {
+          const num = Number(String(raw).replace(/[^0-9.+\-eE]/g, ''));
+          return Number.isFinite(num) ? num : -Infinity;
+        }
+        return String(raw).trim().toLowerCase();
+      }
+
+      function updateHeaderStyles(activeIndex, dir) {
+        headers.forEach((th, idx) => {
+          th.classList.remove('sort-asc', 'sort-desc');
+          if (idx === activeIndex) {
+            th.classList.add(dir === 1 ? 'sort-asc' : 'sort-desc');
+          }
+        });
+      }
+
+      headers.forEach((th, index) => {
+        th.addEventListener('click', () => {
+          const type = th.dataset.sort || 'text';
+          sortState.dir = sortState.index === index ? -sortState.dir : 1;
+          sortState.index = index;
+
+          const rows = Array.from(tbody.querySelectorAll('tr'));
+          rows.sort((a, b) => {
+            const av = getCellValue(a, index, type);
+            const bv = getCellValue(b, index, type);
+            if (av < bv) return -1 * sortState.dir;
+            if (av > bv) return 1 * sortState.dir;
+            return 0;
+          });
+          rows.forEach((row) => tbody.appendChild(row));
+          updateHeaderStyles(index, sortState.dir);
+        });
+      });
+
+      const initialRows = Array.from(tbody.querySelectorAll('tr'));
+      initialRows.sort((a, b) => {
+        const av = getCellValue(a, sortState.index, 'number');
+        const bv = getCellValue(b, sortState.index, 'number');
+        if (av < bv) return 1;
+        if (av > bv) return -1;
+        return 0;
+      });
+      initialRows.forEach((row) => tbody.appendChild(row));
+      updateHeaderStyles(sortState.index, sortState.dir);
+    })();
+  </script>
+</body>
+</html>

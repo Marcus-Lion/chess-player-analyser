@@ -1,0 +1,88 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="/static/favicon.png" type="image/png" />
+  <title>{{ overview.termination_display or overview.termination }} - Self-play termination</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 1rem; padding: 0 1rem; max-width: none; width: 100%; box-sizing: border-box; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem; width: 100%; box-sizing: border-box; }
+    .grid { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: .75rem; }
+    .metric { border: 1px solid #eee; border-radius: 10px; padding: .75rem; }
+    .metric b { display: block; font-size: 1.3rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid #eee; padding: .5rem .6rem; text-align: left; vertical-align: top; }
+    th { position: sticky; top: 0; background: #fafafa; z-index: 1; }
+    .table-wrap { overflow: auto; max-width: 100%; border: 1px solid #ddd; border-radius: 12px; }
+    .muted { color: #666; }
+  </style>
+</head>
+<body>
+  <p><a href="/self-play/terminations">← Back to terminations</a></p>
+  <p><a href="/self-play">← Back to self-play</a></p>
+  <h1>{{ overview.termination_display or overview.termination }}</h1>
+
+  <div class="card">
+    <div class="grid">
+      <div class="metric">Games <b>{{ overview.games }}</b></div>
+      <div class="metric">Avg turns <b>{{ "%.0f"|format(overview.avg_turns) }}</b></div>
+      <div class="metric">White wins <b>{{ "%.1f"|format(overview.white_win_pct * 100) }}%</b></div>
+      <div class="metric">Draws <b>{{ "%.1f"|format(overview.draw_pct * 100) }}%</b></div>
+      <div class="metric">Black wins <b>{{ "%.1f"|format(overview.black_win_pct * 100) }}%</b></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Games</h2>
+    {% if games %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Played at</th>
+              <th>White</th>
+              <th>Black</th>
+              <th>Result</th>
+              <th>Turns</th>
+              <th>Final score</th>
+              <th>Outcome</th>
+              <th>View</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for game in games %}
+              <tr>
+                <td data-local-timestamp>{{ game.played_at }}</td>
+                <td>{% if game.white_player_id %}<a href="/self-play/players/{{ game.white_player_id }}">{{ game.white_player_name }}</a>{% else %}{{ game.white_player_name }}{% endif %}</td>
+                <td>{% if game.black_player_id %}<a href="/self-play/players/{{ game.black_player_id }}">{{ game.black_player_name }}</a>{% else %}{{ game.black_player_name }}{% endif %}</td>
+                <td><a href="/self-play/view/{{ game.run_id }}/{{ game.index }}">{{ game.result }}</a></td>
+                <td>{{ game.turns }}</td>
+                <td>{{ "%.2f"|format(game.final_score) }}</td>
+                <td>{{ game.outcome }}</td>
+                <td><a href="/self-play/view/{{ game.run_id }}/{{ game.index }}">Open</a></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted">No games found for this termination.</p>
+    {% endif %}
+  </div>
+  <script>
+    (function applyLocalTimestamps() {
+      const pad = (number) => String(number).padStart(2, '0');
+      const format = (value) => {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return value ? String(value) : '';
+        }
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+      };
+      document.querySelectorAll('[data-local-timestamp]').forEach((element) => {
+        element.textContent = format(element.getAttribute('data-local-timestamp') || element.textContent || '');
+      });
+    })();
+  </script>
+</body>
+</html>

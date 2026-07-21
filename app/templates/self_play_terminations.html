@@ -1,0 +1,65 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="/static/favicon.png" type="image/png" />
+  <title>Self-play terminations</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 1rem; padding: 0 1rem; max-width: none; width: 100%; box-sizing: border-box; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem; width: 100%; box-sizing: border-box; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: .75rem; }
+    .metric { border: 1px solid #eee; border-radius: 10px; padding: .75rem; }
+    .metric b { display: block; font-size: 1.4rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid #eee; padding: .5rem .6rem; text-align: left; vertical-align: top; }
+    th { position: sticky; top: 0; background: #fafafa; z-index: 1; }
+    .muted { color: #666; }
+  </style>
+</head>
+<body>
+  <p><a href="/self-play">← Back to self-play</a></p>
+  <h1>Self-play terminations</h1>
+
+  {% if summary.games %}
+    <div class="card">
+      <div class="grid">
+        <div class="metric">Games <b>{{ summary.games }}</b></div>
+        <div class="metric">White wins <b>{{ "%.1f"|format(summary.white_win_pct * 100) }}%</b></div>
+        <div class="metric">Black wins <b>{{ "%.1f"|format(summary.black_win_pct * 100) }}%</b></div>
+        <div class="metric">Draws <b>{{ "%.1f"|format(summary.draw_pct * 100) }}%</b></div>
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="card">
+    {% if terminations %}
+      <table>
+        <thead>
+          <tr>
+            <th>Termination</th>
+            <th>Games</th>
+            <th>Avg turns</th>
+            <th>White wins</th>
+            <th>Draws</th>
+            <th>Black wins</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in terminations %}
+            <tr>
+              <td><a href="/self-play/terminations/{{ row.termination|urlencode }}">{{ row.termination_display or row.termination }}</a></td>
+              <td>{{ row.games }}</td>
+              <td>{{ "%.0f"|format(row.avg_turns) }}</td>
+              <td>{{ "%.1f"|format(row.white_win_pct * 100) }}%</td>
+              <td>{{ "%.1f"|format(row.draw_pct * 100) }}%</td>
+              <td>{{ "%.1f"|format(row.black_win_pct * 100) }}%</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No self-play results saved yet.</p>
+    {% endif %}
+  </div>
+</body>
+</html>

@@ -20,6 +20,8 @@ class TrainingStep:
     samples: int
     policy_loss: float
     value_loss: float
+    result: str = ""
+    termination: str = ""
 
 
 @dataclass(slots=True)
@@ -37,10 +39,13 @@ def _apply_episode_result(
     config: RLConfig,
     buffer: ReplayBuffer,
     samples_file: Path | None,
+    results_file: Path | None,
     rng: random.Random,
     run: TrainingRun,
     episode_number: int,
     episode_samples,
+    episode_result: str,
+    episode_termination: str,
     save_path: str | Path | None,
     progress_callback: Callable[[TrainingStep], None] | None,
 ) -> None:
@@ -50,6 +55,17 @@ def _apply_episode_result(
             for sample in episode_samples:
                 handle.write(json.dumps(asdict(sample), ensure_ascii=False))
                 handle.write("\n")
+    if results_file is not None:
+        payload = {
+            "episode": episode_number,
+            "game_id": episode_samples[0].game_id if episode_samples else "",
+            "result": episode_result,
+            "termination": episode_termination,
+            "samples": len(episode_samples),
+        }
+        with results_file.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False))
+            handle.write("\n")
     batch = buffer.sample(config.batch_size, rng=rng)
     metrics = model.train_batch(batch, learning_rate=config.learning_rate) if batch else TrainMetrics()
     step = TrainingStep(
@@ -57,6 +73,8 @@ def _apply_episode_result(
         samples=len(episode_samples),
         policy_loss=metrics.policy_loss,
         value_loss=metrics.value_loss,
+        result=episode_result,
+        termination=episode_termination,
     )
     run.steps.append(step)
     if progress_callback is not None:
@@ -71,6 +89,7 @@ def train_from_self_play(
     *,
     save_path: str | Path | None = None,
     samples_path: str | Path | None = None,
+    results_path: str | Path | None = None,
     seed: int | None = None,
     progress_callback: Callable[[TrainingStep], None] | None = None,
 ) -> TrainingRun:
@@ -78,8 +97,13 @@ def train_from_self_play(
     buffer = ReplayBuffer(config.replay_capacity)
     run = TrainingRun()
     samples_file = Path(samples_path) if samples_path is not None else None
+    results_file = Path(results_path) if results_path is not None else None
     if samples_file is not None:
         samples_file.parent.mkdir(parents=True, exist_ok=True)
+    if results_file is None and samples_file is not None:
+        results_file = samples_file.with_name("rl_results.jsonl")
+    if results_file is not None:
+        results_file.parent.mkdir(parents=True, exist_ok=True)
 
     worker_count = max(1, int(config.self_play_workers))
 
@@ -96,10 +120,13 @@ def train_from_self_play(
                 config=config,
                 buffer=buffer,
                 samples_file=samples_file,
+                results_file=results_file,
                 rng=rng,
                 run=run,
                 episode_number=episode,
                 episode_samples=episode_result.samples,
+                episode_result=episode_result.result,
+                episode_termination=episode_result.termination,
                 save_path=save_path,
                 progress_callback=progress_callback,
             )
@@ -125,10 +152,13 @@ def train_from_self_play(
                         config=config,
                         buffer=buffer,
                         samples_file=samples_file,
+                        results_file=results_file,
                         rng=rng,
                         run=run,
                         episode_number=episode_number + offset,
                         episode_samples=episode_result.samples,
+                        episode_result=episode_result.result,
+                        episode_termination=episode_result.termination,
                         save_path=save_path,
                         progress_callback=progress_callback,
                     )

@@ -27,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--save-path", type=Path, default=Path("cache/rl_model.npz"))
     parser.add_argument("--samples-path", type=Path, default=Path("cache/rl_samples.jsonl"))
+    parser.add_argument("--results-path", type=Path, default=None)
     parser.add_argument("--load-path", type=Path, default=None)
     return parser
 
@@ -68,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         config,
         save_path=args.save_path,
         samples_path=args.samples_path,
+        results_path=args.results_path,
         seed=args.seed,
     )
     summary = evaluate_matchup(model, config, games=config.eval_games, seed=args.seed)
@@ -84,6 +86,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"saved={args.save_path}")
     print(f"samples={args.samples_path}")
+    if args.results_path is not None:
+        print(f"results={args.results_path}")
     return 0
 
 

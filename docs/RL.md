@@ -35,6 +35,8 @@ The RL code lives in `app/rl/`.
 - `evaluate.py` — evaluation against the heuristic engine
 - `gym_env.py` — Gymnasium chess environment with invalid-action masking
 - `sb3_train.py` — SB3/PPO training entrypoint for the Gym environment
+- `double_dqn.py` — experimental Double DQN branch
+- `dqn_train.py` — CLI entrypoint for the Double DQN experiment
 - `service.py` — background job wrapper for the web app
 - `presets.py` — named run presets
 - `__main__.py` — CLI entrypoint
@@ -146,6 +148,24 @@ The environment is designed around the current heuristic engine and keeps the
 reward signal small and shaped, so it is a scaffold rather than a finished
 AlphaZero-style setup.
 
+### Double DQN experiment branch
+
+There is also an experimental Double DQN branch for comparison:
+
+```bash
+python -m app.rl.dqn_train --episodes 200 --save-path cache/rl_dqn_model.npz
+```
+
+This branch uses:
+
+- state-action Q estimation over legal moves
+- epsilon-greedy self-play
+- a replay buffer
+- a target network updated on a fixed schedule
+- Double DQN targets with legal-move masking
+
+It is intentionally separate from the policy/value self-play trainer.
+
 ## Web usage
 
 Open `/rl` in the app and submit a run. The page shows:
@@ -167,6 +187,7 @@ Typical RL runs write:
 
 - `cache/rl_model.npz` — checkpoint
 - `cache/rl_samples.jsonl` — training samples
+- `cache/rl_results.jsonl` — per-episode self-play results
 
 These paths can be overridden from the CLI or the web form.
 

@@ -11,7 +11,7 @@ import numpy as np
 
 from app.rl.config import RLConfig
 from app.rl.dataset import SelfPlayEpisode, TrainingSample
-from app.rl.model import ChessRLModel
+from app.rl.model import ChessRLModel, _softmax
 
 
 _DIRICHLET_ALPHA = 0.3
@@ -25,13 +25,13 @@ def _terminal_result(board: chess.Board) -> tuple[str, str]:
     if board.is_insufficient_material():
         return ("1/2-1/2", "insufficient material")
     if board.is_fivefold_repetition():
-        return ("1/2-1/2", "fivefold repetition")
+        return ("1/2-1/2", "5-fold repetition")
     if board.is_seventyfive_moves():
         return ("1/2-1/2", "75-move rule")
     if board.can_claim_threefold_repetition():
         return ("1/2-1/2", "3-fold repetition")
     if board.can_claim_fifty_moves():
-        return ("1/2-1/2", "fifty-move rule")
+        return ("1/2-1/2", "50-move rule")
     return ("", "")
 
 
@@ -80,6 +80,61 @@ def _visit_distribution(visits: dict[str, int]) -> dict[str, float]:
     if total <= 0.0:
         return {}
     return {move: max(0.0, float(count)) / total for move, count in visits.items() if count > 0}
+
+
+def _ranked_root_policy(
+    visits: dict[str, int],
+    fallback_policy: dict[str, float],
+    *,
+    temperature: float,
+    ply: int,
+) -> dict[str, float]:
+    """Return a sharper self-play policy from search visits and network priors.
+
+    The old policy sampled directly from visit counts, which stayed close to
+    uniform when the search signal was weak. This version keeps the search
+    signal but sharpens it by combining:
+
+    - visit counts
+    - network priors from the root
+    - a small top-k truncation
+    - a lower temperature later in the game
+    """
+
+    if not visits:
+        if not fallback_policy:
+            return {}
+        total = float(sum(max(0.0, float(v)) for v in fallback_policy.values()))
+        if total <= 0.0:
+            return {move: 1.0 / len(fallback_policy) for move in fallback_policy}
+        return {move: max(0.0, float(v)) / total for move, v in fallback_policy.items()}
+
+    moves = list(visits.keys())
+    counts = np.asarray([max(0.0, float(visits[move])) for move in moves], dtype=np.float32)
+    total_counts = float(np.sum(counts))
+    prior_probs = np.asarray([max(0.0, float(fallback_policy.get(move, 0.0))) for move in moves], dtype=np.float32)
+    prior_total = float(np.sum(prior_probs))
+    if prior_total > 0.0:
+        prior_probs /= prior_total
+    elif len(moves) > 0:
+        prior_probs = np.full(len(moves), 1.0 / len(moves), dtype=np.float32)
+
+    effective_temperature = max(0.15, float(temperature))
+    if ply >= 24:
+        effective_temperature = min(effective_temperature, 0.65)
+    if ply >= 48:
+        effective_temperature = min(effective_temperature, 0.35)
+
+    # Blend visit counts with priors, then keep only the most promising few moves.
+    blended_scores = np.log1p(counts) + 0.25 * np.log1p(prior_probs * max(total_counts, 1.0))
+    top_k = min(6, len(moves))
+    if top_k <= 0:
+        return {}
+    top_indices = np.argsort(blended_scores)[-top_k:]
+    top_moves = [moves[idx] for idx in top_indices]
+    top_logits = blended_scores[top_indices].astype(np.float32) / effective_temperature
+    top_probs = _softmax(top_logits)
+    return {move: float(prob) for move, prob in zip(top_moves, top_probs, strict=False)}
 
 
 @dataclass(slots=True)
@@ -204,31 +259,13 @@ def _run_mcts(
 
 
 def _choose_move_from_visits(
-    visits: dict[str, int],
+    policy: dict[str, float],
     *,
-    temperature: float,
     rng: random.Random,
-    fallback_policy: dict[str, float],
 ) -> str:
-    if not visits:
-        if fallback_policy:
-            if temperature <= 0:
-                return max(fallback_policy.items(), key=lambda item: item[1])[0]
-            return _sample_from_policy(fallback_policy, rng)
+    if not policy:
         return ""
-
-    moves = list(visits.keys())
-    counts = np.asarray([max(0.0, float(visits[move])) for move in moves], dtype=np.float32)
-    if float(np.sum(counts)) <= 0.0:
-        return _sample_from_policy({move: 1.0 for move in moves}, rng)
-    if temperature <= 0:
-        return moves[int(np.argmax(counts))]
-    scaled = counts ** (1.0 / max(temperature, 1e-6))
-    total = float(np.sum(scaled))
-    if total <= 0.0:
-        return moves[int(np.argmax(counts))]
-    probabilities = {move: float(weight) / total for move, weight in zip(moves, scaled, strict=False)}
-    return _sample_from_policy(probabilities, rng)
+    return _sample_from_policy(policy, rng)
 
 
 def play_self_play_game(
@@ -267,17 +304,22 @@ def play_self_play_game(
             rng=rng,
         )
         visits = {move: child.visits for move, child in root.children.items() if child.visits > 0}
-        policy_target = _visit_distribution(visits)
         fallback_policy = {move: float(child.prior) for move, child in root.children.items() if child.prior > 0}
+        policy_target = _ranked_root_policy(
+            visits,
+            fallback_policy,
+            temperature=config.self_play_temperature,
+            ply=turn,
+        )
+        if not policy_target:
+            policy_target = _visit_distribution(visits)
         if not policy_target:
             policy_target = fallback_policy
         if not policy_target:
             policy_target = {move: 1.0 for move in legal_moves}
         chosen_move = _choose_move_from_visits(
-            visits,
-            temperature=config.self_play_temperature,
+            policy_target,
             rng=rng,
-            fallback_policy=fallback_policy or {move: 1.0 for move in legal_moves},
         )
 
         samples.append(

@@ -1,5 +1,6 @@
 from app.rl.config import RLConfig
 from app.rl.dataset import SelfPlayEpisode, TrainingSample
+from app.rl.double_dqn import DoubleDQNConfig, DoubleDQNModel, train_from_self_play_double_dqn
 from app.rl.evaluate import evaluate_matchup
 from app.rl.model import ChessRLModel
 from app.rl.replay_buffer import ReplayBuffer
@@ -10,6 +11,9 @@ __all__ = [
     "RLConfig",
     "SelfPlayEpisode",
     "TrainingSample",
+    "DoubleDQNConfig",
+    "DoubleDQNModel",
+    "train_from_self_play_double_dqn",
     "ChessRLModel",
     "ReplayBuffer",
     "generate_self_play_batch",

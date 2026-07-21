@@ -14,6 +14,24 @@
     pre { white-space: pre-wrap; word-break: break-word; background: #fafafa; padding: .75rem; border-radius: 8px; }
     .muted { color: #666; }
     .grid { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: .75rem; }
+    .help-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.05rem;
+      height: 1.05rem;
+      margin-left: .3rem;
+      border-radius: 999px;
+      border: 1px solid #cbd5e1;
+      color: #475569;
+      font-size: .72rem;
+      line-height: 1;
+      cursor: help;
+      background: #fff;
+      vertical-align: middle;
+      user-select: none;
+    }
+    .help-icon:hover { background: #f8fafc; border-color: #94a3b8; }
     .metric { border: 1px solid #eee; border-radius: 10px; padding: .75rem; }
     .metric b { display: block; font-size: 1.1rem; }
     .progress-wrap { display: none; margin-top: 1rem; }
@@ -87,27 +105,27 @@
     <form method="post" action="/self-play">
       <div class="grid">
         <div>
-          <label>Games</label>
+          <label>Games <span class="help-icon" title="How many self-play games to run in this request.">?</span></label>
           <input name="games" type="number" min="1" value="{{ config.games if config else 3 }}" required />
         </div>
         <div>
-          <label>Max turns</label>
+          <label>Max turns <span class="help-icon" title="Hard stop for each game. Games that do not finish before this limit are recorded as max-turn draws.">?</span></label>
           <input name="max_turns" type="number" min="2" value="{{ config.max_turns if config else 100 }}" required />
         </div>
         <div>
-          <label>Top K</label>
+          <label>Top K <span class="help-icon" title="How many of the best evaluated moves are considered when selecting a move.">?</span></label>
           <input name="top_k" type="number" min="1" value="{{ config.top_k if config else 1 }}" required />
         </div>
         <div>
-          <label>Parallel workers</label>
+          <label>Parallel workers <span class="help-icon" title="How many worker processes run self-play games at the same time.">?</span></label>
           <input name="workers" type="number" min="1" placeholder="auto" value="{{ config.workers if config and config.workers is not none else '' }}" />
         </div>
         <div>
-          <label>Seed</label>
+          <label>Seed <span class="help-icon" title="Optional random seed for reproducible self-play.">?</span></label>
           <input name="seed" type="number" value="{{ config.seed if config and config.seed is not none else '' }}" />
         </div>
         <div>
-          <label>Run name</label>
+          <label>Run name <span class="help-icon" title="Human-readable grouping label used to organize saved results by date and name.">?</span></label>
           <input name="run_name" type="text" placeholder="self-play" />
         </div>
       </div>
@@ -117,19 +135,19 @@
       <label style="margin-bottom: .25rem;">White weights (optional)</label>
       <div class="grid" style="grid-template-columns: repeat(4, minmax(120px, 1fr));">
         <div>
-          <label>Legal-moves weight</label>
+          <label>Legal-moves weight <span class="help-icon" title="Weight for raw mobility: how many legal moves a side has.">?</span></label>
           <input name="white_legal_moves_weight" type="number" step="any" value="{{ config.white_legal_moves_weight if config and config.white_legal_moves_weight is not none else '' }}" />
         </div>
         <div>
-          <label>Material weight</label>
+          <label>Material weight <span class="help-icon" title="Weight for material balance. Higher values favor piece advantage more strongly.">?</span></label>
           <input name="white_material_score_weight" type="number" step="any" value="{{ config.white_material_score_weight if config and config.white_material_score_weight is not none else '' }}" />
         </div>
         <div>
-          <label>Forward weight</label>
+          <label>Forward weight <span class="help-icon" title="Weight for forward control, which measures influence on the forward ranks.">?</span></label>
           <input name="white_forward_score_weight" type="number" step="any" value="{{ config.white_forward_score_weight if config and config.white_forward_score_weight is not none else '' }}" />
         </div>
         <div>
-          <label>Center weight</label>
+          <label>Center weight <span class="help-icon" title="Weight for central-square control. Higher values favor central pressure.">?</span></label>
           <input name="white_center_control_weight" type="number" step="any" value="{{ config.white_center_control_weight if config and config.white_center_control_weight is not none else '' }}" />
         </div>
       </div>
@@ -137,24 +155,24 @@
       <label style="margin-bottom: .25rem;">Black weights (optional)</label>
       <div class="grid" style="grid-template-columns: repeat(4, minmax(120px, 1fr));">
         <div>
-          <label>Legal-moves weight</label>
+          <label>Legal-moves weight <span class="help-icon" title="Weight for raw mobility: how many legal moves a side has.">?</span></label>
           <input name="black_legal_moves_weight" type="number" step="any" value="{{ config.black_legal_moves_weight if config and config.black_legal_moves_weight is not none else '' }}" />
         </div>
         <div>
-          <label>Material weight</label>
+          <label>Material weight <span class="help-icon" title="Weight for material balance. Higher values favor piece advantage more strongly.">?</span></label>
           <input name="black_material_score_weight" type="number" step="any" value="{{ config.black_material_score_weight if config and config.black_material_score_weight is not none else '' }}" />
         </div>
         <div>
-          <label>Forward weight</label>
+          <label>Forward weight <span class="help-icon" title="Weight for forward control, which measures influence on the forward ranks.">?</span></label>
           <input name="black_forward_score_weight" type="number" step="any" value="{{ config.black_forward_score_weight if config and config.black_forward_score_weight is not none else '' }}" />
         </div>
         <div>
-          <label>Center weight</label>
+          <label>Center weight <span class="help-icon" title="Weight for central-square control. Higher values favor central pressure.">?</span></label>
           <input name="black_center_control_weight" type="number" step="any" value="{{ config.black_center_control_weight if config and config.black_center_control_weight is not none else '' }}" />
         </div>
       </div>
 
-      <label>Optional starting FEN</label>
+      <label>Optional starting FEN <span class="help-icon" title="A custom board position to start from instead of the normal initial chess position.">?</span></label>
       <textarea name="fen" rows="3" placeholder="Leave blank for the standard starting position">{{ config.fen if config and config.fen else '' }}</textarea>
 
       <button type="submit">Run self-play</button>

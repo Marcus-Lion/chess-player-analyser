@@ -64,6 +64,24 @@
       gap: .75rem;
       flex-wrap: wrap;
     }
+    .help-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.05rem;
+      height: 1.05rem;
+      margin-left: .3rem;
+      border-radius: 999px;
+      border: 1px solid #cbd5e1;
+      color: #475569;
+      font-size: .72rem;
+      line-height: 1;
+      cursor: help;
+      background: #fff;
+      vertical-align: middle;
+      user-select: none;
+    }
+    .help-icon:hover { background: #f8fafc; border-color: #94a3b8; }
     .status-row {
       display: flex;
       align-items: center;
@@ -113,7 +131,7 @@
     <form method="post" action="/rl/start">
       <div class="grid">
         <div>
-          <label>Preset</label>
+          <label>Preset <span class="help-icon" title="Preset chooses default training values for episode count, replay size, learning rate, temperature, exploration, and evaluation games.">?</span></label>
           <select name="preset">
             {% for name in preset_names %}
               <option value="{{ name }}">{{ name|title }}</option>
@@ -121,74 +139,74 @@
           </select>
         </div>
         <div>
-          <label>Episodes</label>
+          <label>Episodes <span class="help-icon" title="How many self-play episodes to generate and train on in this run.">?</span></label>
           <input name="episodes" type="number" min="1" placeholder="preset default" />
         </div>
         <div>
-          <label>Max turns</label>
+          <label>Max turns <span class="help-icon" title="Stop each self-play game after this many plies to prevent endless games.">?</span></label>
           <input name="max_turns" type="number" min="2" placeholder="preset default" />
         </div>
         <div>
-          <label>Batch size</label>
+          <label>Batch size <span class="help-icon" title="How many replay samples are used in each gradient update.">?</span></label>
           <input name="batch_size" type="number" min="1" placeholder="preset default" />
         </div>
         <div>
-          <label>Self-play workers</label>
+          <label>Self-play workers <span class="help-icon" title="Number of parallel processes used to generate self-play games.">?</span></label>
           <input name="self_play_workers" type="number" min="1" value="1" />
         </div>
         <div>
-          <label>Replay capacity</label>
+          <label>Replay capacity <span class="help-icon" title="Maximum number of samples kept in the replay buffer. Older samples fall out when the buffer fills.">?</span></label>
           <input name="replay_capacity" type="number" min="1" placeholder="preset default" />
         </div>
         <div>
-          <label>Learning rate</label>
+          <label>Learning rate <span class="help-icon" title="Step size used by the NumPy trainer. Smaller values are usually more stable.">?</span></label>
           <input name="learning_rate" type="number" step="any" min="0" placeholder="preset default" />
         </div>
         <div>
-          <label>Policy hidden dim</label>
+          <label>Policy hidden dim <span class="help-icon" title="Width of the policy network hidden layer. Larger values increase capacity and cost.">?</span></label>
           <input name="policy_hidden_dim" type="number" min="8" value="128" />
         </div>
         <div>
-          <label>Value hidden dim</label>
+          <label>Value hidden dim <span class="help-icon" title="Width of the value network hidden layer. Larger values increase capacity and cost.">?</span></label>
           <input name="value_hidden_dim" type="number" min="8" value="64" />
         </div>
         <div>
-          <label>Temperature</label>
+          <label>Temperature <span class="help-icon" title="Sampling temperature for the self-play move policy. Lower values make move choice more deterministic.">?</span></label>
           <input name="temperature" type="number" step="any" min="0" placeholder="preset default" />
         </div>
         <div>
-          <label>Exploration</label>
+          <label>Exploration <span class="help-icon" title="How much Dirichlet noise is mixed into the root policy during self-play.">?</span></label>
           <input name="exploration" type="number" step="any" min="0" placeholder="preset default" />
         </div>
         <div>
-          <label>Repetition avoid</label>
+          <label>Repetition avoid <span class="help-icon" title="Strength of the anti-repetition bias when the position already looks favorable.">?</span></label>
           <input name="repetition_avoidance" type="number" step="any" min="0" placeholder="0.35" />
         </div>
         <div>
-          <label>Repetition threshold</label>
+          <label>Repetition threshold <span class="help-icon" title="Model value above which repetition avoidance starts to apply.">?</span></label>
           <input name="repetition_threshold" type="number" step="any" min="-1" max="1" placeholder="0.20" />
         </div>
         <div>
-          <label>Eval games</label>
+          <label>Eval games <span class="help-icon" title="Number of evaluation games played against the heuristic baseline after training.">?</span></label>
           <input name="eval_games" type="number" min="1" placeholder="preset default" />
         </div>
         <div>
-          <label>Seed</label>
+          <label>Seed <span class="help-icon" title="Optional random seed for reproducible training and evaluation.">?</span></label>
           <input name="seed" type="number" value="" />
         </div>
         <div>
-          <label>Run name</label>
+          <label>Run name <span class="help-icon" title="Human-readable name used to group artifacts by date and run slug.">?</span></label>
           <input name="run_name" type="text" placeholder="rl" />
         </div>
       </div>
 
-      <label>Load checkpoint (optional)</label>
+      <label>Load checkpoint (optional) <span class="help-icon" title="Optional checkpoint to load before starting this run. Leave blank to start from a fresh model.">?</span></label>
       <input name="load_path" type="text" placeholder="cache/rl_runs/YYYY-MM-DD/name/run_id/model.npz" />
 
-      <label>Save checkpoint</label>
+      <label>Save checkpoint <span class="help-icon" title="Optional checkpoint output path. Leave blank to use the grouped default run directory.">?</span></label>
       <input name="save_path" type="text" placeholder="grouped default" />
 
-      <label>Samples log</label>
+      <label>Samples log <span class="help-icon" title="Optional JSONL log path for training samples. Leave blank to use the grouped default run directory.">?</span></label>
       <input name="samples_path" type="text" placeholder="grouped default" />
 
       <button type="submit">Start RL run</button>

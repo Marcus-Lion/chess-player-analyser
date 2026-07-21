@@ -12,6 +12,8 @@ The current implementation is intentionally minimal:
 - self-play uses MCTS visit counts as the policy target
 - self-play episodes can run in parallel worker processes
 - a small NumPy policy/value network trains on those samples
+- self-play can bias away from drawish repetition when the position is already favorable
+- runs can be named and grouped by date for both self-play and RL artifacts
 - checkpoints and sample logs are written to disk
 - evaluation plays the model against the existing heuristic engine
 - a FastAPI page lets you launch runs from the web UI
@@ -118,6 +120,9 @@ Useful options:
 - `--self-play-workers` — parallel self-play processes per training chunk
 - `--episodes` — override preset episode count
 - `--max-turns` — override maximum turns per game
+- `--repetition-avoidance` — strength of the anti-repetition bias in favorable positions
+- `--repetition-threshold` — model value threshold above which the bias applies
+- `--run-name` — human-readable grouping label for the run
 
 Example:
 
@@ -185,9 +190,9 @@ The job runs in a background thread, so the request returns immediately.
 
 Typical RL runs write:
 
-- `cache/rl_model.npz` — checkpoint
-- `cache/rl_samples.jsonl` — training samples
-- `cache/rl_results.jsonl` — per-episode self-play results
+- `cache/rl_runs/<date>/<run-slug>/<run-id>/model.npz` — checkpoint when grouped defaults are used
+- `cache/rl_runs/<date>/<run-slug>/<run-id>/samples.jsonl` — training samples when grouped defaults are used
+- `cache/rl_runs/<date>/<run-slug>/<run-id>/results.jsonl` — per-episode self-play results when grouped defaults are used
 
 These paths can be overridden from the CLI or the web form.
 

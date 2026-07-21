@@ -7,7 +7,10 @@ import json
 from pathlib import Path
 import random
 from collections.abc import Callable
+from datetime import datetime, timezone
+from uuid import uuid4
 
+from app.run_groups import build_run_grouping
 from app.rl.config import RLConfig
 from app.rl.model import ChessRLModel, TrainMetrics
 from app.rl.replay_buffer import ReplayBuffer
@@ -22,6 +25,9 @@ class TrainingStep:
     value_loss: float
     result: str = ""
     termination: str = ""
+    run_name: str = ""
+    run_date: str = ""
+    run_group: str = ""
 
 
 @dataclass(slots=True)
@@ -46,6 +52,7 @@ def _apply_episode_result(
     episode_samples,
     episode_result: str,
     episode_termination: str,
+    grouping,
     save_path: str | Path | None,
     progress_callback: Callable[[TrainingStep], None] | None,
 ) -> None:
@@ -62,6 +69,9 @@ def _apply_episode_result(
             "result": episode_result,
             "termination": episode_termination,
             "samples": len(episode_samples),
+            "run_name": grouping.run_name,
+            "run_date": grouping.run_date,
+            "run_group": grouping.run_group,
         }
         with results_file.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False))
@@ -75,6 +85,9 @@ def _apply_episode_result(
         value_loss=metrics.value_loss,
         result=episode_result,
         termination=episode_termination,
+        run_name=grouping.run_name,
+        run_date=grouping.run_date,
+        run_group=grouping.run_group,
     )
     run.steps.append(step)
     if progress_callback is not None:
@@ -90,20 +103,36 @@ def train_from_self_play(
     save_path: str | Path | None = None,
     samples_path: str | Path | None = None,
     results_path: str | Path | None = None,
+    run_name: str | None = None,
     seed: int | None = None,
     progress_callback: Callable[[TrainingStep], None] | None = None,
 ) -> TrainingRun:
     rng = random.Random(seed if seed is not None else config.seed)
     buffer = ReplayBuffer(config.replay_capacity)
     run = TrainingRun()
+    now = datetime.now(timezone.utc)
+    run_started_at = now.isoformat()
+    run_id = now.strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8]
+    grouping = build_run_grouping(
+        run_name=run_name or config.run_name,
+        timestamp=run_started_at,
+        default_name="rl",
+    )
+    run_root = Path("cache") / "rl_runs" / grouping.run_date / grouping.run_slug / run_id
     samples_file = Path(samples_path) if samples_path is not None else None
     results_file = Path(results_path) if results_path is not None else None
-    if samples_file is not None:
-        samples_file.parent.mkdir(parents=True, exist_ok=True)
-    if results_file is None and samples_file is not None:
-        results_file = samples_file.with_name("rl_results.jsonl")
+    if samples_file is None or results_file is None or save_path is None:
+        run_root.mkdir(parents=True, exist_ok=True)
+    if samples_file is None:
+        samples_file = run_root / "samples.jsonl"
+    if results_file is None:
+        results_file = run_root / "results.jsonl"
     if results_file is not None:
         results_file.parent.mkdir(parents=True, exist_ok=True)
+    if samples_file is not None:
+        samples_file.parent.mkdir(parents=True, exist_ok=True)
+    if save_path is None:
+        save_path = run_root / "model.npz"
 
     worker_count = max(1, int(config.self_play_workers))
 
@@ -127,6 +156,7 @@ def train_from_self_play(
                 episode_samples=episode_result.samples,
                 episode_result=episode_result.result,
                 episode_termination=episode_result.termination,
+                grouping=grouping,
                 save_path=save_path,
                 progress_callback=progress_callback,
             )
@@ -159,6 +189,7 @@ def train_from_self_play(
                         episode_samples=episode_result.samples,
                         episode_result=episode_result.result,
                         episode_termination=episode_result.termination,
+                        grouping=grouping,
                         save_path=save_path,
                         progress_callback=progress_callback,
                     )

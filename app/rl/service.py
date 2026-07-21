@@ -6,6 +6,7 @@ from pathlib import Path
 import threading
 from uuid import uuid4
 
+from app.run_groups import build_run_grouping
 from app.rl.config import RLConfig
 from app.rl.evaluate import evaluate_matchup
 from app.rl.model import ChessRLModel
@@ -23,6 +24,9 @@ class RLRunStatus:
     started_at: str = ""
     finished_at: str = ""
     run_id: str = ""
+    run_name: str = ""
+    run_date: str = ""
+    run_group: str = ""
     save_path: str = ""
     samples_path: str = ""
     load_path: str = ""
@@ -64,8 +68,8 @@ class RLRunHub:
         config: RLConfig,
         *,
         preset: str,
-        save_path: str | Path,
-        samples_path: str | Path,
+        save_path: str | Path | None,
+        samples_path: str | Path | None,
         load_path: str | Path | None = None,
     ) -> RLRunStatus:
         current = self.get()
@@ -73,17 +77,30 @@ class RLRunHub:
             return current
 
         job_id = uuid4().hex
-        run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8]
+        now = datetime.now(timezone.utc)
+        run_id = now.strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8]
+        grouping = build_run_grouping(
+            run_name=config.run_name,
+            timestamp=now.isoformat(),
+            default_name="rl",
+        )
+        run_root = Path("cache") / "rl_runs" / grouping.run_date / grouping.run_slug / run_id
+        resolved_save_path = Path(save_path) if save_path is not None and str(save_path).strip() else run_root / "model.npz"
+        resolved_samples_path = Path(samples_path) if samples_path is not None and str(samples_path).strip() else run_root / "samples.jsonl"
+        resolved_results_path = run_root / "results.jsonl"
         status = RLRunStatus(
             job_id=job_id,
             state="queued",
             preset=preset,
             total=max(1, config.episodes),
             message="Queued",
-            started_at=datetime.now(timezone.utc).isoformat(),
+            started_at=now.isoformat(),
             run_id=run_id,
-            save_path=str(save_path),
-            samples_path=str(samples_path),
+            run_name=grouping.run_name,
+            run_date=grouping.run_date,
+            run_group=grouping.run_group,
+            save_path=str(resolved_save_path),
+            samples_path=str(resolved_samples_path),
             load_path=str(load_path or ""),
             episodes=0,
         )
@@ -115,8 +132,10 @@ class RLRunHub:
                 train_from_self_play(
                     model,
                     config,
-                    save_path=save_path,
-                    samples_path=samples_path,
+                    save_path=resolved_save_path,
+                    samples_path=resolved_samples_path,
+                    results_path=resolved_results_path,
+                    run_name=config.run_name,
                     seed=config.seed,
                     progress_callback=_progress,
                 )

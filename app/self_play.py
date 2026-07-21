@@ -44,6 +44,7 @@ from app.games import (
     _result_summary,
     choose_engine_move,
 )
+from app.run_groups import build_run_grouping
 from app.players import PlayerProfile, get_player_roster, pick_two_players
 from app.neo4j_store import Neo4jStore
 from app.self_play_metrics import (
@@ -123,6 +124,9 @@ class SelfPlayGame:
     winner: str = ""
     loser: str = ""
     run_id: str = ""
+    run_name: str = ""
+    run_date: str = ""
+    run_group: str = ""
     played_at: str = ""
     seed: int | None = None
     top_k: int = 1
@@ -155,6 +159,7 @@ class SelfPlayConfig:
     # If None, defaults to DEFAULT_SELF_PLAY_WORKERS (usually CPU count).
     workers: int | None = None
     seed: int | None = None
+    run_name: str | None = None
     fen: str | None = None
     legal_moves_weight: float = LEGAL_MOVES_WEIGHT
     material_score_weight: float = MATERIAL_SCORE_WEIGHT
@@ -356,6 +361,7 @@ def _config_for_game(
         top_k=config.top_k,
         depth=config.depth,
         seed=_seed_for_game(config, game_index) if seed is None else seed,
+        run_name=config.run_name,
         fen=config.fen,
         legal_moves_weight=config.legal_moves_weight,
         material_score_weight=config.material_score_weight,
@@ -1069,6 +1075,14 @@ def _play_and_save_game(
     """Play one game and return it to the caller for persistence."""
     game = play_self_game(config, game_index, run_id=run_id)
     game.run_id = run_id
+    grouping = build_run_grouping(
+        run_name=config.run_name,
+        timestamp=played_at,
+        default_name="self-play",
+    )
+    game.run_name = grouping.run_name
+    game.run_date = grouping.run_date
+    game.run_group = grouping.run_group
     game.played_at = played_at
     game.seed = config.seed
     game.top_k = config.top_k
@@ -1190,38 +1204,47 @@ def save_self_play_results(games: list[SelfPlayGame], *, refresh_player_elos: bo
     if not games:
         return
 
-    payloads = [
-        {
-            "played_at": game.played_at or datetime.now(timezone.utc).isoformat(),
-            "run_id": game.run_id,
-            "index": game.index,
-            "seed": game.seed,
-            "top_k": game.top_k,
-            "max_turns": game.max_turns,
-            "start_fen": game.start_fen,
-            "result": game.result,
-            "termination": game.termination,
-            "turns": game.turns,
-            "final_fen": game.final_fen,
-            "final_score": game.final_score,
-            "outcome": game.outcome,
-            "winner": game.winner,
-            "loser": game.loser,
-            "white_weights": game.white_weights,
-            "black_weights": game.black_weights,
-            "white_player_id": game.white_player_id,
-            "white_player_name": game.white_player_name,
-            "white_player_description": game.white_player_description,
-            "black_player_id": game.black_player_id,
-            "black_player_name": game.black_player_name,
-            "black_player_description": game.black_player_description,
-            "duration_seconds": game.duration_seconds,
-            "evaluations": game.evaluations,
-            "evaluations_per_move": game.evaluations_per_move,
-            "pgn": game.pgn,
-        }
-        for game in games
-    ]
+    payloads = []
+    for game in games:
+        grouping = build_run_grouping(
+            run_name=game.run_name or None,
+            timestamp=game.played_at or None,
+            default_name="self-play",
+        )
+        payloads.append(
+            {
+                "played_at": game.played_at or datetime.now(timezone.utc).isoformat(),
+                "run_id": game.run_id,
+                "run_name": grouping.run_name,
+                "run_date": grouping.run_date,
+                "run_group": grouping.run_group,
+                "index": game.index,
+                "seed": game.seed,
+                "top_k": game.top_k,
+                "max_turns": game.max_turns,
+                "start_fen": game.start_fen,
+                "result": game.result,
+                "termination": game.termination,
+                "turns": game.turns,
+                "final_fen": game.final_fen,
+                "final_score": game.final_score,
+                "outcome": game.outcome,
+                "winner": game.winner,
+                "loser": game.loser,
+                "white_weights": game.white_weights,
+                "black_weights": game.black_weights,
+                "white_player_id": game.white_player_id,
+                "white_player_name": game.white_player_name,
+                "white_player_description": game.white_player_description,
+                "black_player_id": game.black_player_id,
+                "black_player_name": game.black_player_name,
+                "black_player_description": game.black_player_description,
+                "duration_seconds": game.duration_seconds,
+                "evaluations": game.evaluations,
+                "evaluations_per_move": game.evaluations_per_move,
+                "pgn": game.pgn,
+            }
+        )
 
     with Neo4jStore() as store:
         store.save_self_play_games(payloads)
@@ -1511,6 +1534,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Max parallel worker processes for multi-game self-play (default: CPU count).",
     )
     parser.add_argument("--seed", type=int, default=None, help="Random seed for move selection.")
+    parser.add_argument("--run-name", type=str, default=None, help="Optional human-readable run name.")
     parser.add_argument("--fen", type=str, default=None, help="Optional starting FEN.")
     parser.add_argument("--legal-moves-weight", type=float, default=LEGAL_MOVES_WEIGHT, help="Weight for legal move count.")
     parser.add_argument("--material-score-weight", type=float, default=MATERIAL_SCORE_WEIGHT, help="Weight for material balance.")
@@ -1554,6 +1578,7 @@ def main(argv: list[str] | None = None) -> int:
         depth=(max(1, args.depth) if args.depth is not None else None),
         workers=(max(1, int(args.workers)) if args.workers else None),
         seed=args.seed,
+        run_name=args.run_name,
         fen=args.fen,
         legal_moves_weight=args.legal_moves_weight,
         material_score_weight=args.material_score_weight,

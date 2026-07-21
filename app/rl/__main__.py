@@ -23,10 +23,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--value-hidden-dim", type=int, default=64)
     parser.add_argument("--temperature", type=float, default=None)
     parser.add_argument("--exploration", type=float, default=None)
+    parser.add_argument("--repetition-avoidance", type=float, default=None)
+    parser.add_argument("--repetition-threshold", type=float, default=None)
+    parser.add_argument("--run-name", type=str, default=None)
     parser.add_argument("--eval-games", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--save-path", type=Path, default=Path("cache/rl_model.npz"))
-    parser.add_argument("--samples-path", type=Path, default=Path("cache/rl_samples.jsonl"))
+    parser.add_argument("--save-path", type=Path, default=None)
+    parser.add_argument("--samples-path", type=Path, default=None)
     parser.add_argument("--results-path", type=Path, default=None)
     parser.add_argument("--load-path", type=Path, default=None)
     return parser
@@ -40,6 +43,8 @@ def main(argv: list[str] | None = None) -> int:
         value = getattr(args, name)
         return value if value is not None else preset.get(name, fallback)
 
+    run_name_value = pick("run_name", "rl")
+
     config = RLConfig(
         episodes=max(1, int(pick("episodes", 100))),
         max_turns=max(2, int(pick("max_turns", 80))),
@@ -48,6 +53,9 @@ def main(argv: list[str] | None = None) -> int:
         self_play_workers=max(1, int(pick("self_play_workers", 1))),
         self_play_temperature=max(0.0, float(pick("temperature", 1.0))),
         self_play_exploration=max(0.0, float(pick("exploration", 0.1))),
+        self_play_repetition_avoidance=max(0.0, float(pick("repetition_avoidance", 0.35))),
+        self_play_repetition_threshold=max(-1.0, min(1.0, float(pick("repetition_threshold", 0.20)))),
+        run_name=str(run_name_value) if run_name_value is not None else None,
         learning_rate=max(1e-6, float(pick("learning_rate", 1e-3))),
         policy_hidden_dim=max(8, args.policy_hidden_dim),
         value_hidden_dim=max(8, args.value_hidden_dim),
@@ -70,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
         save_path=args.save_path,
         samples_path=args.samples_path,
         results_path=args.results_path,
+        run_name=config.run_name,
         seed=args.seed,
     )
     summary = evaluate_matchup(model, config, games=config.eval_games, seed=args.seed)
@@ -84,8 +93,8 @@ def main(argv: list[str] | None = None) -> int:
         f"black_wins={summary.black_wins} draws={summary.draws} "
         f"white_score={summary.white_score:.3f}"
     )
-    print(f"saved={args.save_path}")
-    print(f"samples={args.samples_path}")
+    print(f"saved={args.save_path or '(grouped default)'}")
+    print(f"samples={args.samples_path or '(grouped default)'}")
     if args.results_path is not None:
         print(f"results={args.results_path}")
     return 0

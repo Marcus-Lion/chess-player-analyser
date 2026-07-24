@@ -87,6 +87,11 @@ workers**. The score-threshold default is 3.0. Leave it blank for unrestricted
 Top-K selection and leave workers blank for the automatic default based on
 available CPUs.
 
+Personality weights rebalance after `1,200` completed games by default (five
+16-player double round-robins). Smaller partial batches remain saved and carry
+into the next run without updating weights. Set
+`SELF_PLAY_REBALANCE_BATCH_SIZE=2400` for more stable late-stage tuning.
+
 You can also write PGN output to a file:
 
 ```bash

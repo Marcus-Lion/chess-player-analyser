@@ -15,7 +15,9 @@ WEIGHT_DIMENSIONS = [
 
 SHAP_BALANCE_TARGET_SCORE = 0.5
 SHAP_BALANCE_LEARNING_RATE = 0.15
-SHAP_BALANCE_MAX_STEP = 0.20
+# Mutation-size equivalent: cap each personality weight's adjustment per
+# rebalance batch so a small 16-player population evolves incrementally.
+SHAP_BALANCE_MAX_STEP = 0.025
 SHAP_BALANCE_MIN_GAMES = 2
 
 

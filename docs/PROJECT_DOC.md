@@ -59,7 +59,22 @@ The self-play path works like this:
 6. Results are exposed in the web UI and stored in Neo4j when enabled.
 
 The rebalance batch size is controlled by `SELF_PLAY_REBALANCE_BATCH_SIZE` in `.env`.
-The current default in this repo is `250`.
+The current default is `1,200`: five complete 16-player double round-robins,
+or about 150 games per personality. Partial batches remain persisted and are
+continued by the next run without updating weights early. For more stable
+late-stage tuning, increase it to `2,400` (ten rounds, about 300 games per
+personality).
+
+| Complete rounds | Total games | Games per personality | Recommended use |
+| ---: | ---: | ---: | --- |
+| 1 | 240 | 30 | Very fast exploration |
+| 3 | 720 | 90 | Early generations |
+| 5 | 1,200 | 150 | Default tuning cadence |
+| 10 | 2,400 | 300 | Stable tuning |
+| 20 | 4,800 | 600 | Final validation |
+Each SHAP-driven personality-weight adjustment is capped at `0.025` per
+rebalance batch (`SHAP_BALANCE_MAX_STEP`) to keep mutations incremental across
+the 16-player population.
 
 ## Environment variables
 
@@ -76,7 +91,7 @@ The app reads configuration from environment variables. `.env` is loaded by the 
 | `SELF_PLAY_PLAYER_WEIGHT_MIN` | Lower bound for per-player random weights. | `-4.0` |
 | `SELF_PLAY_PLAYER_WEIGHT_MAX` | Upper bound for per-player random weights. | `4.0` |
 | `SELF_PLAY_PLAYER_WEIGHT_STDDEV` | Present in `.env`, but not currently read by the code. | The player spread is currently hardcoded in `app/players.py` |
-| `SELF_PLAY_REBALANCE_BATCH_SIZE` | Number of games between weight updates. | `250` in `.env` |
+| `SELF_PLAY_REBALANCE_BATCH_SIZE` | Complete games required for a weight update; persisted partial batches carry into later runs. | `1200` in `.env` |
 | `REPETITION_AVOIDANCE_MATERIAL_PAWNS` | Repetition-avoidance tuning parameter. | Used by engine logic |
 
 ## Data flow for human-game analysis

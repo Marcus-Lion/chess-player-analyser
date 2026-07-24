@@ -7,7 +7,7 @@ import os
 import traceback
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from io import StringIO
 import socket
@@ -89,7 +89,8 @@ DEFAULT_SELF_PLAY_WORKERS = min(DEFAULT_SELF_PLAY_WORKERS,61)
 # file is on disk. Delete a job's status/log once it has been idle for this
 # long so neither grows without bound.
 JOB_RETENTION_SECONDS = 60
-SELF_PLAY_REBALANCE_BATCH_SIZE = max(1, _env_int("SELF_PLAY_REBALANCE_BATCH_SIZE", 25))
+# Five complete 16-player double round-robins: 5 * 240 games.
+SELF_PLAY_REBALANCE_BATCH_SIZE = max(1, _env_int("SELF_PLAY_REBALANCE_BATCH_SIZE", 1_200))
 
 
 @dataclass
@@ -218,6 +219,23 @@ def _print_batch_summary(batch_number: int, games: list[SelfPlayGame], *, batch_
     end = start + len(games) - 1
     print(f"Rebalance batch {batch_number} ({start}-{end}):")
     _print_result_summary("  batch results", games)
+
+
+def _saved_self_play_game(row: dict) -> SelfPlayGame:
+    """Rehydrate a saved result for a rebalance batch spanning multiple runs."""
+    values = {
+        field.name: row[field.name]
+        for field in fields(SelfPlayGame)
+        if field.name in row
+    }
+    values.setdefault("index", 0)
+    values.setdefault("result", "*")
+    values.setdefault("termination", "")
+    values.setdefault("turns", 0)
+    values.setdefault("pgn", "")
+    values.setdefault("final_fen", "")
+    values.setdefault("final_score", 0.0)
+    return SelfPlayGame(**values)
 
 
 def _score_weights(config: SelfPlayConfig) -> tuple[float, float, float, float]:
@@ -1064,8 +1082,14 @@ def run_self_play(
     requested_workers = config.workers or DEFAULT_SELF_PLAY_WORKERS
     max_workers = max(1, min(int(requested_workers), total_games))
     future_to_game: dict = {}
-    rebalance_batch: list[SelfPlayGame] = []
-    rebalance_batch_number = 0
+    saved_results = load_self_play_results(limit=None)
+    completed_rebalance_batches = len(saved_results) // SELF_PLAY_REBALANCE_BATCH_SIZE
+    pending_saved_games = len(saved_results) % SELF_PLAY_REBALANCE_BATCH_SIZE
+    rebalance_batch = [
+        _saved_self_play_game(row)
+        for row in saved_results[-pending_saved_games:]
+    ] if pending_saved_games else []
+    rebalance_batch_number = completed_rebalance_batches
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         game_index = 1
         for pair_index in range(1, total_games // 2 + 1):
@@ -1102,6 +1126,7 @@ def run_self_play(
                     played_at=played_at,
                     seed=game_config.seed,
                     top_k=config.top_k,
+                    top_k_score_threshold=config.top_k_score_threshold,
                     max_turns=config.max_turns,
                     start_fen=config.fen or "startpos",
                 )
@@ -1127,17 +1152,17 @@ def run_self_play(
                 progress_callback(completed_count, game, ordered_games)
 
     if rebalance_batch:
-        rebalance_batch_number += 1
-        _print_batch_summary(rebalance_batch_number, rebalance_batch, batch_size=SELF_PLAY_REBALANCE_BATCH_SIZE)
-        try:
-            updated = rebalance_self_play_players(rebalance_batch)
-            print(f"  updated {updated} players")
-        except Exception:
-            traceback.print_exc()
-        try:
-            refresh_self_play_player_elos()
-        except Exception:
-            traceback.print_exc()
+        print(
+            "Weight update deferred for partial rebalance batch: "
+            f"{len(rebalance_batch)}/{SELF_PLAY_REBALANCE_BATCH_SIZE} games."
+        )
+
+    # Ratings remain useful as live reporting even when the weight-update
+    # sample has not reached the full rebalance cadence.
+    try:
+        refresh_self_play_player_elos()
+    except Exception:
+        traceback.print_exc()
 
     return [completed_games[i] for i in sorted(completed_games)]
 

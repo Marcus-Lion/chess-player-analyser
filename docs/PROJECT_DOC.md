@@ -77,7 +77,6 @@ The app reads configuration from environment variables. `.env` is loaded by the 
 | `SELF_PLAY_PLAYER_WEIGHT_MAX` | Upper bound for per-player random weights. | `4.0` |
 | `SELF_PLAY_PLAYER_WEIGHT_STDDEV` | Present in `.env`, but not currently read by the code. | The player spread is currently hardcoded in `app/players.py` |
 | `SELF_PLAY_REBALANCE_BATCH_SIZE` | Number of games between weight updates. | `250` in `.env` |
-| `PYTHON_FALLBACK` | Lets the app fall back to pure Python if the Rust engine is missing. Set to `false` to fail fast instead. | `false` in `.env` |
 | `REPETITION_AVOIDANCE_MATERIAL_PAWNS` | Repetition-avoidance tuning parameter. | Used by engine logic |
 
 ## Data flow for human-game analysis
@@ -104,12 +103,12 @@ The web app is mostly pandas + Plotly + FastAPI. Its performance is dominated by
 
 The self-play engine is where the biggest performance work lives:
 
-- `app/self_play.py` uses a native `chess_engine` extension when it is installed.
-- That extension is a Rust port of the Python move-generation and negamax search path.
-- The Rust path is a drop-in replacement for `app.games.choose_engine_move`.
-- It keeps the same search semantics, but is much faster in practice.
+- `app/self_play.py` uses the required native `chess_engine` extension.
+- That extension implements move generation and negamax search in Rust.
+- `app.games.choose_engine_move` is the Python boundary for the native engine.
+- The web harness and CLI can cap automatic depth with `max_depth`/
+  `--max-depth`; the default cap is 7.
 - The engine README describes it as roughly 30× faster at the same evals/move.
-- When the extension is unavailable, the app falls back to the pure-Python engine automatically.
 
 The runtime also uses process-level parallelism for multi-game runs:
 
@@ -124,7 +123,7 @@ Useful performance signals are printed per game:
 - average evals per move,
 - the chosen white/black player weights.
 
-That makes it possible to compare the Python fallback against the Rust extension and to spot regressions in search cost or game length.
+That makes it possible to spot regressions in search cost or game length.
 
 There is one important persistence bottleneck to know about:
 

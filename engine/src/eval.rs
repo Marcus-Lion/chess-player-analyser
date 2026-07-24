@@ -1,8 +1,8 @@
 //! Static position evaluation, a faithful port of the White-perspective
 //! heuristic in `app/games.py` (`_evaluate_position` and its helpers).
 //!
-//! Everything here mirrors the Python engine so self-play games stay
-//! strategically equivalent: material differential, first-order forward
+//! It implements the evaluation exposed through the Python API: material
+//! differential, first-order forward
 //! control on the same 20 forward squares (`get_board_control`), central
 //! control of d4/e4/d5/e5, both-side mobility (the `_both_mobilities`
 //! turn-flip trick), and the "goal is checkmate" king-pressure term
@@ -22,7 +22,7 @@ pub struct Weights {
     pub checkmate: f64,
 }
 
-/// Material point values (`PIECE_POINTS`, games.py:176). King is 0.
+/// Material point values matching `app.games.PIECE_POINTS`. King is 0.
 fn piece_points(role: Role) -> i32 {
     match role {
         Role::Pawn => 1,
@@ -48,7 +48,7 @@ fn material_diff(board: &Board) -> i32 {
     score
 }
 
-// The forward squares scanned by `get_board_control` (games.py:405-426):
+// The forward squares scanned by `app.games.get_board_control`:
 // White's are ranks 2-3, files d-h; Black's are ranks 6-7, files d-h.
 const WHITE_FORWARD: [Square; 10] = [
     Square::D2, Square::E2, Square::F2, Square::G2, Square::H2,
@@ -78,7 +78,7 @@ fn board_control(board: &Board) -> (i32, i32) {
     (white, black)
 }
 
-/// White minus Black control of the four central squares (games.py:481-500).
+/// White minus Black control of the four central squares.
 fn center_diff(board: &Board) -> i32 {
     let occupied = board.occupied();
     let mut white = 0;
@@ -95,7 +95,7 @@ fn center_diff(board: &Board) -> i32 {
 }
 
 /// Squares the `defender` king could flee to: not blocked by its own pieces
-/// and not attacked by the enemy (`_king_escape_squares`, games.py:503-523).
+/// and not attacked by the enemy (`app.games._king_escape_squares`).
 /// Like python-chess `is_attacked_by`, the king stays on the board when
 /// testing enemy attacks, so slider x-rays through the king are ignored.
 fn king_escape_squares(board: &Board, king_color: Color) -> i32 {
@@ -120,7 +120,7 @@ fn king_escape_squares(board: &Board, king_color: Color) -> i32 {
     escapes
 }
 
-/// White-perspective checkmate pressure (`_mate_pressure`, games.py:526-547):
+/// White-perspective checkmate pressure (`app.games._mate_pressure`):
 /// reward each side for driving the enemy king toward the edge/corner and
 /// stripping its escape squares.
 fn mate_pressure(board: &Board) -> f64 {
@@ -141,7 +141,7 @@ fn mate_pressure(board: &Board) -> f64 {
 }
 
 /// Legal-move counts for (White, Black) regardless of whose turn it is,
-/// matching `_both_mobilities` (games.py:563-577). The side to move uses its
+/// matching `app.games._both_mobilities`. The side to move uses its
 /// real legal moves; the other side is counted by flipping the turn.
 fn both_mobilities(pos: &Chess) -> (i32, i32) {
     let stm = pos.turn();
@@ -223,7 +223,7 @@ fn round2(x: f64) -> f64 {
     (x * 100.0).round_ties_even() / 100.0
 }
 
-/// White-perspective static evaluation (`_evaluate_position`, games.py:580-630):
+/// White-perspective static evaluation exposed by `app.games._evaluate_position`:
 /// weighted blend of mobility, material, forward control, center control, and
 /// checkmate pressure.
 pub fn evaluate_white(pos: &Chess, w: Weights) -> f64 {
@@ -242,8 +242,8 @@ pub fn evaluate_white(pos: &Chess, w: Weights) -> f64 {
     )
 }
 
-/// Material lead for the side to move, in points (`_mover_material_advantage`,
-/// games.py:893-897). Positive means the mover is ahead.
+/// Material lead for the side to move, in points. Positive means the mover is
+/// ahead.
 pub fn mover_material_advantage(pos: &Chess) -> i32 {
     let advantage = material_diff(pos.board());
     if pos.turn() == Color::White {

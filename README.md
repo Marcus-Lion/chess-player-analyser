@@ -56,20 +56,25 @@ uv run python -m app.self_play --games 20 --workers 20 --max-turns 55
 Each move is chosen by a negamax search with alpha-beta pruning, move
 ordering (MVV-LVA, killer moves), and a transposition table. By default the
 search **depth is inversely proportional to the material remaining on the
-board**, scaled linearly from depth 1 at a full board (material 39, the
-starting value for one side -- biggest branching factor, most expensive to
-search) up to depth 7 once a side is down to material 0 (smallest branching
-factor, and deeper search matters most for endgame precision). Pass
-`--depth` to pin a fixed depth for the whole game instead (higher is slower
-but stronger). See [`docs/gameplay_rules.md`](docs/gameplay_rules.md) for the full
-move-selection and game-termination rules:
+board**, scaled exponentially from depth 3 at a full board (combined material
+78 -- the biggest branching factor and most expensive position to search) up
+to depth 7 at combined material 0. Use `--max-depth` to change that automatic
+upper bound, or `--depth` to pin one fixed depth for the whole game (higher is
+slower but stronger). See [`docs/gameplay_rules.md`](docs/gameplay_rules.md)
+for the full move-selection and game-termination rules:
 
 ```bash
 uv run python -m app.self_play --games 10 --depth 2 --max-turns 55 --top-k 1 --seed 1
 ```
 
-The web form has the same knob as a **Parallel workers** field; leave it
-blank for the "auto" default (CPU count).
+For automatic scaling with a different cap:
+
+```bash
+uv run python -m app.self_play --games 10 --max-depth 5 --max-turns 55
+```
+
+The web form exposes **Max depth** and **Parallel workers**. Leave workers
+blank for the automatic default based on available CPUs.
 
 You can also write PGN output to a file:
 

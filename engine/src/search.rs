@@ -1,6 +1,5 @@
-//! Negamax search with alpha-beta pruning, a port of `_negamax` /
-//! `_order_moves` (app/games.py:729-890). Shares a transposition table and
-//! killer-move table across the whole search, exactly like the Python engine.
+//! Native negamax search with alpha-beta pruning. Shares a transposition table
+//! and killer-move table across the whole search.
 
 use std::collections::HashMap;
 
@@ -11,7 +10,7 @@ use crate::eval::{evaluate_white, Weights};
 
 pub const MATE_SCORE: f64 = 1_000_000.0;
 
-// Transposition-table bound types (games.py:639-641).
+// Transposition-table bound types.
 const TT_EXACT: u8 = 0;
 const TT_LOWERBOUND: u8 = 1;
 const TT_UPPERBOUND: u8 = 2;
@@ -66,9 +65,8 @@ fn gives_check(pos: &Chess, m: Move) -> bool {
     child.is_check()
 }
 
-/// Ordering key for a move, higher searches first (`_order_moves`,
-/// games.py:744-760): TT move, then captures by MVV-LVA, then checks, then the
-/// killer move, then everything else.
+/// Ordering key for a move, higher searches first: TT move, then captures by
+/// MVV-LVA, then checks, then the killer move, then everything else.
 fn move_key(
     pos: &Chess,
     m: Move,
@@ -169,7 +167,7 @@ pub fn negamax(pos: &Chess, depth: i32, mut alpha: f64, mut beta: f64, state: &m
 }
 
 /// Root-level ordered moves (no killer/TT context yet), matching the
-/// `_order_moves(board)` call at the top of `choose_engine_move`.
+/// Root-level counterpart to the ordering used at each search node.
 pub fn root_moves(pos: &Chess) -> Vec<Move> {
     ordered_moves(pos, None, None)
 }

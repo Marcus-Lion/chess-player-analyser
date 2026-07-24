@@ -117,6 +117,10 @@
           <input name="top_k" type="number" min="1" value="{{ config.top_k if config else 1 }}" required />
         </div>
         <div>
+          <label>Max depth <span class="help-icon" title="Maximum engine search depth used by automatic depth scaling. Higher values improve endgame lookahead but take longer.">?</span></label>
+          <input name="max_depth" type="number" min="1" value="{{ config.max_depth if config else 7 }}" required />
+        </div>
+        <div>
           <label>Parallel workers <span class="help-icon" title="How many worker processes run self-play games at the same time.">?</span></label>
           <input name="workers" type="number" min="1" placeholder="auto" value="{{ config.workers if config and config.workers is not none else '' }}" />
         </div>

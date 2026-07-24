@@ -10,5 +10,5 @@ description = "Native negamax self-play engine for chess-player-analyser"
 
 [tool.maturin]
 # Produce a single top-level extension module `chess_engine` that
-# `app/self_play.py` imports (with a graceful Python fallback if absent).
+# `app/games.py` imports as its required native search backend.
 module-name = "chess_engine"

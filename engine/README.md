@@ -1,12 +1,11 @@
 # chess_engine (native self-play engine)
 
 A Rust extension module that runs the self-play per-move search natively, as a
-drop-in for `app.games.choose_engine_move`. `app/self_play.py` imports it
-(`import chess_engine`) and uses it automatically when present, falling back to
-the pure-Python engine if it isn't built. It's a faithful port of the
-heuristics + negamax/alpha-beta search in `app/games.py`; games are
-strategically equivalent (not bit-identical — tie-break order and the RNG
-stream differ) and roughly **30× faster** at the same evals/move.
+backend for `app.games.choose_engine_move`. `app/self_play.py` imports it as a
+required extension (`import chess_engine`); startup fails with build
+instructions when it is unavailable. It implements the evaluation heuristics
+and negamax/alpha-beta search natively and is roughly **30× faster** than the
+retired Python search at the same evals/move.
 
 Built on [shakmaty](https://docs.rs/shakmaty) (chess rules / move generation /
 Zobrist hashing) via [PyO3](https://pyo3.rs) + [maturin](https://www.maturin.rs).

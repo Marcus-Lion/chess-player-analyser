@@ -35,6 +35,7 @@ from app.games import (
     FORWARD_SCORE_WEIGHT,
     LEGAL_MOVES_WEIGHT,
     MATERIAL_SCORE_WEIGHT,
+    MAX_AUTO_SEARCH_DEPTH,
     _auto_search_depth,
     _calculate_center_control,
     _calculate_forward,
@@ -135,6 +136,9 @@ class SelfPlayConfig:
     # board is full, deeper once material has thinned out. Set an explicit
     # depth (e.g. 1 or 2) to pin it for the whole game instead.
     depth: int | None = None
+    # Upper bound for automatically derived search depth. Ignored when a
+    # fixed ``depth`` is configured.
+    max_depth: int = MAX_AUTO_SEARCH_DEPTH
     # Max parallel worker processes used when running more than one game.
     # If None, defaults to DEFAULT_SELF_PLAY_WORKERS (usually CPU count).
     workers: int | None = None
@@ -340,6 +344,7 @@ def _config_for_game(
         max_turns=config.max_turns,
         top_k=config.top_k,
         depth=config.depth,
+        max_depth=config.max_depth,
         seed=_seed_for_game(config, game_index) if seed is None else seed,
         run_name=config.run_name,
         fen=config.fen,
@@ -927,7 +932,11 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
     try:
         while turn < config.max_turns and not result:
             active_weights = white_weights if board.turn == chess.WHITE else black_weights
-            depth = config.depth if config.depth is not None else _auto_search_depth(board, game_id=f"{run_id}:{game_index}" if run_id else game_index)
+            depth = config.depth if config.depth is not None else _auto_search_depth(
+                board,
+                game_id=f"{run_id}:{game_index}" if run_id else game_index,
+                max_depth=config.max_depth,
+            )
             move, _ = choose_engine_move(
                 board,
                 rng,
@@ -1455,8 +1464,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Fixed negamax search depth (1, 2, 3, ...). Omit to auto-derive "
-        "depth per move from remaining material (full board=1, some trades=2, "
-        "thinned-out material=3).",
+        "depth per move from remaining material, capped by --max-depth.",
+    )
+    parser.add_argument(
+        "--max-depth",
+        type=int,
+        default=MAX_AUTO_SEARCH_DEPTH,
+        help="Maximum search depth used by automatic depth scaling.",
     )
     parser.add_argument(
         "--workers",
@@ -1507,6 +1521,7 @@ def main(argv: list[str] | None = None) -> int:
         max_turns=max(2, args.max_turns),
         top_k=max(1, args.top_k),
         depth=(max(1, args.depth) if args.depth is not None else None),
+        max_depth=max(1, args.max_depth),
         workers=(max(1, int(args.workers)) if args.workers else None),
         seed=args.seed,
         run_name=args.run_name,

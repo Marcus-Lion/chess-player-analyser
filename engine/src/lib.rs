@@ -1,8 +1,7 @@
-//! `chess_engine` -- a native drop-in for the self-play engine's per-move
-//! search. `app/self_play.py` imports this and calls `choose_engine_move`
-//! instead of the pure-Python `app.games.choose_engine_move`, keeping move
-//! generation and the whole negamax tree in Rust. It falls back to Python if
-//! this extension isn't built.
+//! `chess_engine` -- the native backend for the self-play engine's per-move
+//! search. `app.games.choose_engine_move` calls this module, keeping move
+//! generation and the whole negamax tree in Rust. The extension is required
+//! at application startup.
 
 mod eval;
 mod search;
@@ -23,7 +22,7 @@ use shakmaty::{CastlingMode, Chess, EnPassantMode, Position};
 use crate::eval::{evaluate_white, mover_material_advantage, Weights};
 use crate::search::{negamax, root_moves, SearchState};
 
-// Matches REPETITION_AVOIDANCE_* in games.py:903-904.
+// Repetition-avoidance configuration used during root-move selection.
 const DEFAULT_REPETITION_AVOIDANCE_MATERIAL_PAWNS: i32 = 1;
 const REPETITION_AVOIDANCE_PENALTY: f64 = 500.0;
 

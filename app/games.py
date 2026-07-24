@@ -460,26 +460,37 @@ MAX_AUTO_SEARCH_DEPTH = 7
 AUTO_SEARCH_DEPTH_CURVE_EXPONENT = 0.45
 
 
-def _auto_search_depth(board: chess.Board, game_id: str | int | None = None) -> int:
+def _auto_search_depth(
+    board: chess.Board,
+    game_id: str | int | None = None,
+    *,
+    max_depth: int = MAX_AUTO_SEARCH_DEPTH,
+) -> int:
     """Derive negamax search depth, inversely proportional to material left.
 
     A full board (combined material 78, both sides at their starting value)
     has the largest branching factor and is the most expensive to search
-    deeply, so it gets the shallowest depth (1); as material is traded off
+    deeply, so it gets the shallowest depth; as material is traded off
     the board thins out (fewer legal replies per turn) and depth scales
-    exponentially up to 6 at material 0, where deeper search is both
+    exponentially up to ``max_depth`` at material 0, where deeper search is both
     affordable and needed for endgame precision. The traded fraction is
     root-scaled (``AUTO_SEARCH_DEPTH_CURVE_EXPONENT``) so depth ramps up
     quickly as soon as trades start, rather than waiting until the endgame.
+
+    ``max_depth`` replaces the default upper bound for this calculation. If
+    it is below ``MIN_AUTO_SEARCH_DEPTH``, it becomes both the minimum and
+    maximum so the requested cap is always respected.
     """
     material = _calculate_material(board)
     remaining = material["White"] + material["Black"]
     remaining = max(0, min(MAX_TOTAL_MATERIAL, remaining))
     fraction_traded = (MAX_TOTAL_MATERIAL - remaining) / MAX_TOTAL_MATERIAL
     scaled_fraction = fraction_traded ** AUTO_SEARCH_DEPTH_CURVE_EXPONENT
-    depth_ratio = MAX_AUTO_SEARCH_DEPTH / MIN_AUTO_SEARCH_DEPTH
-    depth = MIN_AUTO_SEARCH_DEPTH * depth_ratio ** scaled_fraction
-    depth_int = max(MIN_AUTO_SEARCH_DEPTH, min(MAX_AUTO_SEARCH_DEPTH, round(depth)))
+    effective_max_depth = max(1, max_depth)
+    effective_min_depth = min(MIN_AUTO_SEARCH_DEPTH, effective_max_depth)
+    depth_ratio = effective_max_depth / effective_min_depth
+    depth = effective_min_depth * depth_ratio ** scaled_fraction
+    depth_int = max(effective_min_depth, min(effective_max_depth, round(depth)))
     return depth_int
 
 

@@ -111,6 +111,7 @@ class SelfPlayGame:
     played_at: str = ""
     seed: int | None = None
     top_k: int = 1
+    top_k_score_threshold: float | None = 3.0
     max_turns: int = 100
     start_fen: str = "startpos"
     white_weights: dict[str, float] | None = None
@@ -131,6 +132,9 @@ class SelfPlayConfig:
     games: int = 3
     max_turns: int = 100
     top_k: int = 1
+    # Optional maximum score loss from the best move for random Top-K choice.
+    # Defaults to 3.0; None allows every candidate up to the Top-K count.
+    top_k_score_threshold: float | None = 3.0
     # Negamax search depth. None (the default) auto-derives depth per move
     # from remaining material via ``_auto_search_depth`` -- shallow while the
     # board is full, deeper once material has thinned out. Set an explicit
@@ -343,6 +347,7 @@ def _config_for_game(
         games=1,
         max_turns=config.max_turns,
         top_k=config.top_k,
+        top_k_score_threshold=config.top_k_score_threshold,
         depth=config.depth,
         max_depth=config.max_depth,
         seed=_seed_for_game(config, game_index) if seed is None else seed,
@@ -941,6 +946,7 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
                 board,
                 rng,
                 config.top_k,
+                top_k_score_threshold=config.top_k_score_threshold,
                 legal_moves_weight=active_weights["legal_moves_weight"],
                 material_score_weight=active_weights["material_score_weight"],
                 forward_score_weight=active_weights["forward_score_weight"],
@@ -1026,6 +1032,7 @@ def _play_and_save_game(
     game.played_at = played_at
     game.seed = config.seed
     game.top_k = config.top_k
+    game.top_k_score_threshold = config.top_k_score_threshold
     game.max_turns = config.max_turns
     game.start_fen = config.fen or "startpos"
     return game
@@ -1161,6 +1168,7 @@ def save_self_play_results(games: list[SelfPlayGame], *, refresh_player_elos: bo
                 "index": game.index,
                 "seed": game.seed,
                 "top_k": game.top_k,
+                "top_k_score_threshold": game.top_k_score_threshold,
                 "max_turns": game.max_turns,
                 "start_fen": game.start_fen,
                 "result": game.result,
@@ -1460,6 +1468,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-turns", type=int, default=100, help="Stop each game after this many turns.")
     parser.add_argument("--top-k", type=int, default=1, help="Randomly choose among the top K evaluated moves.")
     parser.add_argument(
+        "--top-k-score-threshold",
+        type=float,
+        default=3.0,
+        help="Only choose Top-K moves within this score distance of the best move (default: 3.0).",
+    )
+    parser.add_argument(
         "--depth",
         type=int,
         default=None,
@@ -1520,6 +1534,11 @@ def main(argv: list[str] | None = None) -> int:
         games=max(1, args.games),
         max_turns=max(2, args.max_turns),
         top_k=max(1, args.top_k),
+        top_k_score_threshold=(
+            max(0.0, args.top_k_score_threshold)
+            if args.top_k_score_threshold is not None
+            else None
+        ),
         depth=(max(1, args.depth) if args.depth is not None else None),
         max_depth=max(1, args.max_depth),
         workers=(max(1, int(args.workers)) if args.workers else None),

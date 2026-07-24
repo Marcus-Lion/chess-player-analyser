@@ -590,6 +590,7 @@ def self_play_run(
     games: int = Form(3),
     max_turns: int = Form(100),
     top_k: int = Form(1),
+    top_k_score_threshold: str | None = Form("3"),
     max_depth: int = Form(7),
     workers: str | None = Form(None),
     seed: str | None = Form(None),
@@ -613,10 +614,16 @@ def self_play_run(
         seed_value = int(seed) if seed and seed.strip() else None
     except ValueError:
         seed_value = None
+    top_k_threshold_value = _parse_optional_float(top_k_score_threshold)
     config = SelfPlayConfig(
         games=max(1, games),
         max_turns=max(2, max_turns),
         top_k=max(1, top_k),
+        top_k_score_threshold=(
+            max(0.0, top_k_threshold_value)
+            if top_k_threshold_value is not None
+            else None
+        ),
         max_depth=max(1, max_depth),
         workers=(max(1, workers_value) if workers_value else None),
         seed=seed_value,
@@ -737,6 +744,7 @@ def self_play_start(
     games: int = Form(3),
     max_turns: int = Form(100),
     top_k: int = Form(1),
+    top_k_score_threshold: str | None = Form("3"),
     max_depth: int = Form(7),
     workers: str | None = Form(None),
     seed: str | None = Form(None),
@@ -760,10 +768,16 @@ def self_play_start(
         seed_value = int(seed) if seed and seed.strip() else None
     except ValueError:
         seed_value = None
+    top_k_threshold_value = _parse_optional_float(top_k_score_threshold)
     config = SelfPlayConfig(
         games=max(1, games),
         max_turns=max(2, max_turns),
         top_k=max(1, top_k),
+        top_k_score_threshold=(
+            max(0.0, top_k_threshold_value)
+            if top_k_threshold_value is not None
+            else None
+        ),
         max_depth=max(1, max_depth),
         workers=(max(1, workers_value) if workers_value else None),
         seed=seed_value,

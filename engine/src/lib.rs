@@ -83,6 +83,7 @@ fn repetition_counts(current: &Chess, history_fens: &[String]) -> HashMap<u64, u
     center_control_weight,
     checkmate_weight,
     history_fens,
+    top_k_score_threshold=Some(3.0),
 ))]
 #[allow(clippy::too_many_arguments)]
 fn choose_engine_move(
@@ -96,6 +97,7 @@ fn choose_engine_move(
     center_control_weight: f64,
     checkmate_weight: f64,
     history_fens: Vec<String>,
+    top_k_score_threshold: Option<f64>,
 ) -> PyResult<(String, f64, u64)> {
     let pos = parse_position(fen)?;
     let depth = depth.max(1);
@@ -139,12 +141,23 @@ fn choose_engine_move(
     // Descending by score; stable so ties keep generation order.
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     let top_n = top_k.max(1).min(scored.len() as i32) as usize;
+    let candidate_count = match top_k_score_threshold {
+        Some(threshold) => {
+            let best_score = scored[0].0;
+            scored[..top_n]
+                .iter()
+                .take_while(|(score, _)| best_score - *score <= threshold.max(0.0))
+                .count()
+                .max(1)
+        }
+        None => top_n,
+    };
 
     let mut rng = match seed {
         Some(s) => StdRng::seed_from_u64(s),
         None => StdRng::from_entropy(),
     };
-    let (score, chosen) = scored[rng.gen_range(0..top_n)];
+    let (score, chosen) = scored[rng.gen_range(0..candidate_count)];
     let uci = chosen.to_uci(CastlingMode::Standard).to_string();
     Ok((uci, score, state.evals))
 }

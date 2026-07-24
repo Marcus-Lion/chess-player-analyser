@@ -724,6 +724,7 @@ def choose_engine_move(
     center_control_weight: float = CENTER_CONTROL_WEIGHT,
     checkmate_weight: float = CHECKMATE_WEIGHT,
     depth: int = 3,
+    top_k_score_threshold: float | None = 3.0,
     eval_counter: list[int] | None = None,
 ) -> tuple[chess.Move, float]:
     """Pick a move using the native Rust negamax implementation.
@@ -732,6 +733,11 @@ def choose_engine_move(
     accumulates one increment per leaf position statically evaluated during
     the search -- callers use this to report how many evaluations a move
     (or a whole game) cost.
+
+    ``top_k_score_threshold`` limits random selection to moves whose score is
+    no more than that amount below the best move. ``top_k`` remains the hard
+    candidate-count cap. The default is 3.0; ``None`` enables unrestricted
+    top-K selection.
 
     """
     rng = rng or random.Random()
@@ -752,6 +758,7 @@ def choose_engine_move(
         center_control_weight,
         checkmate_weight,
         prior_fens,
+        None if top_k_score_threshold is None else max(0.0, top_k_score_threshold),
     )
     if eval_counter is not None:
         eval_counter[0] += int(evaluations)

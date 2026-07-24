@@ -48,7 +48,8 @@ On Linux/Docker the default host toolchain works as-is (no override needed).
 
 - `choose_engine_move(fen, depth, top_k, seed, legal_moves_weight,
   material_score_weight, forward_score_weight, center_control_weight,
-  checkmate_weight, history_fens) -> (uci, score, evaluations)`
+  checkmate_weight, history_fens, top_k_score_threshold=3.0) ->
+  (uci, score, evaluations)`
 - `evaluate_position(fen, legal_moves_weight, material_score_weight,
   forward_score_weight, center_control_weight, checkmate_weight) -> float`
   — White-perspective static eval, used for parity checks against

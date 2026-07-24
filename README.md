@@ -67,14 +67,25 @@ for the full move-selection and game-termination rules:
 uv run python -m app.self_play --games 10 --depth 2 --max-turns 55 --top-k 1 --seed 1
 ```
 
+`--top-k` randomly selects among at most that many highest-scoring moves. Add
+`--top-k-score-threshold` to exclude candidates whose score is too far below
+the best move. For example, this considers at most five moves, but only those
+within 1.0 evaluation point of the best:
+
+```bash
+uv run python -m app.self_play --games 10 --top-k 5 --top-k-score-threshold 1.0
+```
+
 For automatic scaling with a different cap:
 
 ```bash
 uv run python -m app.self_play --games 10 --max-depth 5 --max-turns 55
 ```
 
-The web form exposes **Max depth** and **Parallel workers**. Leave workers
-blank for the automatic default based on available CPUs.
+The web form exposes **Top K score threshold**, **Max depth**, and **Parallel
+workers**. The score-threshold default is 3.0. Leave it blank for unrestricted
+Top-K selection and leave workers blank for the automatic default based on
+available CPUs.
 
 You can also write PGN output to a file:
 

@@ -29,6 +29,13 @@ Root moves themselves are always searched with a full `(-inf, inf)` window
 (no pruning at the root), since every root move's exact score is needed to
 rank the top `top_k` candidates.
 
+After ranking, `top_k` sets the maximum candidate count. The optional
+`top_k_score_threshold` then removes candidates whose score is more than that
+amount below the best score. A threshold of 0 allows only moves tied for best;
+the default threshold is 3.0, and setting the API/config value to `None`
+preserves unrestricted Top-K selection. One move is chosen randomly from the
+remaining candidates.
+
 ### Move ordering
 
 Cutoffs only fire early if the strongest moves are searched first, so

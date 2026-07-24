@@ -26,7 +26,7 @@ self-play games (there is no file cache fallback):
 (:SelfPlayGame {
   game_key,          // "<run_id>:<index>", unique
   run_id, index, played_at,
-  seed, top_k, max_turns, start_fen,
+  seed, top_k, top_k_score_threshold, max_turns, start_fen,
   result, termination, plies,
   final_fen, final_score, outcome, winner, loser,
   white_weights_json, black_weights_json,   // JSON-encoded score weights

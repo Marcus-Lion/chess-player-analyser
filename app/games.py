@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import os
 import re
 import random
 from dataclasses import dataclass
@@ -9,20 +8,17 @@ from io import StringIO
 
 import chess
 import chess.pgn
-import chess.polyglot
 import chess.svg
 
+try:
+    import chess_engine
+except ImportError as exc:  # pragma: no cover - depends on local wheel installation
+    raise RuntimeError(
+        "The native chess_engine extension is required. Build/install it with "
+        "`maturin develop --release -m engine/Cargo.toml`."
+    ) from exc
+
 from app.eco import eco_name
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None or raw.strip() == "":
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        return default
 
 
 @dataclass
@@ -594,10 +590,8 @@ def _evaluate_position(
     forward_score_weight: float = FORWARD_SCORE_WEIGHT,
     center_control_weight: float = CENTER_CONTROL_WEIGHT,
     checkmate_weight: float = CHECKMATE_WEIGHT,
-    material_memo: dict[int, dict[str, int]] | None = None,
-    mate_pressure_memo: dict[int, float] | None = None,
 ) -> float:
-    """White-perspective static evaluation used at search leaves.
+    """White-perspective static evaluation performed by the Rust engine.
 
     Blends material, first-order forward control, center control, and mobility -- each as a
     White-minus-Black differential so the value is well-defined at any node
@@ -606,48 +600,19 @@ def _evaluate_position(
     second-order term, which itself generates a full ply of moves) since
     this runs at every leaf of the search tree.
     """
-    zh = chess.polyglot.zobrist_hash(board) if (material_memo is not None or mate_pressure_memo is not None) else 0
-
-    if material_memo is not None and zh in material_memo:
-        material = material_memo[zh]
-    else:
-        material = _calculate_material(board)
-        if material_memo is not None:
-            material_memo[zh] = material
-
-    if mate_pressure_memo is not None and zh in mate_pressure_memo:
-        pressure = mate_pressure_memo[zh]
-    else:
-        pressure = _mate_pressure(board)
-        if mate_pressure_memo is not None:
-            mate_pressure_memo[zh] = pressure
-
-    control = get_board_control(board)
-    center = _calculate_center_control(board)
-    white_mobility, black_mobility = _both_mobilities(board)
-    mobility_score = white_mobility - black_mobility
-    material_score = material["White"] - material["Black"]
-    forward_score = control["White"] - control["Black"]
-    center_score = center["White"] - center["Black"]
-    return round(
-        legal_moves_weight * mobility_score
-        + material_score_weight * material_score
-        + forward_score_weight * forward_score
-        + center_control_weight * center_score
-        + checkmate_weight * pressure,
-        2,
+    return float(
+        chess_engine.evaluate_position(
+            board.fen(),
+            legal_moves_weight,
+            material_score_weight,
+            forward_score_weight,
+            center_control_weight,
+            checkmate_weight,
+        )
     )
 
 
 MATE_SCORE = 1_000_000.0
-
-# Transposition table entry bound types: EXACT means the stored score is the
-# position's true negamax value; LOWERBOUND/UPPERBOUND mean the search that
-# produced it was cut off by beta/alpha, so the true value is only known to
-# be at least/at most the stored score.
-TT_EXACT = 0
-TT_LOWERBOUND = 1
-TT_UPPERBOUND = 2
 
 
 def _terminal_aware_evaluate(board: chess.Board) -> float:
@@ -737,188 +702,6 @@ def _move_severity(blunder_score: float) -> str:
     return ""
 
 
-def _order_moves(
-    board: chess.Board,
-    killer_move: chess.Move | None = None,
-    tt_move: chess.Move | None = None,
-) -> list[chess.Move]:
-    """Order legal moves so alpha-beta pruning cuts more of the tree.
-
-    ``tt_move`` -- the best move found for this exact position in a prior
-    search, per the transposition table -- goes first. Then captures,
-    ranked by captured value with ties broken by cheapest attacker first
-    (MVV-LVA), then checks, then ``killer_move`` -- a quiet move that
-    caused a beta cutoff in a sibling branch at this depth -- then
-    everything else.
-    """
-
-    def move_key(move: chess.Move) -> tuple[int, int, int]:
-        if move == tt_move:
-            return (4, 0, 0)
-        if board.is_capture(move):
-            if board.is_en_passant(move):
-                captured_value = PIECE_POINTS[chess.PAWN]
-            else:
-                captured_piece = board.piece_at(move.to_square)
-                captured_value = PIECE_POINTS[captured_piece.piece_type] if captured_piece else 0
-            attacker_piece = board.piece_at(move.from_square)
-            attacker_value = PIECE_POINTS[attacker_piece.piece_type] if attacker_piece else 0
-            return (3, captured_value, -attacker_value)
-        if board.gives_check(move):
-            return (2, 0, 0)
-        if move == killer_move:
-            return (1, 0, 0)
-        return (0, 0, 0)
-
-    return sorted(board.legal_moves, key=move_key, reverse=True)
-
-
-def _negamax(
-    board: chess.Board,
-    depth: int,
-    alpha: float,
-    beta: float,
-    *,
-    legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
-    material_score_weight: float = MATERIAL_SCORE_WEIGHT,
-    forward_score_weight: float = FORWARD_SCORE_WEIGHT,
-    center_control_weight: float = CENTER_CONTROL_WEIGHT,
-    checkmate_weight: float = CHECKMATE_WEIGHT,
-    eval_counter: list[int] | None = None,
-    killer_moves: dict[int, chess.Move] | None = None,
-    transposition_table: dict[int, tuple[int, float, int, chess.Move | None]] | None = None,
-    material_memo: dict[int, dict[str, int]] | None = None,
-    mate_pressure_memo: dict[int, float] | None = None,
-) -> float:
-    """Negamax search with alpha-beta pruning, from the side-to-move's view.
-
-    Terminal nodes score mate distance-adjusted (a mate found with more
-    depth left to search is closer to the root, so it scores higher) and
-    draws as 0. Leaves are scored by ``_evaluate_position``.
-
-    ``killer_moves``, if given, is a shared ``{depth: move}`` table: a quiet
-    move that triggers a beta cutoff at a given depth is remembered there so
-    sibling branches at the same depth try it early, causing their own
-    cutoffs to fire sooner.
-
-    ``transposition_table``, if given, is a shared ``{zobrist_hash: entry}``
-    cache keyed by position. A position reached again -- via a different
-    move order, transposing to the same board -- reuses the stored bound
-    from a prior search of at least the same depth instead of being
-    re-searched, and its best move is tried first everywhere else it's
-    reached, for the same early-cutoff benefit as ``killer_moves``.
-
-    ``material_memo``, if given, is a shared ``{zobrist_hash: material}``
-    cache to avoid recalculating material at positions reached via different
-    move orders.
-
-    ``mate_pressure_memo``, if given, is a shared ``{zobrist_hash: pressure}``
-    cache to avoid recalculating mate pressure at positions reached via different
-    move orders.
-    """
-    if board.is_checkmate():
-        return -(MATE_SCORE + depth)
-    if board.is_stalemate() or board.is_insufficient_material():
-        return 0.0
-    if depth <= 0:
-        if eval_counter is not None:
-            eval_counter[0] += 1
-        # Use the terminal-aware evaluator at the horizon so a search cutoff
-        # does not misread an already-forced mate or draw as a material-only
-        # position. This keeps stalemate lines and mating lines exact even
-        # when they land on the leaf boundary.
-        score = _terminal_aware_evaluate(board)
-        return score if board.turn == chess.WHITE else -score
-
-    original_alpha = alpha
-    tt_key = None
-    tt_move = None
-    if transposition_table is not None:
-        tt_key = chess.polyglot.zobrist_hash(board)
-        entry = transposition_table.get(tt_key)
-        if entry is not None:
-            entry_depth, entry_score, entry_flag, entry_move = entry
-            tt_move = entry_move
-            if entry_depth >= depth:
-                if entry_flag == TT_EXACT:
-                    return entry_score
-                if entry_flag == TT_LOWERBOUND:
-                    alpha = max(alpha, entry_score)
-                elif entry_flag == TT_UPPERBOUND:
-                    beta = min(beta, entry_score)
-                if alpha >= beta:
-                    return entry_score
-
-    best = -math.inf
-    best_move = None
-    killer_move = killer_moves.get(depth) if killer_moves is not None else None
-    for move in _order_moves(board, killer_move, tt_move):
-        board.push(move)
-        try:
-            score = -_negamax(
-                board,
-                depth - 1,
-                -beta,
-                -alpha,
-                legal_moves_weight=legal_moves_weight,
-                material_score_weight=material_score_weight,
-                forward_score_weight=forward_score_weight,
-                center_control_weight=center_control_weight,
-                checkmate_weight=checkmate_weight,
-                eval_counter=eval_counter,
-                killer_moves=killer_moves,
-                transposition_table=transposition_table,
-                material_memo=material_memo,
-                mate_pressure_memo=mate_pressure_memo,
-            )
-        finally:
-            board.pop()
-
-        if score > best:
-            best = score
-            best_move = move
-        if best > alpha:
-            alpha = best
-        if alpha >= beta:
-            if killer_moves is not None and not board.is_capture(move):
-                killer_moves[depth] = move
-            break
-
-    if transposition_table is not None and tt_key is not None:
-        if best <= original_alpha:
-            flag = TT_UPPERBOUND
-        elif best >= beta:
-            flag = TT_LOWERBOUND
-        else:
-            flag = TT_EXACT
-        transposition_table[tt_key] = (depth, best, flag, best_move)
-
-    return best
-
-
-def _mover_material_advantage(board: chess.Board) -> int:
-    """Material lead for the side to move, in pawns (positive means ahead)."""
-    material = _calculate_material(board)
-    advantage = material["White"] - material["Black"]
-    return advantage if board.turn == chess.WHITE else -advantage
-
-
-# When either side is ahead by at least this many pawns of material, the side
-# to move should keep pressing for a win rather than settle for a draw, so
-# moves that would trigger a threefold repetition get penalized in
-# ``choose_engine_move``.
-REPETITION_AVOIDANCE_MATERIAL_PAWNS = max(
-    0,
-    _env_int("REPETITION_AVOIDANCE_MATERIAL_PAWNS", 1),
-)
-REPETITION_AVOIDANCE_PENALTY = 500.0
-
-
-def _allows_threefold_claim(board: chess.Board) -> bool:
-    """True when the side to move can claim a threefold repetition now."""
-    return board.can_claim_threefold_repetition() or board.is_repetition(3)
-
-
 def choose_engine_move(
     board: chess.Board,
     rng: random.Random | None = None,
@@ -931,59 +714,37 @@ def choose_engine_move(
     checkmate_weight: float = CHECKMATE_WEIGHT,
     depth: int = 3,
     eval_counter: list[int] | None = None,
-    material_memo: dict[int, dict[str, int]] | None = None,
-    mate_pressure_memo: dict[int, float] | None = None,
 ) -> tuple[chess.Move, float]:
-    """Pick a move via negamax search.
+    """Pick a move using the native Rust negamax implementation.
 
     ``eval_counter``, if given, is a single-element ``[count]`` list that
     accumulates one increment per leaf position statically evaluated during
     the search -- callers use this to report how many evaluations a move
     (or a whole game) cost.
 
-    ``material_memo`` and ``mate_pressure_memo``, if given, reuse cached
-    position evaluations across multiple move selections (e.g., during a game).
     """
     rng = rng or random.Random()
-    depth = max(1, depth)
-    avoid_repetition = abs(_mover_material_advantage(board)) >= REPETITION_AVOIDANCE_MATERIAL_PAWNS
-    killer_moves: dict[int, chess.Move] = {}
-    transposition_table: dict[int, tuple[int, float, int, chess.Move | None]] = {}
-    material_memo = material_memo or {}
-    mate_pressure_memo = mate_pressure_memo or {}
-    scored_moves: list[tuple[float, chess.Move]] = []
-    for move in _order_moves(board):
-        board.push(move)
-        try:
-            value = -_negamax(
-                board,
-                depth - 1,
-                -math.inf,
-                math.inf,
-                legal_moves_weight=legal_moves_weight,
-                material_score_weight=material_score_weight,
-                forward_score_weight=forward_score_weight,
-                center_control_weight=center_control_weight,
-                checkmate_weight=checkmate_weight,
-                eval_counter=eval_counter,
-                killer_moves=killer_moves,
-                transposition_table=transposition_table,
-                material_memo=material_memo,
-                mate_pressure_memo=mate_pressure_memo,
-            )
-            if avoid_repetition and _allows_threefold_claim(board):
-                value -= REPETITION_AVOIDANCE_PENALTY
-        finally:
-            board.pop()
-        scored_moves.append((value, move))
+    history_board = board.copy(stack=True)
+    prior_fens: list[str] = []
+    while history_board.move_stack:
+        history_board.pop()
+        prior_fens.append(history_board.fen())
 
-    if not scored_moves:
-        raise ValueError("No legal moves available")
-
-    scored_moves.sort(key=lambda item: item[0], reverse=True)
-    top_n = scored_moves[: max(1, min(top_k, len(scored_moves)))]
-    score, move = rng.choice(top_n)
-    return move, score
+    uci, score, evaluations = chess_engine.choose_engine_move(
+        board.fen(),
+        max(1, depth),
+        max(1, top_k),
+        rng.getrandbits(64),
+        legal_moves_weight,
+        material_score_weight,
+        forward_score_weight,
+        center_control_weight,
+        checkmate_weight,
+        prior_fens,
+    )
+    if eval_counter is not None:
+        eval_counter[0] += int(evaluations)
+    return chess.Move.from_uci(uci), float(score)
 
 
 def _calculate_total_score(

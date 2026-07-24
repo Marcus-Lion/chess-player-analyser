@@ -35,9 +35,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-# Install the native chess_engine wheel into the app venv. self_play.py imports
-# it automatically; if this step were removed it would transparently fall back
-# to the pure-Python engine.
+# Install the required native chess_engine wheel into the app venv.
 COPY --from=engine-builder /wheels /wheels
 RUN uv pip install --python /app/.venv/bin/python /wheels/*.whl
 

@@ -87,19 +87,6 @@ app = FastAPI(title="Marcus Lion Chess Player Analyser")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "app" / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
 
-PYTHON_FALLBACK = (os.getenv("PYTHON_FALLBACK") or "true").strip().lower() in {"1", "true", "yes", "on"}
-
-try:
-    import chess_engine
-except ImportError as exc:
-    if PYTHON_FALLBACK:
-        chess_engine = None
-    else:
-        raise RuntimeError(
-            "PYTHON_FALLBACK=false but the native chess_engine extension could not be imported"
-        ) from exc
-
-
 @app.on_event("startup")
 def _startup_cleanup() -> None:
     terminate_orphaned_self_play_workers()
@@ -475,30 +462,7 @@ def _append_history(history: list[dict], board: chess.Board, move: chess.Move) -
 def _advance_engine(board: chess.Board, history: list[dict], human_is_white: bool, rng: random.Random, top_k: int) -> chess.Move | None:
     last_move: chess.Move | None = None
     while not board.is_game_over(claim_draw=False) and board.turn != human_is_white:
-        if chess_engine is not None:
-            # Replay history to get FENs for repetition avoidance
-            history_fens = []
-            tmp_board = board.copy()
-            while tmp_board.move_stack:
-                tmp_board.pop()
-                history_fens.append(tmp_board.fen())
-            history_fens = history_fens[::-1]
-
-            uci, _, _ = chess_engine.choose_engine_move(
-                board.fen(),
-                3,  # depth
-                top_k,
-                rng.getrandbits(64),
-                LEGAL_MOVES_WEIGHT,
-                MATERIAL_SCORE_WEIGHT,
-                FORWARD_SCORE_WEIGHT,
-                CENTER_CONTROL_WEIGHT,
-                CHECKMATE_WEIGHT,
-                history_fens,
-            )
-            move = chess.Move.from_uci(uci)
-        else:
-            move, _ = choose_engine_move(board, rng, top_k)
+        move, _ = choose_engine_move(board, rng, top_k)
 
         _append_history(history, board, move)
         board.push(move)

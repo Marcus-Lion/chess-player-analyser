@@ -53,23 +53,6 @@ from app.self_play_metrics import (
     to_dataframe as self_play_to_dataframe,
 )
 
-PYTHON_FALLBACK = (os.getenv("PYTHON_FALLBACK") or "true").strip().lower() in {"1", "true", "yes", "on"}
-
-try:
-    # Native negamax engine (see engine/). When present, play_self_game runs
-    # the whole per-move search in Rust. If PYTHON_FALLBACK is enabled, it
-    # falls back to the pure Python choose_engine_move; otherwise startup
-    # fails if the extension is missing.
-    import chess_engine
-except ImportError as exc:  # pragma: no cover - exercised only without the built wheel
-    if PYTHON_FALLBACK:
-        chess_engine = None
-    else:
-        raise RuntimeError(
-            "PYTHON_FALLBACK=false but the native chess_engine extension could not be imported"
-        ) from exc
-
-
 def _env_float(name: str, default: float) -> float:
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
@@ -92,9 +75,6 @@ def _env_bool(name: str, default: bool = True) -> bool:
     if raw is None or raw.strip() == "":
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
-PYTHON_FALLBACK = _env_bool("PYTHON_FALLBACK", True)
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -915,42 +895,6 @@ def _terminal_reason(board: chess.Board) -> tuple[str, str]:
     return ("", "")
 
 
-def _rust_engine_move(
-    board: chess.Board,
-    config: SelfPlayConfig,
-    active_weights: dict[str, float],
-    depth: int,
-    rng: random.Random,
-    eval_counter: list[int],
-    prior_fens: list[str],
-) -> chess.Move:
-    """Pick the next move via the native ``chess_engine`` extension.
-
-    Mirrors the pure-Python ``choose_engine_move`` call: derives a per-move
-    seed from ``rng`` (so a seeded game stays reproducible), folds the reported
-    leaf-evaluation count into ``eval_counter`` for the evals/move stats, and
-    grows ``prior_fens`` so the engine can reproduce python-chess's
-    ``is_repetition(3)`` repetition-avoidance penalty.
-    """
-    current_fen = board.fen()
-    move_seed = rng.getrandbits(64)
-    uci, _score, evaluations = chess_engine.choose_engine_move(
-        current_fen,
-        depth,
-        config.top_k,
-        move_seed,
-        active_weights["legal_moves_weight"],
-        active_weights["material_score_weight"],
-        active_weights["forward_score_weight"],
-        active_weights["center_control_weight"],
-        config.checkmate_weight,
-        prior_fens,
-    )
-    eval_counter[0] += evaluations
-    prior_fens.append(current_fen)
-    return chess.Move.from_uci(uci)
-
-
 def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None = None, rng: random.Random | None = None) -> SelfPlayGame:
     rng = rng or random.Random(config.seed)
     board = chess.Board(config.fen) if config.fen else chess.Board()
@@ -978,37 +922,24 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
     node = game
     turn = 0
     eval_counter = [0]
-    material_memo: dict[int, dict[str, int]] = {}
-    mate_pressure_memo: dict[int, float] = {}
-    # Prior board positions, grown by _rust_engine_move to feed the native
-    # engine's repetition-avoidance penalty (unused on the Python path).
-    prior_fens: list[str] = []
-
     start_time = time.perf_counter()
     result, termination = _terminal_reason(board)
     try:
         while turn < config.max_turns and not result:
             active_weights = white_weights if board.turn == chess.WHITE else black_weights
             depth = config.depth if config.depth is not None else _auto_search_depth(board, game_id=f"{run_id}:{game_index}" if run_id else game_index)
-            if chess_engine is not None:
-                move = _rust_engine_move(
-                    board, config, active_weights, depth, rng, eval_counter, prior_fens
-                )
-            else:
-                move, _ = choose_engine_move(
-                    board,
-                    rng,
-                    config.top_k,
-                    legal_moves_weight=active_weights["legal_moves_weight"],
-                    material_score_weight=active_weights["material_score_weight"],
-                    forward_score_weight=active_weights["forward_score_weight"],
-                    center_control_weight=active_weights["center_control_weight"],
-                    checkmate_weight=config.checkmate_weight,
-                    depth=depth,
-                    eval_counter=eval_counter,
-                    material_memo=material_memo,
-                    mate_pressure_memo=mate_pressure_memo,
-                )
+            move, _ = choose_engine_move(
+                board,
+                rng,
+                config.top_k,
+                legal_moves_weight=active_weights["legal_moves_weight"],
+                material_score_weight=active_weights["material_score_weight"],
+                forward_score_weight=active_weights["forward_score_weight"],
+                center_control_weight=active_weights["center_control_weight"],
+                checkmate_weight=config.checkmate_weight,
+                depth=depth,
+                eval_counter=eval_counter,
+            )
             san = board.san(move)
             board.push(move)
             node = node.add_variation(move)

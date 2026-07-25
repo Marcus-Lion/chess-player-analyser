@@ -50,6 +50,7 @@ from app.players import PlayerProfile, get_player_roster, pick_two_players
 from app.neo4j_store import Neo4jStore
 from app.self_play_metrics import (
     SHAP_BALANCE_LEARNING_RATE,
+    player_overview,
     shap_balance_player_weights,
     to_dataframe as self_play_to_dataframe,
 )
@@ -83,14 +84,15 @@ CACHE_DIR = BASE_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 SELF_PLAY_JOBS_DIR = CACHE_DIR / "self_play_jobs"
 SELF_PLAY_JOBS_DIR.mkdir(parents=True, exist_ok=True)
-DEFAULT_SELF_PLAY_WORKERS = max(1, os.process_cpu_count()*2 or 1)
-DEFAULT_SELF_PLAY_WORKERS = min(DEFAULT_SELF_PLAY_WORKERS,61)
+DEFAULT_SELF_PLAY_WORKERS = min(max(1, os.process_cpu_count() * 2 or 8), 48)
 # Job status lives in memory (see SelfPlayJobHub); only each job's worker log
 # file is on disk. Delete a job's status/log once it has been idle for this
 # long so neither grows without bound.
 JOB_RETENTION_SECONDS = 60
 # Five complete 16-player double round-robins: 5 * 240 games.
 SELF_PLAY_REBALANCE_BATCH_SIZE = max(1, _env_int("SELF_PLAY_REBALANCE_BATCH_SIZE", 1_200))
+SELF_PLAY_ELITE_COUNT = 4
+SELF_PLAY_ELITE_MUTATION_STDDEV = max(0.0, _env_float("SELF_PLAY_ELITE_MUTATION_STDDEV", 0.10))
 
 
 @dataclass
@@ -1135,6 +1137,10 @@ def run_self_play(
             if len(rebalance_batch) >= SELF_PLAY_REBALANCE_BATCH_SIZE:
                 rebalance_batch_number += 1
                 _print_batch_summary(rebalance_batch_number, rebalance_batch, batch_size=SELF_PLAY_REBALANCE_BATCH_SIZE)
+                print(
+                    f"Rebalancing player weights after batch {rebalance_batch_number} "
+                    f"({len(rebalance_batch)} games)..."
+                )
                 try:
                     updated = rebalance_self_play_players(rebalance_batch)
                     print(f"  updated {updated} players")
@@ -1225,8 +1231,73 @@ def save_self_play_results(games: list[SelfPlayGame], *, refresh_player_elos: bo
             store.refresh_self_play_player_elos()
 
 
+def _replace_worst_player_from_elite(batch_df, store: Neo4jStore) -> int:
+    """Replace the batch's worst player with a lightly mutated elite profile."""
+    overview = player_overview(batch_df)
+    if len(overview) < SELF_PLAY_ELITE_COUNT * 2:
+        return 0
+
+    ranked = overview.sort_values(
+        ["score_pct", "games", "player_id"],
+        ascending=[False, False, True],
+    ).reset_index(drop=True)
+    elite_ids = {str(value) for value in ranked.head(SELF_PLAY_ELITE_COUNT)["player_id"]}
+    worst = ranked.iloc[-1]
+    worst_id = str(worst["player_id"])
+    if worst_id in elite_ids:
+        return 0
+
+    players = {
+        str(row.get("player_id")): row
+        for row in store.load_self_play_players()
+        if row.get("player_id") is not None
+    }
+    elite_rows = [players[player_id] for player_id in elite_ids if player_id in players]
+    worst_row = players.get(worst_id)
+    if not elite_rows or worst_row is None:
+        return 0
+
+    donor = random.choice(elite_rows)
+    rng = random.Random()
+    dimensions = (
+        "legal_moves_weight",
+        "material_score_weight",
+        "forward_score_weight",
+        "center_control_weight",
+    )
+    mutated = {
+        dimension: min(
+            4.0,
+            max(-4.0, float(donor.get(dimension) or 0.0) + rng.gauss(0.0, SELF_PLAY_ELITE_MUTATION_STDDEV)),
+        )
+        for dimension in dimensions
+    }
+    update = {
+        "player_id": worst_id,
+        "player_name": worst_row.get("name", worst.get("player_name", worst_id)),
+        "player_description": worst_row.get("description", worst.get("player_description", "")),
+        "games": int(worst.get("games", 0)),
+        "score_pct": float(worst.get("score_pct", 0.0)),
+        "shap_legal_moves_weight": 0.0,
+        "shap_material_score_weight": 0.0,
+        "shap_forward_score_weight": 0.0,
+        "shap_center_control_weight": 0.0,
+        "delta_legal_moves_weight": mutated["legal_moves_weight"] - float(worst_row.get("legal_moves_weight") or 0.0),
+        "delta_material_score_weight": mutated["material_score_weight"] - float(worst_row.get("material_score_weight") or 0.0),
+        "delta_forward_score_weight": mutated["forward_score_weight"] - float(worst_row.get("forward_score_weight") or 0.0),
+        "delta_center_control_weight": mutated["center_control_weight"] - float(worst_row.get("center_control_weight") or 0.0),
+    }
+    update.update({f"updated_{dimension}": value for dimension, value in mutated.items()})
+    store.update_self_play_player_weights([update])
+    print(
+        f"  elite replacement: {worst_id} replaced from "
+        f"{donor.get('player_id', 'elite')} with mutation ±{SELF_PLAY_ELITE_MUTATION_STDDEV:.3f}"
+    )
+    return 1
+
+
 def rebalance_self_play_players(games: list[SelfPlayGame]) -> int:
-    """Update player weights from a batch of self-play games using SHAP analysis."""
+    """Update player weights from a batch using SHAP and elite replacement."""
     if not games:
         return 0
 
@@ -1235,12 +1306,12 @@ def rebalance_self_play_players(games: list[SelfPlayGame]) -> int:
         return 0
 
     updates = shap_balance_player_weights(batch_df, learning_rate=SHAP_BALANCE_LEARNING_RATE)
-    if updates.empty:
-        return 0
-
-    rows = updates.to_dict(orient="records")
     with Neo4jStore() as store:
-        return store.update_self_play_player_weights(rows)
+        updated = 0
+        if not updates.empty:
+            updated = store.update_self_play_player_weights(updates.to_dict(orient="records"))
+        updated += _replace_worst_player_from_elite(batch_df, store)
+        return updated
 
 
 def load_self_play_results(limit: int | None = 50) -> list[dict]:

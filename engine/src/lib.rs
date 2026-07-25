@@ -19,7 +19,7 @@ use shakmaty::fen::Fen;
 use shakmaty::zobrist::Zobrist64;
 use shakmaty::{CastlingMode, Chess, EnPassantMode, Position};
 
-use crate::eval::{evaluate_white, mover_material_advantage, Weights};
+use crate::eval::{evaluate_white, forward_4, mover_material_advantage, Weights};
 use crate::search::{negamax, root_moves, SearchState};
 
 // Repetition-avoidance configuration used during root-move selection.
@@ -206,9 +206,17 @@ fn evaluate_position(
     ))
 }
 
+/// Native fourth-order forward control, returned as (white, black).
+#[pyfunction]
+fn calculate_forward_4(fen: &str) -> PyResult<(i32, i32)> {
+    let pos = parse_position(fen)?;
+    Ok(forward_4(&pos))
+}
+
 #[pymodule]
 fn chess_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(choose_engine_move, m)?)?;
     m.add_function(wrap_pyfunction!(evaluate_position, m)?)?;
+    m.add_function(wrap_pyfunction!(calculate_forward_4, m)?)?;
     Ok(())
 }

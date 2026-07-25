@@ -106,6 +106,21 @@
   <p><a href="/rl">Open RL training →</a></p>
 
   <div class="card">
+    <h2>Phase transition rules</h2>
+    <p class="muted">The phase is determined by remaining non-pawn material after each move. Minor pieces count as 1, rooks as 2, and queens as 4. Pawns and kings are excluded.</p>
+    <table>
+      <thead>
+        <tr><th>Phase</th><th>Material score</th><th>Typical emphasis</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Opening</td><td>&gt; 13</td><td>Center control and king safety</td></tr>
+        <tr><td>Middlegame</td><td>10–13</td><td>Balanced positional factors</td></tr>
+        <tr><td>Endgame</td><td>0–9</td><td>Material, mobility, and king activity</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
     <form method="post" action="/self-play">
       <div class="grid">
         <div>
@@ -200,8 +215,33 @@
           <div>Final score: {{ "%.2f"|format(game.final_score) }}</div>
           <div>Time to play: {{ "%.2f"|format(game.duration_seconds) }}s · Evaluations: {{ game.evaluations }} total, {{ "%.0f"|format(game.evaluations_per_move) }} per move</div>
           {% if game.white_weights and game.black_weights %}
-            <div>White weights: lm={{ "%.3f"|format(game.white_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(game.white_weights.material_score_weight) }}, fwd={{ "%.3f"|format(game.white_weights.forward_score_weight) }}{% if game.white_weights.center_control_weight %}, cc={{ "%.3f"|format(game.white_weights.center_control_weight) }}{% endif %}</div>
-            <div>Black weights: lm={{ "%.3f"|format(game.black_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(game.black_weights.material_score_weight) }}, fwd={{ "%.3f"|format(game.black_weights.forward_score_weight) }}{% if game.black_weights.center_control_weight %}, cc={{ "%.3f"|format(game.black_weights.center_control_weight) }}{% endif %}</div>
+            <table class="weights-table">
+              <thead>
+                <tr><th>Component</th><th>White</th><th>Black</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Mobility</td>
+                  <td>{{ "%.3f"|format(game.white_weights.legal_moves_weight) }}</td>
+                  <td>{{ "%.3f"|format(game.black_weights.legal_moves_weight) }}</td>
+                </tr>
+                <tr>
+                  <td>Material</td>
+                  <td>{{ "%.3f"|format(game.white_weights.material_score_weight) }}</td>
+                  <td>{{ "%.3f"|format(game.black_weights.material_score_weight) }}</td>
+                </tr>
+                <tr>
+                  <td>Forward</td>
+                  <td>{{ "%.3f"|format(game.white_weights.forward_score_weight) }}</td>
+                  <td>{{ "%.3f"|format(game.black_weights.forward_score_weight) }}</td>
+                </tr>
+                <tr>
+                  <td>Center</td>
+                  <td>{{ "%.3f"|format(game.white_weights.center_control_weight) }}</td>
+                  <td>{{ "%.3f"|format(game.black_weights.center_control_weight) }}</td>
+                </tr>
+              </tbody>
+            </table>
           {% endif %}
           <div>Start: {{ game.start_fen }}</div>
           <details>

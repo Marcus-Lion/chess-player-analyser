@@ -94,6 +94,51 @@ fn center_diff(board: &Board) -> i32 {
     white - black
 }
 
+/// Fourth-order forward control: average the side's control after its move,
+/// the opponent's reply, and the side's next move.
+pub fn forward_4(pos: &Chess) -> (i32, i32) {
+    let mut result = (0, 0);
+    for (color, white) in [(Color::White, true), (Color::Black, false)] {
+        let root = if pos.turn() == color {
+            pos.clone()
+        } else {
+            pos.clone().swap_turn().expect("legal turn swap")
+        };
+        let mut total = 0i64;
+        let mut count = 0i64;
+        for first in root.legal_moves() {
+            let mut after_first = root.clone();
+            after_first.play_unchecked(first);
+            for reply in after_first.legal_moves() {
+                let mut after_reply = after_first.clone();
+                after_reply.play_unchecked(reply);
+                let next_moves: Vec<_> = after_reply.legal_moves().into_iter().collect();
+                if next_moves.is_empty() {
+                    let control = board_control(after_reply.board());
+                    total += if white { control.0 } else { control.1 } as i64;
+                    count += 1;
+                } else {
+                    for next in next_moves {
+                        let mut after_next = after_reply.clone();
+                        after_next.play_unchecked(next);
+                        let control = board_control(after_next.board());
+                        total += if white { control.0 } else { control.1 } as i64;
+                        count += 1;
+                    }
+                }
+            }
+        }
+        let value = if count == 0 {
+            let control = board_control(root.board());
+            if white { control.0 } else { control.1 }
+        } else {
+            (total / count) as i32
+        };
+        if white { result.0 = value; } else { result.1 = value; }
+    }
+    result
+}
+
 /// Outer-file control used increasingly as the position simplifies.
 fn flank_diff(board: &Board) -> i32 {
     let occupied = board.occupied();

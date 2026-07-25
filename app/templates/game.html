@@ -37,6 +37,7 @@
     .breakdown th, .breakdown td { padding: .22rem 0; border-bottom: 1px solid #f1f5f9; }
     .breakdown th { text-align: left; color: #6b7280; font-weight: 600; }
     .breakdown td.num, .breakdown th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .phase-weights td { padding: .18rem 0; }
     .controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .75rem 0; }
     .controls button { padding: .35rem .6rem; }
     .controls input[type="range"] { width: 100%; }
@@ -82,10 +83,11 @@
               <span class="value" id="forward_net">{{ detail.positions[0].forward_score }}</span>
             </div>
             <div class="metric-subtle" id="forward_summary">
-              White {{ detail.positions[0].forward_1.White + detail.positions[0].forward_2.White + detail.positions[0].forward_3.White }}
-              vs Black {{ detail.positions[0].forward_1.Black + detail.positions[0].forward_2.Black + detail.positions[0].forward_3.Black }}
+              White {{ detail.positions[0].forward_1.White + detail.positions[0].forward_2.White }}
+              vs Black {{ detail.positions[0].forward_1.Black + detail.positions[0].forward_2.Black }}
             </div>
             <table class="breakdown" id="forward_breakdown">
+              {% set forward_4 = detail.positions[0].forward_4|default(detail.positions[0].forward_3, true) %}
               <thead>
                 <tr>
                   <th>Order</th>
@@ -113,6 +115,12 @@
                   <td class="num">{{ detail.positions[0].forward_3.Black }}</td>
                   <td class="num">{{ detail.positions[0].forward_3.White - detail.positions[0].forward_3.Black }}</td>
                 </tr>
+                <tr>
+                  <td>4th</td>
+                  <td class="num">{{ forward_4.White }}</td>
+                  <td class="num">{{ forward_4.Black }}</td>
+                  <td class="num">{{ forward_4.White - forward_4.Black }}</td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -120,20 +128,30 @@
           <div class="metric">Center <span class="help-icon" title="Center control counts control of central squares for each side. It is strongest in the opening.">?</span><b id="center">{{ detail.positions[0].center.White }} / {{ detail.positions[0].center.Black }}</b></div>
           <div class="metric">Wing control <span class="help-icon" title="Outer-file control is blended into the strategic score as the game reaches the endgame.">?</span><b id="flank">{{ detail.positions[0].flank.White }} / {{ detail.positions[0].flank.Black }}</b></div>
           <div class="metric">Phase <b id="phase">{{ detail.positions[0].phase }}</b></div>
-          <div class="metric">Phase weights <span class="help-icon" title="The four score contributions are rebalanced as material comes off the board.">?</span><b id="phase_weights">{{ detail.positions[0].weight_percentages['Material'] }}% mat · {{ detail.positions[0].weight_percentages['Legal Moves'] }}% mobility · {{ detail.positions[0].weight_percentages['Center Control'] }}% center · {{ detail.positions[0].weight_percentages['Forward Score'] }}% forward</b></div>
+          <div class="metric">Phase weights <span class="help-icon" title="The four score contributions are rebalanced as material comes off the board.">?</span>
+            <table class="breakdown phase-weights" id="phase_weights">
+              <tbody>
+                <tr><td>Material</td><td class="num" id="phase_material">{{ detail.positions[0].weight_percentages['Material'] }}%</td></tr>
+                <tr><td>Mobility</td><td class="num" id="phase_mobility">{{ detail.positions[0].weight_percentages['Legal Moves'] }}%</td></tr>
+                <tr><td>Center</td><td class="num" id="phase_center">{{ detail.positions[0].weight_percentages['Center Control'] }}%</td></tr>
+                <tr><td>Forward</td><td class="num" id="phase_forward">{{ detail.positions[0].weight_percentages['Forward Score'] }}%</td></tr>
+              </tbody>
+            </table>
+          </div>
           <div class="metric">Legal Moves <span class="help-icon" title="Legal Moves is the count of legal options available to the side to move. More legal moves usually means more mobility and flexibility.">?</span><b id="legal_score">{{ detail.positions[0].score }}</b></div>
           <div class="metric">Score <span class="help-icon" title="Score uses phase-aware weights: opening center control and king safety, then endgame wing control and king activity.">?</span><b id="score">{{ "%.2f"|format(detail.positions[0].total_score) }}</b></div>
           {% if game_summary and game_summary.white_weights and game_summary.black_weights %}
             <div class="metric">
-              Weights <span class="help-icon" title="These are the engine weights used to score positions in this game. If both sides share the same weights, the page shows one row; otherwise it shows white and black separately.">?</span>
-              <ul id="weights_list" class="forward-list">
-                {% if game_summary.white_weights.legal_moves_weight == game_summary.black_weights.legal_moves_weight and game_summary.white_weights.material_score_weight == game_summary.black_weights.material_score_weight and game_summary.white_weights.forward_score_weight == game_summary.black_weights.forward_score_weight and game_summary.white_weights.get('center_control_weight') == game_summary.black_weights.get('center_control_weight') %}
-                  <li>lm={{ "%.3f"|format(game_summary.white_weights.legal_moves_weight) }}, mat={{ "%.3f"|format(game_summary.white_weights.material_score_weight) }}, fwd={{ "%.3f"|format(game_summary.white_weights.forward_score_weight) }}{% if game_summary.white_weights.get('center_control_weight') %}, cc={{ "%.3f"|format(game_summary.white_weights.center_control_weight) }}{% endif %}</li>
-                {% else %}
-                  <li>W: lm={{ "%.3f"|format(game_summary.white_weights.legal_moves_weight) }} mat={{ "%.3f"|format(game_summary.white_weights.material_score_weight) }} fwd={{ "%.3f"|format(game_summary.white_weights.forward_score_weight) }}{% if game_summary.white_weights.get('center_control_weight') %} cc={{ "%.3f"|format(game_summary.white_weights.center_control_weight) }}{% endif %}</li>
-                  <li>B: lm={{ "%.3f"|format(game_summary.black_weights.legal_moves_weight) }} mat={{ "%.3f"|format(game_summary.black_weights.material_score_weight) }} fwd={{ "%.3f"|format(game_summary.black_weights.forward_score_weight) }}{% if game_summary.black_weights.get('center_control_weight') %} cc={{ "%.3f"|format(game_summary.black_weights.center_control_weight) }}{% endif %}</li>
-                {% endif %}
-              </ul>
+              Weights <span class="help-icon" title="These are the engine weights used to score positions in this game.">?</span>
+              <table class="breakdown weights-breakdown" id="weights_list">
+                <thead><tr><th>Component</th><th class="num">White</th><th class="num">Black</th></tr></thead>
+                <tbody>
+                  <tr><td>Mobility</td><td class="num">{{ "%.3f"|format(game_summary.white_weights.legal_moves_weight) }}</td><td class="num">{{ "%.3f"|format(game_summary.black_weights.legal_moves_weight) }}</td></tr>
+                  <tr><td>Material</td><td class="num">{{ "%.3f"|format(game_summary.white_weights.material_score_weight) }}</td><td class="num">{{ "%.3f"|format(game_summary.black_weights.material_score_weight) }}</td></tr>
+                  <tr><td>Forward</td><td class="num">{{ "%.3f"|format(game_summary.white_weights.forward_score_weight) }}</td><td class="num">{{ "%.3f"|format(game_summary.black_weights.forward_score_weight) }}</td></tr>
+                  <tr><td>Center</td><td class="num">{{ "%.3f"|format(game_summary.white_weights.center_control_weight) }}</td><td class="num">{{ "%.3f"|format(game_summary.black_weights.center_control_weight) }}</td></tr>
+                </tbody>
+              </table>
             </div>
           {% endif %}
         </div>
@@ -193,7 +211,10 @@
       const center = document.getElementById('center');
       const flank = document.getElementById('flank');
       const phase = document.getElementById('phase');
-      const phaseWeights = document.getElementById('phase_weights');
+      const phaseMaterial = document.getElementById('phase_material');
+      const phaseMobility = document.getElementById('phase_mobility');
+      const phaseCenter = document.getElementById('phase_center');
+      const phaseForward = document.getElementById('phase_forward');
       const score = document.getElementById('score');
       const legalScore = document.getElementById('legal_score');
       const links = Array.from(document.querySelectorAll('#positions_list a[data-index]'));
@@ -226,8 +247,8 @@
 
       function forwardTotals(pos) {
         return {
-          white: (pos.forward_1.White || 0) + (pos.forward_2.White || 0) + (pos.forward_3.White || 0),
-          black: (pos.forward_1.Black || 0) + (pos.forward_2.Black || 0) + (pos.forward_3.Black || 0),
+          white: (pos.forward_1.White || 0) + (pos.forward_2.White || 0),
+          black: (pos.forward_1.Black || 0) + (pos.forward_2.Black || 0),
         };
       }
 
@@ -244,7 +265,10 @@
         flank.textContent = `${pos.flank.White} / ${pos.flank.Black}`;
         phase.textContent = pos.phase;
         const weights = pos.weight_percentages;
-        phaseWeights.textContent = `${weights['Material']}% mat · ${weights['Legal Moves']}% mobility · ${weights['Center Control']}% center · ${weights['Forward Score']}% forward`;
+        phaseMaterial.textContent = `${weights['Material']}%`;
+        phaseMobility.textContent = `${weights['Legal Moves']}%`;
+        phaseCenter.textContent = `${weights['Center Control']}%`;
+        phaseForward.textContent = `${weights['Forward Score']}%`;
         score.textContent = Number(pos.total_score).toFixed(2);
         legalScore.textContent = String(pos.score);
         label.textContent = describePosition(pos);

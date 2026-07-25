@@ -137,7 +137,7 @@ rules also apply as automatic backstops). Since self-play has no player to
 claim a draw, threefold repetition and the fifty-move rule are adjudicated
 automatically as soon as they become claimable. If none of these trigger,
 the game is called a draw once `--max-turns` is reached (labelled **Max
-turns** in the web form and reported as "max turns reached"; the count
+turns** in the web form and reported as "max turns"; the count
 itself covers every half-move, i.e. both White's and Black's turns).
 
 The "Analyse results →" link on `/self-play` opens `/self-play/analysis`, a

@@ -423,7 +423,7 @@ def play_self_play_game(
         turn += 1
 
     if not result:
-        result, termination = ("1/2-1/2", "max turns reached")
+        result, termination = ("1/2-1/2", "max turns")
 
     for sample in samples:
         sample.result = result

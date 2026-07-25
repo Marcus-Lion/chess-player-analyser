@@ -94,7 +94,7 @@ SELF_PLAY_REBALANCE_BATCH_SIZE = max(1, _env_int("SELF_PLAY_REBALANCE_BATCH_SIZE
 # Neo4j writes are grouped so each completed game does not require a separate
 # network round trip and transaction.  Results are still flushed frequently
 # enough to survive a normal process interruption with little loss.
-SELF_PLAY_WRITE_BATCH_SIZE = max(1, _env_int("SELF_PLAY_WRITE_BATCH_SIZE", 25))
+SELF_PLAY_WRITE_BATCH_SIZE = max(1, _env_int("SELF_PLAY_WRITE_BATCH_SIZE", 64))
 SELF_PLAY_ELITE_COUNT = 4
 SELF_PLAY_ELITE_MUTATION_STDDEV = max(0.0, _env_float("SELF_PLAY_ELITE_MUTATION_STDDEV", 0.10))
 

@@ -12,6 +12,11 @@ import chess.svg
 
 try:
     import chess_engine
+    # Maturin may install the extension as ``chess_engine.chess_engine``
+    # when building from a Windows virtual environment. Normalize both wheel
+    # layouts to the module API used by this application.
+    if not hasattr(chess_engine, "choose_engine_move"):
+        from chess_engine import chess_engine as chess_engine
 except ImportError as exc:  # pragma: no cover - depends on local wheel installation
     raise RuntimeError(
         "The native chess_engine extension is required. Build/install it with "
@@ -52,6 +57,9 @@ class GamePosition:
     forward_3: dict[str, int]
     material: dict[str, int]  # {"White": points, "Black": points}
     center: dict[str, int]  # {"White": count, "Black": count}
+    flank: dict[str, int]  # {"White": count, "Black": count}
+    phase: str  # Opening, Middlegame, or Endgame
+    weight_percentages: dict[str, int]
     forward_score: int  # (W_f1 + W_f2) - (B_f1 + B_f2)
     material_score: int  # White material - Black material
     center_score: int  # White center - Black center
@@ -198,6 +206,57 @@ CENTER_CONTROL_WEIGHT:float = 1.0
 # small relative to material so it only breaks ties between otherwise-similar
 # moves rather than sacrificing material to chase the king.
 CHECKMATE_WEIGHT:float = 1.0
+
+PHASE_MULTIPLIERS = {
+    "Opening": {"legal": 0.90, "material": 0.65, "forward": 0.95, "control": 1.80, "checkmate": 0.75},
+    "Middlegame": {"legal": 1.00, "material": 1.00, "forward": 1.10, "control": 1.00, "checkmate": 1.00},
+    "Endgame": {"legal": 1.10, "material": 1.45, "forward": 1.15, "control": 0.65, "checkmate": 1.45},
+}
+
+
+def _game_phase_value(board: chess.Board) -> float:
+    """Return 0 for the opening and 1 for a simplified endgame.
+
+    Non-pawn material is used so an opening pawn sacrifice does not
+    prematurely turn the position into an endgame.
+    """
+    phase_material = sum(
+        len(board.pieces(piece_type, color)) * value
+        for piece_type, value in ((chess.KNIGHT, 1), (chess.BISHOP, 1), (chess.ROOK, 2), (chess.QUEEN, 4))
+        for color in (chess.WHITE, chess.BLACK)
+    )
+    return max(0.0, min(1.0, (16.0 - phase_material) / 10.0))
+
+
+def _phase_name(value: float) -> str:
+    if value < 0.30:
+        return "Opening"
+    if value < 0.68:
+        return "Middlegame"
+    return "Endgame"
+
+
+def _phase_multipliers(value: float) -> dict[str, float]:
+    if value < 0.30:
+        return PHASE_MULTIPLIERS["Opening"]
+    if value < 0.68:
+        return PHASE_MULTIPLIERS["Middlegame"]
+    return PHASE_MULTIPLIERS["Endgame"]
+
+
+def _phase_weight_percentages(value: float) -> dict[str, int]:
+    multipliers = _phase_multipliers(value)
+    effective = {
+        "Material": abs(MATERIAL_SCORE_WEIGHT * multipliers["material"]),
+        "Legal Moves": abs(LEGAL_MOVES_WEIGHT * multipliers["legal"]),
+        "Center Control": abs(CENTER_CONTROL_WEIGHT * multipliers["control"]),
+        "Forward Score": abs(FORWARD_SCORE_WEIGHT * multipliers["forward"]),
+    }
+    total = sum(effective.values())
+    percentages = {name: round(weight / total * 100) for name, weight in effective.items()}
+    # Keep the displayed values summing to exactly 100 after rounding.
+    percentages["Forward Score"] += 100 - sum(percentages.values())
+    return percentages
 
 
 def _style_arrows(svg: str) -> str:
@@ -516,6 +575,19 @@ def _calculate_center_control(board: chess.Board) -> dict[str, int]:
     }
 
 
+def _calculate_flank_control(board: chess.Board) -> dict[str, int]:
+    """Count control of the outer files where king-and-pawn endgames unfold."""
+    squares = [
+        chess.square(file, rank)
+        for file in (0, 1, 6, 7)
+        for rank in (2, 3, 4, 5)
+    ]
+    return {
+        "White": sum(board.is_attacked_by(chess.WHITE, square) for square in squares),
+        "Black": sum(board.is_attacked_by(chess.BLACK, square) for square in squares),
+    }
+
+
 def _king_escape_squares(board: chess.Board, king_color: chess.Color) -> int:
     """Count squares the ``king_color`` king could flee to.
 
@@ -561,6 +633,25 @@ def _mate_pressure(board: chess.Board) -> float:
         escapes = _king_escape_squares(board, defender)
         pressure += sign * (corner_proximity - 2.0 * escapes)
     return pressure
+
+
+def _king_activity(board: chess.Board, phase: float) -> float:
+    """Reward castling safety early and king centralisation late."""
+    score = 0.0
+    for color, sign in ((chess.WHITE, 1.0), (chess.BLACK, -1.0)):
+        king_sq = board.king(color)
+        if king_sq is None:
+            continue
+        file = chess.square_file(king_sq)
+        rank = chess.square_rank(king_sq)
+        if phase < 0.5:
+            safety = 2.0 if file in (2, 6) and rank in (0, 7) else 0.0
+            safety -= 1.0 if file == 4 and rank in (0, 7) else 0.0
+            score += sign * safety * (1.0 - phase)
+        else:
+            centrality = 4.0 - abs(3.5 - file) - abs(3.5 - rank)
+            score += sign * centrality * phase
+    return score
 
 
 def _color_mobility(board: chess.Board, color: chess.Color) -> int:
@@ -777,6 +868,7 @@ def _calculate_total_score(
     forward_score_weight: float = FORWARD_SCORE_WEIGHT,
     center_control_weight: float = CENTER_CONTROL_WEIGHT,
     checkmate_weight: float = CHECKMATE_WEIGHT,
+    phase: float | None = None,
 ) -> float:
     """Blend mobility, material, forward, center control, and pressure into one position score.
 
@@ -786,14 +878,18 @@ def _calculate_total_score(
     The weights keep material as the strongest signal, while still letting
     other factors move the score in a visible way.
     """
-    return round(
-        legal_moves_weight * mobility_score
+    if phase is not None:
+        multipliers = _phase_multipliers(phase)
+        legal_moves_weight *= multipliers["legal"]
+        material_score_weight *= multipliers["material"]
+        forward_score_weight *= multipliers["forward"]
+        center_control_weight *= multipliers["control"]
+        checkmate_weight *= multipliers["checkmate"]
+    return round(legal_moves_weight * mobility_score
         + material_score_weight * material_score
         + forward_score_weight * forward_score
         + center_control_weight * center_score
-        + checkmate_weight * pressure,
-        2,
-    )
+        + checkmate_weight * pressure, 2)
 
 
 def _legal_move_arrows(board: chess.Board) -> list[chess.svg.Arrow]:
@@ -819,7 +915,7 @@ def render_board_svgs(board: chess.Board, lastmove: chess.Move | None = None) ->
     return svg, svg_moves
 
 
-def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None) -> tuple[str, list[str], dict[str, list[str]], dict[str, int], dict[str, int], dict[str, int], dict[str, int], dict[str, int], int, int, int, int, int, dict[str, int]]:
+def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None) -> tuple:
     """Render board with legal moves arrows, and return SAN list, 2-ply move tree, control metrics, material metrics, scores and move scores."""
     tree = {}
     move_scores = {}
@@ -831,15 +927,22 @@ def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None
     f3 = _calculate_forward_3(board)
     material = _calculate_material(board)
     center = _calculate_center_control(board)
+    flank = _calculate_flank_control(board)
+    phase_value = _game_phase_value(board)
+    phase = _phase_name(phase_value)
+    weight_percentages = _phase_weight_percentages(phase_value)
     forward_score = (f1["White"] + f2["White"]) - (f1["Black"] + f2["Black"])
     material_score = material["White"] - material["Black"]
     center_score = center["White"] - center["Black"]
+    flank_score = flank["White"] - flank["Black"]
+    strategic_control_score = round((1.0 - phase_value) * center_score + phase_value * flank_score, 2)
     mobility_w, mobility_b = _both_mobilities(board)
     mobility_score = mobility_w - mobility_b
-    pressure = _mate_pressure(board)
+    pressure = _mate_pressure(board) + _king_activity(board, phase_value)
     score = len(legal_moves)
     total_score = _calculate_total_score(
-        mobility_score, material_score, forward_score, center_score, pressure
+        mobility_score, material_score, forward_score, strategic_control_score, pressure,
+        phase=phase_value,
     )
 
     for move in legal_moves:
@@ -860,7 +963,9 @@ def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None
 
     sans = [board.san(move) for move in legal_moves]
     svg = chess.svg.board(board, size=420, lastmove=lastmove, arrows=arrows)
-    return _style_arrows(svg), sans, tree, f1, f2, f3, material, center, forward_score, material_score, center_score, score, total_score, move_scores
+    return (_style_arrows(svg), sans, tree, f1, f2, f3, material, center, flank,
+            forward_score, material_score, strategic_control_score, score,
+            total_score, move_scores, phase, weight_percentages)
 
 
 def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
@@ -872,7 +977,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
     headers = game.headers
     board = game.board()
 
-    start_moves_svg, start_legal, start_tree, start_f1, start_f2, start_f3, start_material, start_center, start_forward_score, start_material_score, start_center_score, start_score, start_total_score, start_scores = _legal_moves_and_tree(board)
+    start_moves_svg, start_legal, start_tree, start_f1, start_f2, start_f3, start_material, start_center, start_flank, start_forward_score, start_material_score, start_center_score, start_score, start_total_score, start_scores, start_phase, start_weight_percentages = _legal_moves_and_tree(board)
     positions: list[GamePosition] = [
         GamePosition(
             ply=0,
@@ -890,6 +995,9 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
             forward_3=start_f3,
             material=start_material,
             center=start_center,
+            flank=start_flank,
+            phase=start_phase,
+            weight_percentages=start_weight_percentages,
             forward_score=start_forward_score,
             material_score=start_material_score,
             center_score=start_center_score,
@@ -908,7 +1016,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
         san = board.san(move)
         blunder_score = _blunder_score(board, move)
         board.push(move)
-        moves_svg, legal, tree, f1, f2, f3, material, center, forward_score, material_score, center_score, score, total_score, scores = _legal_moves_and_tree(board, lastmove=move)
+        moves_svg, legal, tree, f1, f2, f3, material, center, flank, forward_score, material_score, center_score, score, total_score, scores, phase, weight_percentages = _legal_moves_and_tree(board, lastmove=move)
         positions.append(
             GamePosition(
                 ply=ply,
@@ -926,6 +1034,9 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
                 forward_3=f3,
                 material=material,
                 center=center,
+                flank=flank,
+                phase=phase,
+                weight_percentages=weight_percentages,
                 forward_score=forward_score,
                 material_score=material_score,
                 center_score=center_score,

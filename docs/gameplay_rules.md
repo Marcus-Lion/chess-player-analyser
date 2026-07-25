@@ -96,15 +96,23 @@ ahead. Below that material threshold, repetitions are scored normally.
 ## Position evaluation
 
 Leaf nodes (`depth <= 0`) are scored by the native static evaluator, also
-exposed through `app.games._evaluate_position`, using this weighted blend:
+exposed through `app.games._evaluate_position`, using this weighted blend. The
+configured weights are multiplied by the game phase: opening positions favor
+central control and activity, while simplified positions favor material,
+mobility, wing control, and king activity. Phase is based on non-pawn material,
+so an opening pawn sacrifice does not by itself trigger endgame weighting.
 
 | Component | Weight | What it measures |
 |---|---|---|
 | Legal moves | `LEGAL_MOVES_WEIGHT` (-2.0) | White-minus-Black mobility. |
 | Material | `MATERIAL_SCORE_WEIGHT` (1.0) | Piece points: pawn=1, knight/bishop=3, rook=5, queen=9. |
 | Forward control | `FORWARD_SCORE_WEIGHT` (1.0) | Squares attacked on each side's forward two ranks. |
-| Center control | `CENTER_CONTROL_WEIGHT` (1.0) | Attackers on d4/e4/d5/e5. |
+| Strategic control | `CENTER_CONTROL_WEIGHT` (1.0) | Central squares (d4/e4/d5/e5) in the opening, blended toward outer-file/wing squares in the endgame. |
 | Checkmate pressure | `CHECKMATE_WEIGHT` (1.0) | King-safety/mate-threat heuristic (`_mate_pressure`). |
+
+King activity is included in the checkmate-pressure term: castled, sheltered
+kings are rewarded in the opening; centralised kings are rewarded in the
+endgame.
 
 Checkmate is scored as `MATE_SCORE` (1,000,000) adjusted by remaining search
 depth (a mate found with more depth left to search is closer to the root, so

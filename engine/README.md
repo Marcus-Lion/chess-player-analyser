@@ -18,6 +18,16 @@ From the repo root, into the project's uv venv:
 maturin develop --release -m engine/Cargo.toml
 ```
 
+If `maturin` is not installed as a command, build a wheel and install it
+explicitly into the project environment (important on Windows, where
+`uv run --with maturin` may use a temporary environment):
+
+```powershell
+New-Item -ItemType Directory -Force engine/dist
+uv run --with maturin maturin build --release -m engine/Cargo.toml -o engine/dist
+uv pip install --python .venv/Scripts/python.exe engine/dist/chess_engine-*.whl
+```
+
 (omit `--release` for a faster, unoptimized debug build while iterating.)
 
 Then confirm:

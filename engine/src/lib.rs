@@ -120,9 +120,13 @@ fn choose_engine_move(
 
     let mut state = SearchState::new(weights);
     let mut scored: Vec<(f64, shakmaty::Move)> = Vec::new();
+    let mut immediate_stalemates: Vec<shakmaty::Move> = Vec::new();
     for m in root_moves(&pos) {
         let mut child = pos.clone();
         child.play_unchecked(m);
+        if child.is_stalemate() {
+            immediate_stalemates.push(m);
+        }
         let mut value = -negamax(&child, depth - 1, f64::NEG_INFINITY, f64::INFINITY, &mut state);
         if avoid_repetition {
             // python-chess is_repetition(3): the move creates a 3rd occurrence
@@ -140,6 +144,14 @@ fn choose_engine_move(
 
     // Descending by score; stable so ties keep generation order.
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    // A stalemate is a draw, so preserve it whenever every alternative is
+    // evaluated as a loss. This makes the engine take a forced drawing
+    // resource instead of choosing a materially or tactically losing move.
+    if scored[0].0 < 0.0 && !immediate_stalemates.is_empty() {
+        scored.retain(|(_, m)| immediate_stalemates.contains(m));
+    }
+
     let top_n = top_k.max(1).min(scored.len() as i32) as usize;
     let candidate_count = match top_k_score_threshold {
         Some(threshold) => {

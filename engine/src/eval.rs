@@ -94,6 +94,50 @@ fn center_diff(board: &Board) -> i32 {
     white - black
 }
 
+/// Outer-file control used increasingly as the position simplifies.
+fn flank_diff(board: &Board) -> i32 {
+    let occupied = board.occupied();
+    let mut white = 0;
+    let mut black = 0;
+    for file in [0u32, 1, 6, 7] {
+        for rank in [2u32, 3, 4, 5] {
+            let sq = Square::new(file + rank * 8);
+            if !board.attacks_to(sq, Color::White, occupied).is_empty() { white += 1; }
+            if !board.attacks_to(sq, Color::Black, occupied).is_empty() { black += 1; }
+        }
+    }
+    white - black
+}
+
+/// 0 is the opening; 1 is a low-material endgame. Pawns are deliberately
+/// ignored so an opening pawn sacrifice does not force endgame weights.
+fn phase_value(board: &Board) -> f64 {
+    let mut remaining = 0i32;
+    for role in [Role::Knight, Role::Bishop, Role::Rook, Role::Queen] {
+        let value = match role { Role::Knight | Role::Bishop => 1, Role::Rook => 2, Role::Queen => 4, _ => 0 };
+        remaining += (board.by_role(role).into_iter().count() as i32) * value;
+    }
+    ((16 - remaining) as f64 / 10.0).clamp(0.0, 1.0)
+}
+
+fn king_activity(board: &Board, phase: f64) -> f64 {
+    let mut score = 0.0;
+    for (color, sign) in [(Color::White, 1.0), (Color::Black, -1.0)] {
+        let king = match board.king_of(color) { Some(sq) => sq, None => continue };
+        let file = (king.to_u32() % 8) as f64;
+        let rank = (king.to_u32() / 8) as f64;
+        if phase < 0.5 {
+            let safety = if (file == 2.0 || file == 6.0) && (rank == 0.0 || rank == 7.0) { 2.0 } else { 0.0 }
+                - if file == 4.0 && (rank == 0.0 || rank == 7.0) { 1.0 } else { 0.0 };
+            score += sign * safety * (1.0 - phase);
+        } else {
+            let centrality = 4.0 - (3.5 - file).abs() - (3.5 - rank).abs();
+            score += sign * centrality * phase;
+        }
+    }
+    score
+}
+
 /// Squares the `defender` king could flee to: not blocked by its own pieces
 /// and not attacked by the enemy (`app.games._king_escape_squares`).
 /// Like python-chess `is_attacked_by`, the king stays on the board when
@@ -231,14 +275,24 @@ pub fn evaluate_white(pos: &Chess, w: Weights) -> f64 {
     let (white_control, black_control) = board_control(board);
     let material = material_diff(board);
     let center = center_diff(board);
+    let flank = flank_diff(board);
+    let phase = phase_value(board);
+    let strategic_control = (1.0 - phase) * center as f64 + phase * flank as f64;
     let (white_mobility, black_mobility) = both_mobilities(pos);
-    let pressure = mate_pressure(board);
+    let pressure = mate_pressure(board) + king_activity(board, phase);
+    let (legal_mult, material_mult, forward_mult, control_mult, checkmate_mult) = if phase < 0.30 {
+        (0.90, 0.65, 0.95, 1.80, 0.75)
+    } else if phase < 0.68 {
+        (1.00, 1.00, 1.10, 1.00, 1.00)
+    } else {
+        (1.10, 1.45, 1.15, 0.65, 1.45)
+    };
     round2(
-        w.legal_moves * (white_mobility - black_mobility) as f64
-            + w.material * material as f64
-            + w.forward * (white_control - black_control) as f64
-            + w.center * center as f64
-            + w.checkmate * pressure,
+        w.legal_moves * legal_mult * (white_mobility - black_mobility) as f64
+            + w.material * material_mult * material as f64
+            + w.forward * forward_mult * (white_control - black_control) as f64
+            + w.center * control_mult * strategic_control
+            + w.checkmate * checkmate_mult * pressure,
     )
 }
 

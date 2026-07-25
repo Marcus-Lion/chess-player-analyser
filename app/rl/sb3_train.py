@@ -40,6 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--n-steps", type=int, default=256)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument(
+        "--device",
+        choices=("cuda", "cpu", "auto"),
+        default="cuda",
+        help="PyTorch device used by MaskablePPO (default: cuda).",
+    )
     return parser
 
 
@@ -133,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     batch_size = max(1, min(args.batch_size, args.n_steps))
 
     if args.load_path is not None and args.load_path.exists():
-        model = MaskablePPO.load(args.load_path, env=train_env)
+        model = MaskablePPO.load(args.load_path, env=train_env, device=args.device)
     else:
         model = MaskablePPO(
             "MlpPolicy",
@@ -143,6 +149,7 @@ def main(argv: list[str] | None = None) -> int:
             batch_size=batch_size,
             gamma=args.gamma,
             seed=args.seed,
+            device=args.device,
             verbose=1,
         )
 

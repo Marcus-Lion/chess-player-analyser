@@ -14,6 +14,10 @@
     pre { white-space: pre-wrap; word-break: break-word; background: #fafafa; padding: .75rem; border-radius: 8px; }
     .muted { color: #666; }
     .grid { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: .75rem; }
+    .weights-table { margin-top: .5rem; table-layout: fixed; }
+    .weights-table th:first-child, .weights-table td:first-child { width: 42%; }
+    .weights-table th:not(:first-child), .weights-table td:not(:first-child) { text-align: center; }
+    .weights-table input { width: 100%; box-sizing: border-box; margin: 0; }
     .help-icon {
       display: inline-flex;
       align-items: center;
@@ -138,51 +142,40 @@
         </div>
       </div>
 
-      <p class="muted" style="margin-bottom: 0;">Weights are randomized independently for every game by default. Fill in a side's weights below only if you want to pin that side to a fixed profile instead.</p>
+      <p class="muted" style="margin-bottom: 0;">Each game selects player profiles independently by default, using their current learned weights. Enter all four weights for a side to override that side with a fixed profile; partial entries are ignored.</p>
 
-      <label style="margin-bottom: .25rem;">White weights (optional)</label>
-      <div class="grid" style="grid-template-columns: repeat(4, minmax(120px, 1fr));">
-        <div>
-          <label>Legal-moves weight <span class="help-icon" title="Weight for raw mobility: how many legal moves a side has.">?</span></label>
-          <input name="white_legal_moves_weight" type="number" step="any" value="{{ config.white_legal_moves_weight if config and config.white_legal_moves_weight is not none else '' }}" />
-        </div>
-        <div>
-          <label>Material weight <span class="help-icon" title="Weight for material balance. Higher values favor piece advantage more strongly.">?</span></label>
-          <input name="white_material_score_weight" type="number" step="any" value="{{ config.white_material_score_weight if config and config.white_material_score_weight is not none else '' }}" />
-        </div>
-        <div>
-          <label>Forward weight <span class="help-icon" title="Weight for forward control, which measures influence on the forward ranks.">?</span></label>
-          <input name="white_forward_score_weight" type="number" step="any" value="{{ config.white_forward_score_weight if config and config.white_forward_score_weight is not none else '' }}" />
-        </div>
-        <div>
-          <label>Center weight <span class="help-icon" title="Weight for central-square control. Higher values favor central pressure.">?</span></label>
-          <input name="white_center_control_weight" type="number" step="any" value="{{ config.white_center_control_weight if config and config.white_center_control_weight is not none else '' }}" />
-        </div>
-      </div>
+      <label style="margin-bottom: .25rem;">Optional fixed weights</label>
+      <table class="weights-table">
+        <thead>
+          <tr><th>Metric</th><th>White</th><th>Black</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Legal-moves weight <span class="help-icon" title="Weight for raw mobility: how many legal moves a side has.">?</span></td>
+            <td><input name="white_legal_moves_weight" type="number" step="any" value="{{ config.white_legal_moves_weight if config and config.white_legal_moves_weight is not none else '' }}" /></td>
+            <td><input name="black_legal_moves_weight" type="number" step="any" value="{{ config.black_legal_moves_weight if config and config.black_legal_moves_weight is not none else '' }}" /></td>
+          </tr>
+          <tr>
+            <td>Material weight <span class="help-icon" title="Weight for material balance. Higher values favor piece advantage more strongly.">?</span></td>
+            <td><input name="white_material_score_weight" type="number" step="any" value="{{ config.white_material_score_weight if config and config.white_material_score_weight is not none else '' }}" /></td>
+            <td><input name="black_material_score_weight" type="number" step="any" value="{{ config.black_material_score_weight if config and config.black_material_score_weight is not none else '' }}" /></td>
+          </tr>
+          <tr>
+            <td>Forward weight <span class="help-icon" title="Weight for forward control, which measures influence on the forward ranks.">?</span></td>
+            <td><input name="white_forward_score_weight" type="number" step="any" value="{{ config.white_forward_score_weight if config and config.white_forward_score_weight is not none else '' }}" /></td>
+            <td><input name="black_forward_score_weight" type="number" step="any" value="{{ config.black_forward_score_weight if config and config.black_forward_score_weight is not none else '' }}" /></td>
+          </tr>
+          <tr>
+            <td>Center weight <span class="help-icon" title="Weight for central-square control. Higher values favor central pressure.">?</span></td>
+            <td><input name="white_center_control_weight" type="number" step="any" value="{{ config.white_center_control_weight if config and config.white_center_control_weight is not none else '' }}" /></td>
+            <td><input name="black_center_control_weight" type="number" step="any" value="{{ config.black_center_control_weight if config and config.black_center_control_weight is not none else '' }}" /></td>
+          </tr>
+        </tbody>
+      </table>
 
-      <label style="margin-bottom: .25rem;">Black weights (optional)</label>
-      <div class="grid" style="grid-template-columns: repeat(4, minmax(120px, 1fr));">
-        <div>
-          <label>Legal-moves weight <span class="help-icon" title="Weight for raw mobility: how many legal moves a side has.">?</span></label>
-          <input name="black_legal_moves_weight" type="number" step="any" value="{{ config.black_legal_moves_weight if config and config.black_legal_moves_weight is not none else '' }}" />
-        </div>
-        <div>
-          <label>Material weight <span class="help-icon" title="Weight for material balance. Higher values favor piece advantage more strongly.">?</span></label>
-          <input name="black_material_score_weight" type="number" step="any" value="{{ config.black_material_score_weight if config and config.black_material_score_weight is not none else '' }}" />
-        </div>
-        <div>
-          <label>Forward weight <span class="help-icon" title="Weight for forward control, which measures influence on the forward ranks.">?</span></label>
-          <input name="black_forward_score_weight" type="number" step="any" value="{{ config.black_forward_score_weight if config and config.black_forward_score_weight is not none else '' }}" />
-        </div>
-        <div>
-          <label>Center weight <span class="help-icon" title="Weight for central-square control. Higher values favor central pressure.">?</span></label>
-          <input name="black_center_control_weight" type="number" step="any" value="{{ config.black_center_control_weight if config and config.black_center_control_weight is not none else '' }}" />
-        </div>
-      </div>
-
-      <label>Optional starting FEN <span class="help-icon" title="A custom board position to start from instead of the normal initial chess position.">?</span></label>
-      <textarea name="fen" rows="3" placeholder="Leave blank for the standard starting position">{{ config.fen if config and config.fen else '' }}</textarea>
-
+      <label>Optional starting FEN <span class="help-icon" title="A custom board position to start from instead of the normal initial chess position.">?</span>
+      </label>
+      <textarea name="fen" rows="1" placeholder="Leave blank for the standard starting position">{{ config.fen if config and config.fen else '' }}</textarea>
       <button type="submit">Run self-play</button>
     </form>
 
@@ -245,7 +238,7 @@
         <label>Termination
           <select id="filter_termination"><option value="">All</option></select>
         </label>
-        <label>|Final score|
+        <label>ABS(Final score)
           <span class="range">
             <select id="filter_score_cmp">
               <option value="gt">&gt;</option>

@@ -148,6 +148,7 @@ Useful options:
 - `--opponent-depth` — baseline opponent search depth
 - `--save-path` — SB3 checkpoint output path
 - `--load-path` — resume from a saved SB3 checkpoint
+- `--device` — PyTorch device (`cuda` by default; use `cpu` to disable GPU)
 
 The environment is designed around the current heuristic engine and keeps the
 reward signal small and shaped, so it is a scaffold rather than a finished

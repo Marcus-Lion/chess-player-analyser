@@ -117,9 +117,12 @@
             </table>
           </div>
           <div class="metric">Material <span class="help-icon" title="Material is the material balance score for White / Black in the current position. Higher means the side has more remaining piece value.">?</span><b id="material">{{ detail.positions[0].material.White }} / {{ detail.positions[0].material.Black }}</b></div>
-          <div class="metric">Center <span class="help-icon" title="Center control counts control of central squares for each side. It is a positional pressure metric, not a material count.">?</span><b id="center">{{ detail.positions[0].center.White }} / {{ detail.positions[0].center.Black }}</b></div>
+          <div class="metric">Center <span class="help-icon" title="Center control counts control of central squares for each side. It is strongest in the opening.">?</span><b id="center">{{ detail.positions[0].center.White }} / {{ detail.positions[0].center.Black }}</b></div>
+          <div class="metric">Wing control <span class="help-icon" title="Outer-file control is blended into the strategic score as the game reaches the endgame.">?</span><b id="flank">{{ detail.positions[0].flank.White }} / {{ detail.positions[0].flank.Black }}</b></div>
+          <div class="metric">Phase <b id="phase">{{ detail.positions[0].phase }}</b></div>
+          <div class="metric">Phase weights <span class="help-icon" title="The four score contributions are rebalanced as material comes off the board.">?</span><b id="phase_weights">{{ detail.positions[0].weight_percentages['Material'] }}% mat · {{ detail.positions[0].weight_percentages['Legal Moves'] }}% mobility · {{ detail.positions[0].weight_percentages['Center Control'] }}% center · {{ detail.positions[0].weight_percentages['Forward Score'] }}% forward</b></div>
           <div class="metric">Legal Moves <span class="help-icon" title="Legal Moves is the count of legal options available to the side to move. More legal moves usually means more mobility and flexibility.">?</span><b id="legal_score">{{ detail.positions[0].score }}</b></div>
-          <div class="metric">Score <span class="help-icon" title="Score is the weighted blend used by the self-play engine to rank positions. It combines legal moves, material, forward control, and center control.">?</span><b id="score">{{ "%.2f"|format(detail.positions[0].total_score) }}</b></div>
+          <div class="metric">Score <span class="help-icon" title="Score uses phase-aware weights: opening center control and king safety, then endgame wing control and king activity.">?</span><b id="score">{{ "%.2f"|format(detail.positions[0].total_score) }}</b></div>
           {% if game_summary and game_summary.white_weights and game_summary.black_weights %}
             <div class="metric">
               Weights <span class="help-icon" title="These are the engine weights used to score positions in this game. If both sides share the same weights, the page shows one row; otherwise it shows white and black separately.">?</span>
@@ -188,6 +191,9 @@
       const forwardSummary = document.getElementById('forward_summary');
       const material = document.getElementById('material');
       const center = document.getElementById('center');
+      const flank = document.getElementById('flank');
+      const phase = document.getElementById('phase');
+      const phaseWeights = document.getElementById('phase_weights');
       const score = document.getElementById('score');
       const legalScore = document.getElementById('legal_score');
       const links = Array.from(document.querySelectorAll('#positions_list a[data-index]'));
@@ -235,6 +241,10 @@
         forwardSummary.textContent = `White ${totals.white} vs Black ${totals.black}`;
         material.textContent = `${pos.material.White} / ${pos.material.Black}`;
         center.textContent = `${pos.center.White} / ${pos.center.Black}`;
+        flank.textContent = `${pos.flank.White} / ${pos.flank.Black}`;
+        phase.textContent = pos.phase;
+        const weights = pos.weight_percentages;
+        phaseWeights.textContent = `${weights['Material']}% mat · ${weights['Legal Moves']}% mobility · ${weights['Center Control']}% center · ${weights['Forward Score']}% forward`;
         score.textContent = Number(pos.total_score).toFixed(2);
         legalScore.textContent = String(pos.score);
         label.textContent = describePosition(pos);

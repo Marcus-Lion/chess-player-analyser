@@ -91,6 +91,10 @@ DEFAULT_SELF_PLAY_WORKERS = min(max(1, os.process_cpu_count() * 2 or 8), 48)
 JOB_RETENTION_SECONDS = 60
 # Five complete 16-player double round-robins: 5 * 240 games.
 SELF_PLAY_REBALANCE_BATCH_SIZE = max(1, _env_int("SELF_PLAY_REBALANCE_BATCH_SIZE", 1_200))
+# Neo4j writes are grouped so each completed game does not require a separate
+# network round trip and transaction.  Results are still flushed frequently
+# enough to survive a normal process interruption with little loss.
+SELF_PLAY_WRITE_BATCH_SIZE = max(1, _env_int("SELF_PLAY_WRITE_BATCH_SIZE", 25))
 SELF_PLAY_ELITE_COUNT = 4
 SELF_PLAY_ELITE_MUTATION_STDDEV = max(0.0, _env_float("SELF_PLAY_ELITE_MUTATION_STDDEV", 0.10))
 
@@ -1039,6 +1043,8 @@ def _play_and_save_game(
     played_at: str,
 ) -> SelfPlayGame:
     """Play one game and return it to the caller for persistence."""
+    played_at = datetime.now(timezone.utc).isoformat()
+    print(f"Starting self-play game {game_index} in process {os.getpid()}", flush=True)
     game = play_self_game(config, game_index, run_id=run_id)
     game.run_id = run_id
     grouping = build_run_grouping(
@@ -1055,7 +1061,17 @@ def _play_and_save_game(
     game.top_k_score_threshold = config.top_k_score_threshold
     game.max_turns = config.max_turns
     game.start_fen = config.fen or "startpos"
+    print(
+        f"Finished self-play game {game_index} in process {os.getpid()}: "
+        f"{game.result} after {game.turns} turns ({game.termination})",
+        flush=True,
+    )
     return game
+
+
+def _announce_self_play_worker() -> None:
+    """Announce each process created by the self-play process pool."""
+    print(f"Launched self-play pool worker process {os.getpid()}", flush=True)
 
 
 def run_self_play(
@@ -1083,6 +1099,7 @@ def run_self_play(
 
     requested_workers = config.workers or DEFAULT_SELF_PLAY_WORKERS
     max_workers = max(1, min(int(requested_workers), total_games))
+    print(f"Starting self-play process pool with {max_workers} workers", flush=True)
     future_to_game: dict = {}
     saved_results = load_self_play_results(limit=None)
     completed_rebalance_batches = len(saved_results) // SELF_PLAY_REBALANCE_BATCH_SIZE
@@ -1092,7 +1109,10 @@ def run_self_play(
         for row in saved_results[-pending_saved_games:]
     ] if pending_saved_games else []
     rebalance_batch_number = completed_rebalance_batches
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+    with ProcessPoolExecutor(
+        max_workers=max_workers,
+        initializer=_announce_self_play_worker,
+    ) as executor:
         game_index = 1
         for pair_index in range(1, total_games // 2 + 1):
             pair_seed = _seed_for_game(config, pair_index)
@@ -1106,6 +1126,7 @@ def run_self_play(
 
         completed_games: dict[int, SelfPlayGame] = {}
         completed_count = 0
+        pending_writes: list[SelfPlayGame] = []
         for future in as_completed(future_to_game):
             index, game_config = future_to_game[future]
             try:
@@ -1132,7 +1153,10 @@ def run_self_play(
                     max_turns=config.max_turns,
                     start_fen=config.fen or "startpos",
                 )
-            save_self_play_results([game], refresh_player_elos=False)
+            pending_writes.append(game)
+            if len(pending_writes) >= SELF_PLAY_WRITE_BATCH_SIZE:
+                save_self_play_results(pending_writes, refresh_player_elos=False)
+                pending_writes.clear()
             rebalance_batch.append(game)
             if len(rebalance_batch) >= SELF_PLAY_REBALANCE_BATCH_SIZE:
                 rebalance_batch_number += 1
@@ -1156,6 +1180,9 @@ def run_self_play(
             ordered_games = [completed_games[i] for i in sorted(completed_games)]
             if progress_callback is not None:
                 progress_callback(completed_count, game, ordered_games)
+
+        if pending_writes:
+            save_self_play_results(pending_writes, refresh_player_elos=False)
 
     if rebalance_batch:
         print(
@@ -1364,18 +1391,38 @@ def load_tuning_corpus(limit: int = 50) -> list[dict]:
 
 def _run_self_play_job(job_id: str, run_id: str, config_data: dict, reporter: "SelfPlayJobClient") -> None:
     config = SelfPlayConfig(**config_data)
+    total_games = _paired_game_count(config.games)
+    worker_count = max(
+        1,
+        min(int(config.workers or DEFAULT_SELF_PLAY_WORKERS), total_games),
+    )
+    started_at = time.monotonic()
     status = SelfPlayJobStatus(
         job_id=job_id,
         state="running",
-        total=_paired_game_count(config.games),
+        total=total_games,
         completed=0,
-        message="Running",
+        message=f"Completed 0 of {total_games} | Running {worker_count} | ETA calculating",
         played_at=datetime.now(timezone.utc).isoformat(),
         run_id=run_id,
     )
 
     status_lock = threading.Lock()
     stop_heartbeat = threading.Event()
+
+    def _progress_message(completed: int) -> str:
+        running = min(worker_count, max(0, total_games - completed))
+        if completed:
+            elapsed = time.monotonic() - started_at
+            remaining_seconds = max(0.0, (elapsed / completed) * (total_games - completed))
+            remaining_minutes = int(math.ceil(remaining_seconds / 60))
+            if remaining_minutes >= 60:
+                eta = f"{remaining_minutes // 60}h {remaining_minutes % 60:02d}m"
+            else:
+                eta = f"{remaining_minutes}m"
+        else:
+            eta = "calculating"
+        return f"Completed {completed} of {total_games} | Running {running} | ETA {eta}"
 
     def _send_status() -> None:
         with status_lock:
@@ -1389,10 +1436,7 @@ def _run_self_play_job(job_id: str, run_id: str, config_data: dict, reporter: "S
             with status_lock:
                 if status.state not in ("running", "queued"):
                     continue
-                if status.completed:
-                    status.message = f"Completed {status.completed} of {status.total}"
-                else:
-                    status.message = status.message or "Running"
+                status.message = _progress_message(status.completed)
                 reporter.send(status)
 
     _send_status()
@@ -1403,7 +1447,7 @@ def _run_self_play_job(job_id: str, run_id: str, config_data: dict, reporter: "S
         def progress_callback(completed: int, game: SelfPlayGame, games: list[SelfPlayGame]) -> None:
             with status_lock:
                 status.completed = completed
-                status.message = f"Completed {completed} of {status.total}"
+                status.message = _progress_message(completed)
                 status.run_id = game.run_id or run_id
                 reporter.send(status)
 
@@ -1532,6 +1576,7 @@ def start_self_play_job(config: SelfPlayConfig) -> dict:
             start_new_session=os.name != "nt",
         )
         _write_job_pid_file(job_id, run_id, proc.pid, cmd)
+        print(f"Launched self-play process {proc.pid} for job {job_id}", flush=True)
 
         # Tee worker output to both the log file and the main process's stdout
         # so it's visible in Cloud Run logs.

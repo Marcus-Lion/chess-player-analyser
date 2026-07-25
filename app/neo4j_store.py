@@ -168,8 +168,19 @@ class Neo4jStore:
         row["black_weights"] = json.loads(row.pop("black_weights_json", "null") or "null")
         return row
 
-    def save_self_play_games(self, games: list[dict]) -> int:
-        """Upsert self-play game results and player nodes, keyed on run/index."""
+    def save_self_play_games(
+        self,
+        games: list[dict],
+        *,
+        refresh_player_elos: bool = False,
+    ) -> int:
+        """Upsert self-play game results and optionally refresh player Elo.
+
+        Elo calculation is deliberately opt-in.  Recalculating it here for
+        every game requires loading and processing the complete game history
+        after every write, which becomes increasingly expensive during
+        self-play runs.
+        """
         if not games:
             return 0
 
@@ -210,7 +221,8 @@ class Neo4jStore:
         self.ensure_self_play_constraints()
         with self._driver.session(database=self.database) as session:
             session.run(query, rows=rows)
-        self.refresh_self_play_player_elos()
+        if refresh_player_elos:
+            self.refresh_self_play_player_elos()
         return len(rows)
 
     def refresh_self_play_player_elos(self) -> int:

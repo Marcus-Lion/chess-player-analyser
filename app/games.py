@@ -735,49 +735,46 @@ def _terminal_aware_evaluate(board: chess.Board) -> float:
     return _evaluate_position(board)
 
 
-# Severity tiers for the swing from the mover's evaluation to the opponent's
-# best reply, expressed in standard chess-style pawn-loss bands:
-#   Inaccuracy: loses at least half a pawn
-#   Mistake: loses at least one pawn
-#   Blunder: loses at least two pawns
-#
-# This keeps the labels aligned with the way chess analysis sites usually talk
-# about move quality, instead of tying the thresholds to the engine's internal
-# material weight.
-INACCURACY_PAWN_LOSS = 0.50
-MISTAKE_PAWN_LOSS = 1.00
-BLUNDER_PAWN_LOSS = 2.00
-INACCURACY_THRESHOLD = INACCURACY_PAWN_LOSS
-MISTAKE_THRESHOLD = MISTAKE_PAWN_LOSS
-BLUNDER_THRESHOLD = BLUNDER_PAWN_LOSS
+# The static evaluator combines mobility, material, control, and king
+# pressure, so its values are not literal pawn units. These bands are
+# deliberately wider than centipawn thresholds: small positional differences
+# should not be reported as serious errors.
+INACCURACY_THRESHOLD = 5.0
+MISTAKE_THRESHOLD = 10.0
+BLUNDER_THRESHOLD = 20.0
 
 
 def _blunder_score(board: chess.Board, move: chess.Move) -> float:
-    """How much ``move`` costs its mover once the opponent replies optimally.
+    """How much worse ``move`` is than the best move in the position.
 
-    A 1-ply lookahead, not a search: it evaluates the position right after
-    ``move``, then again after every opponent reply, and returns how far the
-    worst of those replies drags the evaluation down from before the move
-    (from the mover's perspective). This only catches immediate tactical
-    blunders such as hanging a piece -- deeper tactics need a real search.
+    This is a shallow move-quality comparison, not a full engine search. For
+    every legal candidate, evaluate the worst position the opponent can reach
+    after their next reply, from the candidate mover's perspective. The score
+    is the gap between the best candidate and ``move``. Comparing candidates
+    is important: comparing a move with the position before it incorrectly
+    treats a normal good reply by the opponent as a blunder by the mover.
+
+    The one-ply model is intended to catch immediate tactical blunders such as
+    hanging a piece; deeper tactics need a real search.
     Post-move positions are scored with ``_terminal_aware_evaluate`` so that
     a stalemate escape (a draw) is correctly valued above losing outright,
     and a reply that delivers checkmate is valued as an outright loss rather
     than whatever the material count happens to be.
     """
     mover = board.turn
-    before_for_mover = _evaluate_position(board)
-    if mover == chess.BLACK:
-        before_for_mover = -before_for_mover
+    values: dict[chess.Move, float] = {}
 
-    board.push(move)
-    try:
-        replies = list(board.legal_moves)
-        if not replies:
-            worst_for_mover = _terminal_aware_evaluate(board)
-            if mover == chess.BLACK:
-                worst_for_mover = -worst_for_mover
-        else:
+    def candidate_value(candidate: chess.Move) -> float:
+        if candidate in values:
+            return values[candidate]
+        board.push(candidate)
+        try:
+            replies = list(board.legal_moves)
+            if not replies:
+                value = _terminal_aware_evaluate(board)
+                values[candidate] = -value if mover == chess.BLACK else value
+                return values[candidate]
+
             worst_for_mover = math.inf
             for reply in replies:
                 board.push(reply)
@@ -787,10 +784,18 @@ def _blunder_score(board: chess.Board, move: chess.Move) -> float:
                     board.pop()
                 after_for_mover = -after if mover == chess.BLACK else after
                 worst_for_mover = min(worst_for_mover, after_for_mover)
-    finally:
-        board.pop()
+            values[candidate] = worst_for_mover
+            return values[candidate]
+        finally:
+            board.pop()
 
-    return round(before_for_mover - worst_for_mover, 2)
+    candidates = list(board.legal_moves)
+    if not candidates:
+        return 0.0
+
+    best_value = max(candidate_value(candidate) for candidate in candidates)
+    played_value = candidate_value(move)
+    return round(max(0.0, best_value - played_value), 2)
 
 
 def _move_severity(blunder_score: float) -> str:

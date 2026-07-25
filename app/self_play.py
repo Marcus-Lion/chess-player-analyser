@@ -990,7 +990,7 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
 
     if not result:
         result = "1/2-1/2"
-        termination = "max turns reached"
+        termination = "max turns"
 
     game.headers["Result"] = result
     game.headers["Termination"] = termination

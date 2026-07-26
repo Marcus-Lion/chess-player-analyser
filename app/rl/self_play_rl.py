@@ -25,11 +25,11 @@ def _terminal_result(board: chess.Board) -> tuple[str, str]:
     if board.is_insufficient_material():
         return ("1/2-1/2", "insufficient material")
     if board.is_fivefold_repetition():
-        return ("1/2-1/2", "5-fold-reps")
+        return ("1/2-1/2", "5-fold-rep")
     if board.is_seventyfive_moves():
         return ("1/2-1/2", "75-moves")
     if board.can_claim_threefold_repetition():
-        return ("1/2-1/2", "3-fold-reps")
+        return ("1/2-1/2", "3-fold-rep")
     if board.can_claim_fifty_moves():
         return ("1/2-1/2", "50-moves")
     return ("", "")

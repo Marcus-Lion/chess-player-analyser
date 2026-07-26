@@ -41,11 +41,11 @@ def _terminal_result(board: chess.Board) -> tuple[str, str]:
     if board.is_insufficient_material():
         return ("1/2-1/2", "insufficient material")
     if board.is_fivefold_repetition():
-        return ("1/2-1/2", "5-fold-reps")
+        return ("1/2-1/2", "5-fold-rep")
     if board.is_seventyfive_moves():
         return ("1/2-1/2", "75-moves")
     if board.can_claim_threefold_repetition():
-        return ("1/2-1/2", "3-fold-reps")
+        return ("1/2-1/2", "3-fold-rep")
     if board.can_claim_fifty_moves():
         return ("1/2-1/2", "50-moves")
     return ("", "")
@@ -138,12 +138,12 @@ class DoubleDQNModel:
     """Small state-action network for a Double DQN experiment branch."""
 
     def __init__(
-        self,
-        *,
-        w1: np.ndarray,
-        b1: np.ndarray,
-        w2: np.ndarray,
-        b2: float,
+            self,
+            *,
+            w1: np.ndarray,
+            b1: np.ndarray,
+            w2: np.ndarray,
+            b2: float,
     ) -> None:
         self.w1 = w1.astype(np.float32)
         self.b1 = b1.astype(np.float32)
@@ -170,10 +170,10 @@ class DoubleDQNModel:
         self.b2 = float(other.b2)
 
     def _forward_move(
-        self,
-        board_feat: np.ndarray,
-        legal_moves: list[chess.Move],
-        board: chess.Board,
+            self,
+            board_feat: np.ndarray,
+            legal_moves: list[chess.Move],
+            board: chess.Board,
     ) -> tuple[np.ndarray, list[tuple[np.ndarray, np.ndarray, np.ndarray]]]:
         q_values: list[float] = []
         caches: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
@@ -196,12 +196,12 @@ class DoubleDQNModel:
         return {move: float(q) for move, q in zip(legal_moves, q_values, strict=False)}
 
     def choose_move(
-        self,
-        board: chess.Board,
-        legal_moves: list[str] | None = None,
-        *,
-        epsilon: float = 0.05,
-        rng: random.Random | None = None,
+            self,
+            board: chess.Board,
+            legal_moves: list[str] | None = None,
+            *,
+            epsilon: float = 0.05,
+            rng: random.Random | None = None,
     ) -> chess.Move:
         rng = rng or random.Random()
         legal_moves = legal_moves or [move.uci() for move in board.legal_moves]
@@ -220,12 +220,12 @@ class DoubleDQNModel:
         return float(q_values[0]) if q_values.size else 0.0
 
     def train_batch(
-        self,
-        samples: list[DQNTransition],
-        *,
-        target_model: "DoubleDQNModel",
-        learning_rate: float,
-        gamma: float,
+            self,
+            samples: list[DQNTransition],
+            *,
+            target_model: "DoubleDQNModel",
+            learning_rate: float,
+            gamma: float,
     ) -> float:
         if not samples:
             return 0.0
@@ -295,13 +295,13 @@ class DoubleDQNModel:
 
 
 def play_double_dqn_game(
-    model: DoubleDQNModel,
-    config: DoubleDQNConfig,
-    *,
-    epsilon: float | None = None,
-    seed: int | None = None,
-    start_fen: str | None = None,
-    game_id: str | None = None,
+        model: DoubleDQNModel,
+        config: DoubleDQNConfig,
+        *,
+        epsilon: float | None = None,
+        seed: int | None = None,
+        start_fen: str | None = None,
+        game_id: str | None = None,
 ) -> list[DQNTransition]:
     rng = random.Random(seed)
     board = chess.Board(start_fen) if start_fen else chess.Board()
@@ -361,11 +361,11 @@ def play_double_dqn_game(
 
 
 def _play_model_vs_heuristic_game(
-    model: DoubleDQNModel,
-    *,
-    epsilon: float,
-    max_turns: int,
-    seed: int | None = None,
+        model: DoubleDQNModel,
+        *,
+        epsilon: float,
+        max_turns: int,
+        seed: int | None = None,
 ) -> str:
     rng = random.Random(seed)
     board = chess.Board()
@@ -391,11 +391,11 @@ class DoubleDQNEvalSummary:
 
 
 def evaluate_matchup(
-    model: DoubleDQNModel,
-    config: DoubleDQNConfig,
-    *,
-    games: int = 10,
-    seed: int | None = None,
+        model: DoubleDQNModel,
+        config: DoubleDQNConfig,
+        *,
+        games: int = 10,
+        seed: int | None = None,
 ) -> DoubleDQNEvalSummary:
     total_games = max(1, games)
     rng = random.Random(seed if seed is not None else config.seed)
@@ -405,7 +405,7 @@ def evaluate_matchup(
             model,
             epsilon=0.0,
             max_turns=config.max_turns,
-            seed=rng.randint(0, 2**31 - 1),
+            seed=rng.randint(0, 2 ** 31 - 1),
         )
         if result == "1-0":
             white_wins += 1
@@ -423,12 +423,12 @@ def evaluate_matchup(
 
 
 def train_from_self_play_double_dqn(
-    model: DoubleDQNModel,
-    config: DoubleDQNConfig,
-    *,
-    save_path: str | Path | None = None,
-    seed: int | None = None,
-    progress_callback=None,
+        model: DoubleDQNModel,
+        config: DoubleDQNConfig,
+        *,
+        save_path: str | Path | None = None,
+        seed: int | None = None,
+        progress_callback=None,
 ) -> DQNTrainingRun:
     rng = random.Random(seed if seed is not None else config.seed)
     replay = TransitionReplayBuffer(config.replay_capacity)
@@ -442,7 +442,7 @@ def train_from_self_play_double_dqn(
             model,
             config,
             epsilon=episode_epsilon,
-            seed=rng.randint(0, 2**31 - 1),
+            seed=rng.randint(0, 2 ** 31 - 1),
             game_id=f"{seed or 'dqn'}-{episode}",
         )
         replay.add_many(episode_transitions)

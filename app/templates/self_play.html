@@ -607,7 +607,7 @@
         values.forEach((value) => {
           const option = document.createElement('option');
           option.value = value;
-          option.textContent = key === 'termination' && value === '3-fold-reps' ? '3-fold repetition' : value;
+          option.textContent = key === 'termination' && value === '3-fold-rep' ? '3-fold repetition' : value;
           select.appendChild(option);
         });
       }

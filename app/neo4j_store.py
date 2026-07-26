@@ -135,6 +135,21 @@ class Neo4jStore:
             "FOR (p:SelfPlayPlayer) REQUIRE p.player_id IS UNIQUE",
             "CREATE CONSTRAINT self_play_termination_key IF NOT EXISTS "
             "FOR (t:SelfPlayTermination) REQUIRE t.termination_key IS UNIQUE",
+            # Non-unique indexes for the most common query patterns.
+            "CREATE INDEX self_play_game_played_at IF NOT EXISTS "
+            "FOR (g:SelfPlayGame) ON (g.played_at)",
+            "CREATE INDEX self_play_game_run_id IF NOT EXISTS "
+            "FOR (g:SelfPlayGame) ON (g.run_id)",
+            "CREATE INDEX self_play_game_run_group IF NOT EXISTS "
+            "FOR (g:SelfPlayGame) ON (g.run_group)",
+            "CREATE INDEX self_play_game_run_date IF NOT EXISTS "
+            "FOR (g:SelfPlayGame) ON (g.run_date)",
+            "CREATE INDEX self_play_game_white_player_id IF NOT EXISTS "
+            "FOR (g:SelfPlayGame) ON (g.white_player_id)",
+            "CREATE INDEX self_play_game_black_player_id IF NOT EXISTS "
+            "FOR (g:SelfPlayGame) ON (g.black_player_id)",
+            "CREATE INDEX self_play_player_elo IF NOT EXISTS "
+            "FOR (p:SelfPlayPlayer) ON (p.elo)",
         ]
         with self._driver.session(database=self.database) as session:
             for statement in statements:

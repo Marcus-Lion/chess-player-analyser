@@ -88,14 +88,14 @@ DEFAULT_SELF_PLAY_WORKERS = min(max(1, os.process_cpu_count() * 2 or 8), 48)
 # Job status lives in memory (see SelfPlayJobHub); only each job's worker log
 # file is on disk. Delete a job's status/log once it has been idle for this
 # long so neither grows without bound.
-JOB_RETENTION_SECONDS = 60
+JOB_RETENTION_SECONDS = 60*60 # 1hr
 # Five complete 16-player double round-robins: 5 * 240 games.
 SELF_PLAY_REBALANCE_BATCH_SIZE = max(1, _env_int("SELF_PLAY_REBALANCE_BATCH_SIZE", 1_200))
 # Neo4j writes are grouped so each completed game does not require a separate
 # network round trip and transaction.  Results are still flushed frequently
 # enough to survive a normal process interruption with little loss.
-SELF_PLAY_WRITE_BATCH_SIZE = max(1, _env_int("SELF_PLAY_WRITE_BATCH_SIZE", 64))
-SELF_PLAY_ELITE_COUNT = 4
+SELF_PLAY_WRITE_BATCH_SIZE = max(1, _env_int("SELF_PLAY_WRITE_BATCH_SIZE", 32))
+SELF_PLAY_ELITE_COUNT = 4 # Players with the highest win rate
 SELF_PLAY_ELITE_MUTATION_STDDEV = max(0.0, _env_float("SELF_PLAY_ELITE_MUTATION_STDDEV", 0.10))
 
 

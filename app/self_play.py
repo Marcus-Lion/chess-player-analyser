@@ -84,7 +84,7 @@ CACHE_DIR = BASE_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 SELF_PLAY_JOBS_DIR = CACHE_DIR / "self_play_jobs"
 SELF_PLAY_JOBS_DIR.mkdir(parents=True, exist_ok=True)
-DEFAULT_SELF_PLAY_WORKERS = min(max(1, os.process_cpu_count() * 2 or 8), 48)
+DEFAULT_SELF_PLAY_WORKERS = min(max(1, os.process_cpu_count() or 1), 48)
 # Job status lives in memory (see SelfPlayJobHub); only each job's worker log
 # file is on disk. Delete a job's status/log once it has been idle for this
 # long so neither grows without bound.
@@ -911,18 +911,48 @@ def tune_score_weights(
     }
 
 
-def _terminal_reason(board: chess.Board) -> tuple[str, str]:
+def _terminal_reason(
+    board: chess.Board,
+    repetition_counts: Counter | None = None,
+) -> tuple[str, str]:
+    """Return the game's terminal result without replaying its move stack.
+
+    ``Board.can_claim_threefold_repetition()`` reconstructs and scans the
+    complete reversible history on every call. That is disproportionately
+    expensive in self-play, where this check runs after every ply. The caller
+    can provide counts maintained while moves are pushed; the only remaining
+    work for a claim is checking the resulting position for each legal move.
+    """
     if board.is_checkmate():
         return ("1-0" if board.turn == chess.BLACK else "0-1", "checkmate")
     if board.is_stalemate():
         return ("1/2-1/2", "stalemate")
     if board.is_insufficient_material():
         return ("1/2-1/2", "insufficient material")
-    if board.is_fivefold_repetition():
+    if repetition_counts is None:
+        fivefold = board.is_fivefold_repetition()
+    else:
+        fivefold = repetition_counts[board._transposition_key()] >= 5
+    if fivefold:
         return ("1/2-1/2", "fivefold repetition")
     if board.is_seventyfive_moves():
         return ("1/2-1/2", "75-move rule")
-    if board.can_claim_threefold_repetition():
+
+    if repetition_counts is None:
+        can_claim_threefold = board.can_claim_threefold_repetition()
+    else:
+        current_key = board._transposition_key()
+        can_claim_threefold = repetition_counts[current_key] >= 3
+        if not can_claim_threefold:
+            for move in board.generate_legal_moves():
+                board.push(move)
+                try:
+                    if repetition_counts[board._transposition_key()] >= 2:
+                        can_claim_threefold = True
+                        break
+                finally:
+                    board.pop()
+    if can_claim_threefold:
         return ("1/2-1/2", "3-fold repetition")
     if board.can_claim_fifty_moves():
         return ("1/2-1/2", "fifty-move rule")
@@ -956,8 +986,9 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
     node = game
     turn = 0
     eval_counter = [0]
+    repetition_counts = Counter({board._transposition_key(): 1})
     start_time = time.perf_counter()
-    result, termination = _terminal_reason(board)
+    result, termination = _terminal_reason(board, repetition_counts)
     try:
         while turn < config.max_turns and not result:
             active_weights = white_weights if board.turn == chess.WHITE else black_weights
@@ -981,10 +1012,11 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
             )
             san = board.san(move)
             board.push(move)
+            repetition_counts[board._transposition_key()] += 1
             node = node.add_variation(move)
             node.comment = san
             turn += 1
-            result, termination = _terminal_reason(board)
+            result, termination = _terminal_reason(board, repetition_counts)
     except Exception:
         # A crashed game shouldn't take the rest of the batch down with it
         # (this is submitted as one ProcessPoolExecutor unit of work per

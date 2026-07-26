@@ -61,6 +61,33 @@ fn repetition_counts(current: &Chess, history_fens: &[String]) -> HashMap<u64, u
     counts
 }
 
+/// Whether the side to move can claim threefold repetition immediately after
+/// the candidate position has been added to `prior_counts`.
+///
+/// A claim is available either because the current position is already the
+/// third occurrence, or because a legal move would create the third
+/// occurrence. This mirrors python-chess `can_claim_threefold_repetition()`.
+fn can_claim_threefold(
+    pos: &Chess,
+    prior_counts: &HashMap<u64, u32>,
+    candidate_hash: u64,
+) -> bool {
+    if prior_counts.get(&candidate_hash).copied().unwrap_or(0) + 1 >= 3 {
+        return true;
+    }
+
+    for m in pos.legal_moves() {
+        let mut claimed = pos.clone();
+        claimed.play_unchecked(m);
+        let claimed_hash = zobrist(&claimed);
+        let candidate_occurrence = u32::from(claimed_hash == candidate_hash);
+        if prior_counts.get(&claimed_hash).copied().unwrap_or(0) + candidate_occurrence >= 2 {
+            return true;
+        }
+    }
+    false
+}
+
 /// Pick a move via negamax search -- the Rust equivalent of
 /// `app.games.choose_engine_move`.
 ///
@@ -117,6 +144,7 @@ fn choose_engine_move(
     } else {
         HashMap::new()
     };
+    let mut repetition_claim_cache: HashMap<u64, bool> = HashMap::new();
 
     let mut state = SearchState::new(weights);
     let mut scored: Vec<(f64, shakmaty::Move)> = Vec::new();
@@ -129,9 +157,16 @@ fn choose_engine_move(
         }
         let mut value = -negamax(&child, depth - 1, f64::NEG_INFINITY, f64::INFINITY, &mut state);
         if avoid_repetition {
-            // python-chess is_repetition(3): the move creates a 3rd occurrence
-            // when this position already appears >= 2 times in the history.
-            if rep_counts.get(&zobrist(&child)).copied().unwrap_or(0) >= 2 {
+            // This catches both a move that creates the third occurrence
+            // immediately and a move that gives the opponent a legal
+            // claim-producing move on their next turn. The prior-position
+            // counts are immutable for this root search, so cache the result
+            // by candidate position and avoid cloning the full history map.
+            let child_hash = zobrist(&child);
+            let opponent_can_claim = *repetition_claim_cache
+                .entry(child_hash)
+                .or_insert_with(|| can_claim_threefold(&child, &rep_counts, child_hash));
+            if opponent_can_claim {
                 value -= REPETITION_AVOIDANCE_PENALTY;
             }
         }

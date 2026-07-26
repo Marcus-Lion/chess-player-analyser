@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import field
+from collections import Counter
 import math
 from uuid import uuid4
 import random
@@ -17,18 +18,41 @@ from app.rl.model import ChessRLModel, _softmax
 _DIRICHLET_ALPHA = 0.3
 
 
-def _terminal_result(board: chess.Board) -> tuple[str, str]:
+def _can_claim_threefold(board: chess.Board, repetition_counts: Counter) -> bool:
+    """Check threefold claims from counts instead of replaying the full stack."""
+    if not any(count >= 2 for count in repetition_counts.values()):
+        return False
+    if repetition_counts[board._transposition_key()] >= 3:
+        return True
+    for move in board.generate_legal_moves():
+        board.push(move)
+        try:
+            if repetition_counts[board._transposition_key()] >= 2:
+                return True
+        finally:
+            board.pop()
+    return False
+
+
+def _terminal_result(
+    board: chess.Board,
+    repetition_counts: Counter | None = None,
+) -> tuple[str, str]:
     if board.is_checkmate():
         return ("1-0" if board.turn == chess.BLACK else "0-1", "checkmate")
     if board.is_stalemate():
         return ("1/2-1/2", "stalemate")
     if board.is_insufficient_material():
         return ("1/2-1/2", "insufficient material")
-    if board.is_fivefold_repetition():
+    if (repetition_counts is None and board.is_fivefold_repetition()) or (
+        repetition_counts is not None and repetition_counts[board._transposition_key()] >= 5
+    ):
         return ("1/2-1/2", "5-fold-rep")
     if board.is_seventyfive_moves():
         return ("1/2-1/2", "75-moves")
-    if board.can_claim_threefold_repetition():
+    if (repetition_counts is None and board.can_claim_threefold_repetition()) or (
+        repetition_counts is not None and _can_claim_threefold(board, repetition_counts)
+    ):
         return ("1/2-1/2", "3-fold-rep")
     if board.can_claim_fifty_moves():
         return ("1/2-1/2", "50-moves")
@@ -60,15 +84,21 @@ def _sample_from_policy(policy: dict[str, float], rng: random.Random) -> str:
     return moves[-1]
 
 
-def _terminal_value(board: chess.Board) -> float | None:
+def _terminal_value(board: chess.Board, repetition_counts: Counter | None = None) -> float | None:
     if board.is_checkmate():
         return -1.0
     if (
         board.is_stalemate()
         or board.is_insufficient_material()
-        or board.is_fivefold_repetition()
+        or (
+            (repetition_counts is None and board.is_fivefold_repetition())
+            or (repetition_counts is not None and repetition_counts[board._transposition_key()] >= 5)
+        )
         or board.is_seventyfive_moves()
-        or board.can_claim_threefold_repetition()
+        or (
+            (repetition_counts is None and board.can_claim_threefold_repetition())
+            or (repetition_counts is not None and _can_claim_threefold(board, repetition_counts))
+        )
         or board.can_claim_fifty_moves()
     ):
         return 0.0
@@ -222,6 +252,7 @@ def _select_child_with_repetition_bias(
     repetition_threshold: float,
     ply: int,
     max_turns: int,
+    repetition_counts: Counter,
 ) -> tuple[str, _MCTSNode]:
     force_progress = ply >= max(0, max_turns - 12)
     if repetition_avoidance <= 0.0 or (root_value <= repetition_threshold and not force_progress):
@@ -245,16 +276,20 @@ def _select_child_with_repetition_bias(
         q = child.value
         u = c_puct * child.prior * sqrt_visits / (1 + child.visits)
         score = q + u
-        candidate_board = board.copy(stack=True)
+        candidate_board = board.copy(stack=False)
         candidate_board.push(move_obj)
         if candidate_board.is_checkmate():
             score += repetition_penalty * 2.0
         else:
             if candidate_board.is_stalemate():
                 score -= stalemate_penalty
-            if candidate_board.is_repetition(2):
+            candidate_key = candidate_board._transposition_key()
+            candidate_occurrences = repetition_counts[candidate_key] + 1
+            if candidate_occurrences >= 2:
                 score -= repetition_penalty * 0.35
-            if candidate_board.is_repetition(3) or candidate_board.can_claim_threefold_repetition():
+            candidate_counts = repetition_counts.copy()
+            candidate_counts[candidate_key] += 1
+            if _can_claim_threefold(candidate_board, candidate_counts):
                 score -= repetition_penalty * 1.25
             if (
                 ply >= 24
@@ -293,11 +328,12 @@ def _run_mcts(
 
     for _ in range(max(1, simulations)):
         search_board = board.copy(stack=True)
+        repetition_counts = Counter({board._transposition_key(): 1})
         node = root
         path = [node]
 
         while True:
-            terminal_value = _terminal_value(search_board)
+            terminal_value = _terminal_value(search_board, repetition_counts)
             if terminal_value is not None:
                 value = terminal_value
                 break
@@ -322,8 +358,10 @@ def _run_mcts(
                 repetition_threshold=repetition_threshold,
                 ply=ply,
                 max_turns=max_turns,
+                repetition_counts=repetition_counts,
             )
             search_board.push(chess.Move.from_uci(move))
+            repetition_counts[search_board._transposition_key()] += 1
             node = child
             path.append(node)
 
@@ -360,9 +398,10 @@ def play_self_play_game(
     turn = 0
     result = ""
     termination = ""
+    repetition_counts = Counter({board._transposition_key(): 1})
 
     while turn < config.max_turns:
-        result, termination = _terminal_result(board)
+        result, termination = _terminal_result(board, repetition_counts)
         if result:
             break
 
@@ -420,6 +459,7 @@ def play_self_play_game(
             )
         )
         board.push(chess.Move.from_uci(chosen_move))
+        repetition_counts[board._transposition_key()] += 1
         turn += 1
 
     if not result:

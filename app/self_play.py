@@ -91,10 +91,9 @@ DEFAULT_SELF_PLAY_WORKERS = min(max(1, os.process_cpu_count() or 1), 48)
 JOB_RETENTION_SECONDS = 60*60 # 1hr
 # Five complete 16-player double round-robins: 5 * 240 games.
 SELF_PLAY_REBALANCE_BATCH_SIZE = max(1, _env_int("SELF_PLAY_REBALANCE_BATCH_SIZE", 1_200))
-# Neo4j writes are grouped so each completed game does not require a separate
-# network round trip and transaction.  Results are still flushed frequently
-# enough to survive a normal process interruption with little loss.
-SELF_PLAY_WRITE_BATCH_SIZE = max(1, _env_int("SELF_PLAY_WRITE_BATCH_SIZE", 32))
+# Completed games are persisted immediately. Elo is deliberately recalculated
+# less often because each refresh reads the complete saved-game history.
+SELF_PLAY_ELO_BATCH_SIZE = max(1, _env_int("SELF_PLAY_ELO_BATCH_SIZE", 32))
 SELF_PLAY_ELITE_COUNT = 4 # Players with the highest win rate
 SELF_PLAY_ELITE_MUTATION_STDDEV = max(0.0, _env_float("SELF_PLAY_ELITE_MUTATION_STDDEV", 0.10))
 
@@ -1158,7 +1157,7 @@ def run_self_play(
 
         completed_games: dict[int, SelfPlayGame] = {}
         completed_count = 0
-        pending_writes: list[SelfPlayGame] = []
+        elo_batch: list[SelfPlayGame] = []
         for future in as_completed(future_to_game):
             index, game_config = future_to_game[future]
             try:
@@ -1185,10 +1184,14 @@ def run_self_play(
                     max_turns=config.max_turns,
                     start_fen=config.fen or "startpos",
                 )
-            pending_writes.append(game)
-            if len(pending_writes) >= SELF_PLAY_WRITE_BATCH_SIZE:
-                save_self_play_results(pending_writes, refresh_player_elos=False)
-                pending_writes.clear()
+            # Persist each result as soon as its worker completes. This keeps
+            # completed games durable even if a later worker or the job itself
+            # fails. Elo refreshes remain batched because they scan all games.
+            save_self_play_results([game], refresh_player_elos=False)
+            elo_batch.append(game)
+            if len(elo_batch) >= SELF_PLAY_ELO_BATCH_SIZE:
+                refresh_self_play_player_elos()
+                elo_batch.clear()
             rebalance_batch.append(game)
             if len(rebalance_batch) >= SELF_PLAY_REBALANCE_BATCH_SIZE:
                 rebalance_batch_number += 1
@@ -1213,17 +1216,13 @@ def run_self_play(
             if progress_callback is not None:
                 progress_callback(completed_count, game, ordered_games)
 
-        if pending_writes:
-            save_self_play_results(pending_writes, refresh_player_elos=False)
-
     if rebalance_batch:
         print(
             "Weight update deferred for partial rebalance batch: "
             f"{len(rebalance_batch)}/{SELF_PLAY_REBALANCE_BATCH_SIZE} games."
         )
 
-    # Ratings remain useful as live reporting even when the weight-update
-    # sample has not reached the full rebalance cadence.
+    # Refresh ratings for a final partial Elo batch as well.
     try:
         refresh_self_play_player_elos()
     except Exception:

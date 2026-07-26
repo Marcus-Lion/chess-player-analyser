@@ -92,6 +92,7 @@ The app reads configuration from environment variables. `.env` is loaded by the 
 | `SELF_PLAY_PLAYER_WEIGHT_MAX` | Upper bound for per-player random weights. | `4.0` |
 | `SELF_PLAY_PLAYER_WEIGHT_STDDEV` | Present in `.env`, but not currently read by the code. | The player spread is currently hardcoded in `app/players.py` |
 | `SELF_PLAY_REBALANCE_BATCH_SIZE` | Complete games required for a weight update; persisted partial batches carry into later runs. | `1200` in `.env` |
+| `SELF_PLAY_ELO_BATCH_SIZE` | Completed games between persisted-player Elo recalculations. Games themselves are saved immediately. | `32` |
 | `REPETITION_AVOIDANCE_MATERIAL_PAWNS` | Repetition-avoidance tuning parameter. | Used by engine logic |
 
 ## Data flow for human-game analysis

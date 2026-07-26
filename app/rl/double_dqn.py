@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
@@ -33,18 +34,40 @@ def _softmax(logits: np.ndarray) -> np.ndarray:
     return exp / total
 
 
-def _terminal_result(board: chess.Board) -> tuple[str, str]:
+def _can_claim_threefold(board: chess.Board, repetition_counts: Counter) -> bool:
+    if not any(count >= 2 for count in repetition_counts.values()):
+        return False
+    if repetition_counts[board._transposition_key()] >= 3:
+        return True
+    for move in board.generate_legal_moves():
+        board.push(move)
+        try:
+            if repetition_counts[board._transposition_key()] >= 2:
+                return True
+        finally:
+            board.pop()
+    return False
+
+
+def _terminal_result(
+    board: chess.Board,
+    repetition_counts: Counter | None = None,
+) -> tuple[str, str]:
     if board.is_checkmate():
         return ("1-0" if board.turn == chess.BLACK else "0-1", "checkmate")
     if board.is_stalemate():
         return ("1/2-1/2", "stalemate")
     if board.is_insufficient_material():
         return ("1/2-1/2", "insufficient material")
-    if board.is_fivefold_repetition():
+    if (repetition_counts is None and board.is_fivefold_repetition()) or (
+        repetition_counts is not None and repetition_counts[board._transposition_key()] >= 5
+    ):
         return ("1/2-1/2", "5-fold-rep")
     if board.is_seventyfive_moves():
         return ("1/2-1/2", "75-moves")
-    if board.can_claim_threefold_repetition():
+    if (repetition_counts is None and board.can_claim_threefold_repetition()) or (
+        repetition_counts is not None and _can_claim_threefold(board, repetition_counts)
+    ):
         return ("1/2-1/2", "3-fold-rep")
     if board.can_claim_fifty_moves():
         return ("1/2-1/2", "50-moves")
@@ -309,9 +332,10 @@ def play_double_dqn_game(
     transitions: list[DQNTransition] = []
     turn = 0
     rollout_epsilon = config.epsilon_start if epsilon is None else max(0.0, float(epsilon))
+    repetition_counts = Counter({board._transposition_key(): 1})
 
     while turn < config.max_turns:
-        result, _termination = _terminal_result(board)
+        result, _termination = _terminal_result(board, repetition_counts)
         if result:
             break
 
@@ -325,9 +349,10 @@ def play_double_dqn_game(
         side_to_move = "White" if board.turn == chess.WHITE else "Black"
 
         board.push(action)
+        repetition_counts[board._transposition_key()] += 1
         turn += 1
         next_legal_moves = [move.uci() for move in board.legal_moves]
-        next_result, _ = _terminal_result(board)
+        next_result, _ = _terminal_result(board, repetition_counts)
         done = bool(next_result) or board.is_game_over(claim_draw=False) or turn >= config.max_turns
         if done and not next_result:
             next_result = "1/2-1/2"

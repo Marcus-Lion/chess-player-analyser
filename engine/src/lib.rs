@@ -8,6 +8,7 @@ mod search;
 
 use std::collections::HashMap;
 use std::env;
+use std::sync::{Mutex, OnceLock};
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -47,6 +48,17 @@ fn zobrist(pos: &Chess) -> u64 {
     pos.zobrist_hash::<Zobrist64>(EnPassantMode::Legal).0
 }
 
+fn cached_zobrist(fen: &str) -> Option<u64> {
+    static POSITION_CACHE: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+    let cache = POSITION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(hash) = cache.lock().ok()?.get(fen).copied() {
+        return Some(hash);
+    }
+    let hash = parse_position(fen).ok().map(|pos| zobrist(&pos))?;
+    cache.lock().ok()?.insert(fen.to_owned(), hash);
+    Some(hash)
+}
+
 /// Multiset of position keys from prior game history plus the current
 /// position, all hashed by shakmaty so the count is internally consistent.
 /// Used to reproduce python-chess `board.is_repetition(3)` at the root.
@@ -54,8 +66,8 @@ fn repetition_counts(current: &Chess, history_fens: &[String]) -> HashMap<u64, u
     let mut counts: HashMap<u64, u32> = HashMap::new();
     *counts.entry(zobrist(current)).or_insert(0) += 1;
     for fen in history_fens {
-        if let Ok(pos) = parse_position(fen) {
-            *counts.entry(zobrist(&pos)).or_insert(0) += 1;
+        if let Some(hash) = cached_zobrist(fen) {
+            *counts.entry(hash).or_insert(0) += 1;
         }
     }
     counts

@@ -880,11 +880,21 @@ def choose_engine_move(
 
     """
     rng = rng or random.Random()
-    history_board = board.copy(stack=True)
-    prior_fens: list[str] = []
-    while history_board.move_stack:
-        history_board.pop()
-        prior_fens.append(history_board.fen())
+    stack_signature = tuple(board.move_stack)
+    cached_signature = getattr(board, "_engine_history_signature", ())
+    prior_fens = getattr(board, "_engine_prior_fens", None)
+    if prior_fens is None or stack_signature[:len(cached_signature)] != cached_signature:
+        cached_signature = ()
+        prior_fens = []
+    if len(stack_signature) > len(cached_signature):
+        history_board = board.copy(stack=True)
+        new_positions: list[str] = []
+        for _ in range(len(stack_signature) - len(cached_signature)):
+            history_board.pop()
+            new_positions.append(history_board.fen())
+        prior_fens.extend(reversed(new_positions))
+    board._engine_history_signature = stack_signature
+    board._engine_prior_fens = prior_fens
 
     uci, score, evaluations = chess_engine.choose_engine_move(
         board.fen(),

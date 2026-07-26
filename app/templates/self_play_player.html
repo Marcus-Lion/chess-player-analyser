@@ -39,6 +39,8 @@
 
   {% if timeline_chart %}
     <div class="card">
+      <h2>Elo over time</h2>
+      <p class="muted">Each bar shows the player’s ending Elo for a 25-game batch. Hover over a bar for the exact game range and date.</p>
       {{ timeline_chart | safe }}
     </div>
   {% endif %}

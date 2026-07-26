@@ -347,56 +347,51 @@ def _make_player_timeline_chart(timeline: pd.DataFrame, player_name: str) -> str
     if timeline.empty:
         return None
 
-    fig = make_subplots(
-        rows=2,
-        cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.08,
-        row_heights=[0.45, 0.55],
-        subplot_titles=("Elo over time", "Weights over time"),
+    batch_size = 25
+    timeline = timeline.copy()
+    timeline["batch"] = ((timeline["game_seq"] - 1) // batch_size) + 1
+    batches = timeline.groupby("batch", sort=True).agg(
+        elo=("elo", "last"),
+        first_game=("game_seq", "min"),
+        last_game=("game_seq", "max"),
+        played_at=("played_at", "last"),
+    ).reset_index()
+    batches["game_range"] = batches.apply(
+        lambda row: f"{int(row.first_game)}–{int(row.last_game)}", axis=1
     )
+    batches["played_at_display"] = batches["played_at"].dt.strftime("%Y-%m-%d %H:%M:%S")
+    elo_min = float(batches["elo"].min())
+    elo_max = float(batches["elo"].max())
+    if elo_min == elo_max:
+        elo_min -= 1.0
+        elo_max += 1.0
 
-    x = timeline["played_at"]
-    fig.add_trace(
-        go.Scatter(
-            x=x,
-            y=timeline["elo"],
-            mode="lines+markers",
-            name="Elo",
-            line=dict(color="#2563eb", width=2),
+    fig = go.Figure(go.Bar(
+        x=batches["game_range"],
+        y=batches["elo"],
+        name="Elo",
+        marker_color="#2563eb",
+        customdata=batches[["played_at_display", "first_game", "last_game", "elo"]],
+        hovertemplate=(
+            "Games %{customdata[1]}–%{customdata[2]}"
+            "<br>Ending date: %{customdata[0]}"
+            "<br>Elo: %{customdata[3]:.0f}<extra></extra>"
         ),
-        row=1,
-        col=1,
-    )
-
-    weight_colors = {
-        "legal_moves_weight": "#16a34a",
-        "material_score_weight": "#dc2626",
-        "forward_score_weight": "#7c3aed",
-        "center_control_weight": "#d97706",
-    }
-    for dim in ("legal_moves_weight", "material_score_weight", "forward_score_weight", "center_control_weight"):
-        fig.add_trace(
-            go.Scatter(
-                x=x,
-                y=timeline[dim],
-                mode="lines+markers",
-                name=dim.replace("_", " "),
-                line=dict(color=weight_colors[dim], width=2),
-            ),
-            row=2,
-            col=1,
-        )
-
+    ))
     fig.update_layout(
-        title=f"{player_name} — Elo and weights over time",
-        height=700,
-        margin=dict(l=40, r=20, t=70, b=40),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        title=f"{player_name} — Elo over time",
+        height=480,
+        margin=dict(l=40, r=20, t=70, b=80),
+        bargap=0.2,
+        showlegend=False,
     )
-    fig.update_yaxes(title_text="Elo", row=1, col=1)
-    fig.update_yaxes(title_text="Weight", row=2, col=1)
-    fig.update_xaxes(title_text="Played at", row=2, col=1)
+    fig.update_yaxes(
+        title_text="Elo",
+        range=[elo_min, elo_max],
+        autorange=False,
+        rangemode="normal",
+    )
+    fig.update_xaxes(title_text="Games", tickangle=-45)
     return _fig_html(fig)
 
 

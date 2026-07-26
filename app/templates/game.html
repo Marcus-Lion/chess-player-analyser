@@ -41,6 +41,7 @@
     .controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .75rem 0; }
     .controls button { padding: .35rem .6rem; }
     .controls input[type="range"] { width: 100%; }
+    .controls .position-label { flex-basis: 100%; }
     .positions { display: inline-grid; grid-template-columns: max-content max-content; gap: .2rem .75rem; padding: 0; margin: 0; }
     .positions .position-row { display: contents; }
     .positions .move-start { grid-column: 1 / -1; }
@@ -161,7 +162,7 @@
           <button type="button" id="next_btn">▶</button>
           <button type="button" id="last_btn">⏭</button>
           <label><input type="checkbox" id="board_control_toggle" /> Board Control</label>
-          <span id="position_label" class="muted">Start position</span>
+          <span id="position_label" class="position-label muted">Start position</span>
         </div>
 
         <input id="position_slider" type="range" min="0" max="{{ detail.positions|length - 1 }}" value="0" step="1" />

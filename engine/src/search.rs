@@ -9,6 +9,10 @@ use shakmaty::{Chess, Color, EnPassantMode, Move, Position, Role};
 use crate::eval::{evaluate_white, Weights};
 
 pub const MATE_SCORE: f64 = 1_000_000.0;
+// A normal search leaf can occur in the middle of a capture sequence.  Extend
+// those leaves through a few forcing plies so a hanging piece is not hidden by
+// the static evaluator (for example, c3xd4 in the self-play analyser).
+const QUIESCENCE_DEPTH: i32 = 4;
 
 // Transposition-table bound types.
 const TT_EXACT: u8 = 0;
@@ -100,6 +104,63 @@ fn ordered_moves(pos: &Chess, killer: Option<Move>, tt_move: Option<Move>) -> Ve
     moves
 }
 
+/// Search forcing moves at a nominal leaf.  Without this, the engine may
+/// compare a quiet move with a capture before the opponent's recapture (or
+/// vice versa), making obvious exchanges look positionally attractive or
+/// unattractive depending on the exact depth parity.
+fn quiescence(
+    pos: &Chess,
+    mut alpha: f64,
+    beta: f64,
+    state: &mut SearchState,
+    remaining: i32,
+) -> f64 {
+    if pos.is_checkmate() {
+        return -(MATE_SCORE + remaining as f64);
+    }
+    if pos.is_stalemate() || pos.is_insufficient_material() {
+        return 0.0;
+    }
+
+    let in_check = pos.is_check();
+    state.evals += 1;
+    let stand_pat = {
+        let score = evaluate_white(pos, state.weights);
+        if pos.turn() == Color::White { score } else { -score }
+    };
+
+    if remaining <= 0 && !in_check {
+        return stand_pat;
+    }
+    // A checked side cannot keep the stand-pat score: it must make an
+    // evasion.  In particular, do not let a static score hide checkmate.
+    if !in_check && stand_pat >= beta {
+        return stand_pat;
+    }
+    if !in_check && stand_pat > alpha {
+        alpha = stand_pat;
+    }
+
+    let forcing: Vec<Move> = pos
+        .legal_moves()
+        .into_iter()
+        .filter(|m| pos.is_check() || m.is_capture() || gives_check(pos, *m))
+        .collect();
+
+    for m in forcing {
+        let mut child = pos.clone();
+        child.play_unchecked(m);
+        let score = -quiescence(&child, -beta, -alpha, state, remaining - 1);
+        if score >= beta {
+            return score;
+        }
+        if score > alpha {
+            alpha = score;
+        }
+    }
+    alpha
+}
+
 /// Negamax with alpha-beta from the side-to-move's perspective.
 pub fn negamax(pos: &Chess, depth: i32, mut alpha: f64, mut beta: f64, state: &mut SearchState) -> f64 {
     if pos.is_checkmate() {
@@ -109,9 +170,13 @@ pub fn negamax(pos: &Chess, depth: i32, mut alpha: f64, mut beta: f64, state: &m
         return 0.0;
     }
     if depth <= 0 {
-        state.evals += 1;
-        let score = evaluate_white(pos, state.weights);
-        return if pos.turn() == Color::White { score } else { -score };
+        return quiescence(
+            pos,
+            f64::NEG_INFINITY,
+            f64::INFINITY,
+            state,
+            QUIESCENCE_DEPTH,
+        );
     }
 
     let original_alpha = alpha;

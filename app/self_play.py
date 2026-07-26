@@ -953,9 +953,9 @@ def _terminal_reason(
                 finally:
                     board.pop()
     if can_claim_threefold:
-        return ("1/2-1/2", "3-fold repetition")
+        return ("1/2-1/2", "3-fold-rep")
     if board.can_claim_fifty_moves():
-        return ("1/2-1/2", "fifty-move rule")
+        return ("1/2-1/2", "50-moves")
     return ("", "")
 
 

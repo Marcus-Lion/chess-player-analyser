@@ -303,12 +303,12 @@
             <th width="175px">Played at</th>
             <th width="175px">White player</th>
             <th width="175px">Black player</th>
-            <th>Result</th>
+            <th width="75px">Result</th>
             <th>White Elo</th>
             <th>Black Elo</th>
             <th>Turns</th>
             <th>Termination</th>
-            <th>Final score</th>
+            <th>Score</th>
             <th>Duration</th>
             <th>Evals/move</th>
           </tr>
@@ -607,7 +607,7 @@
         values.forEach((value) => {
           const option = document.createElement('option');
           option.value = value;
-          option.textContent = key === 'termination' && value === 'threefold repetition' ? '3-fold repetition' : value;
+          option.textContent = key === 'termination' && value === '3-fold-reps' ? '3-fold repetition' : value;
           select.appendChild(option);
         });
       }

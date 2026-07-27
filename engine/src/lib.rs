@@ -33,7 +33,7 @@ use shakmaty::zobrist::Zobrist64;
 use shakmaty::{CastlingMode, Chess, EnPassantMode, Position};
 
 #[cfg(feature = "python")]
-use crate::eval::{center_control, evaluate_white, flank_control, forward_1_2_3, forward_4, king_escape_squares, mate_pressure, mover_material_advantage, phase_value, Weights};
+use crate::eval::{center_control, evaluate_white, flank_control, forward_1_2_3, forward_4, forward_material, king_escape_squares, mate_pressure, mover_material_advantage, phase_value, Weights};
 #[cfg(feature = "python")]
 use crate::search::{negamax, root_moves, SearchState};
 
@@ -106,7 +106,7 @@ fn auto_depth(pos: &Chess, max_depth: i32) -> i32 {
     let remaining = remaining.clamp(0, 78);
     let fraction = ((78 - remaining) as f64 / 78.0).powf(0.45);
     let max_depth = max_depth.max(1);
-    let min_depth = 3.min(max_depth);
+    let min_depth = 2.min(max_depth);
     (min_depth as f64 * (max_depth as f64 / min_depth as f64).powf(fraction))
         .round().clamp(min_depth as f64, max_depth as f64) as i32
 }
@@ -130,8 +130,11 @@ fn auto_depth(pos: &Chess, max_depth: i32) -> i32 {
     black_center_control_weight,
     checkmate_weight,
     depth=None,
-    max_depth=7,
+    max_depth=2,
     top_k_score_threshold=Some(3.0),
+    blunder_control=0.0,
+    forward_material_score_weight=0.25,
+    black_forward_material_score_weight=0.25,
 ))]
 #[allow(clippy::too_many_arguments)]
 #[cfg(feature = "python")]
@@ -152,6 +155,9 @@ fn play_self_game_native(
     depth: Option<i32>,
     max_depth: i32,
     top_k_score_threshold: Option<f64>,
+    blunder_control: f64,
+    forward_material_score_weight: f64,
+    black_forward_material_score_weight: f64,
 ) -> PyResult<(String, String, u32, Vec<String>, u64, Vec<f64>)> {
     let mut pos = parse_position(fen)?;
     let mut rng = StdRng::seed_from_u64(seed);
@@ -173,10 +179,12 @@ fn play_self_game_native(
         let turn_started = Instant::now();
         let weights = if pos.turn() == shakmaty::Color::White {
             Weights { legal_moves: legal_moves_weight, material: material_score_weight,
-                forward: forward_score_weight, center: center_control_weight, checkmate: checkmate_weight }
+                forward: forward_score_weight, forward_material: forward_material_score_weight,
+                center: center_control_weight, checkmate: checkmate_weight }
         } else {
             Weights { legal_moves: black_legal_moves_weight, material: black_material_score_weight,
-                forward: black_forward_score_weight, center: black_center_control_weight, checkmate: checkmate_weight }
+                forward: black_forward_score_weight, forward_material: black_forward_material_score_weight,
+                center: black_center_control_weight, checkmate: checkmate_weight }
         };
         let mut state = SearchState::new(weights);
         let mut scored = Vec::new();
@@ -199,7 +207,17 @@ fn play_self_game_native(
         if scored[0].0 < 0.0 && !immediate_stalemates.is_empty() { scored.retain(|(_, m)| immediate_stalemates.contains(m)); }
         let top_n = (top_k.max(1) as usize).min(scored.len());
         let count = match top_k_score_threshold { Some(t) => scored[..top_n].iter().take_while(|(s, _)| scored[0].0 - *s <= t.max(0.0)).count().max(1), None => top_n };
-        let chosen = scored[rng.random_range(0..count)].1;
+        // Blunder control is an explicit probability of abandoning the
+        // normal Top-K candidate set.  The move is still searched and scored,
+        // so this produces reproducible, legal mistakes rather than noise in
+        // the board loop.  0.0 preserves the normal engine behaviour.
+        let blunder_control = blunder_control.clamp(0.0, 1.0);
+        let chosen_index = if blunder_control > 0.0 && rng.random::<f64>() < blunder_control {
+            rng.random_range(0..scored.len())
+        } else {
+            rng.random_range(0..count)
+        };
+        let chosen = scored[chosen_index].1;
         moves.push(chosen.to_uci(CastlingMode::Standard).to_string());
         pos.play_unchecked(chosen);
         *repetitions.entry(zobrist(&pos)).or_insert(0) += 1;
@@ -238,6 +256,8 @@ fn play_self_game_native(
     checkmate_weight,
     repetition_counts,
     top_k_score_threshold=Some(3.0),
+    blunder_control=0.0,
+    forward_material_score_weight=0.25,
 ))]
 #[allow(clippy::too_many_arguments)]
 #[cfg(feature = "python")]
@@ -253,6 +273,8 @@ fn choose_engine_move(
     checkmate_weight: f64,
     repetition_counts: HashMap<u64, u32>,
     top_k_score_threshold: Option<f64>,
+    blunder_control: f64,
+    forward_material_score_weight: f64,
 ) -> PyResult<(String, f64, u64)> {
     let pos = parse_position(fen)?;
     let depth = depth.max(1);
@@ -260,6 +282,7 @@ fn choose_engine_move(
         legal_moves: legal_moves_weight,
         material: material_score_weight,
         forward: forward_score_weight,
+        forward_material: forward_material_score_weight,
         center: center_control_weight,
         checkmate: checkmate_weight,
     };
@@ -333,7 +356,13 @@ fn choose_engine_move(
             StdRng::from_rng(&mut system_rng)
         }
     };
-    let (score, chosen) = scored[rng.random_range(0..candidate_count)];
+    let blunder_control = blunder_control.clamp(0.0, 1.0);
+    let chosen_index = if blunder_control > 0.0 && rng.random::<f64>() < blunder_control {
+        rng.random_range(0..scored.len())
+    } else {
+        rng.random_range(0..candidate_count)
+    };
+    let (score, chosen) = scored[chosen_index];
     let uci = chosen.to_uci(CastlingMode::Standard).to_string();
     Ok((uci, score, state.evals))
 }
@@ -354,6 +383,8 @@ fn choose_engine_move(
     center_control_weight,
     checkmate_weight,
     top_k_score_threshold=Some(3.0),
+    blunder_control=0.0,
+    forward_material_score_weight=0.25,
 ))]
 #[allow(clippy::too_many_arguments)]
 #[cfg(feature = "python")]
@@ -369,6 +400,8 @@ fn choose_engine_move_from_history(
     center_control_weight: f64,
     checkmate_weight: f64,
     top_k_score_threshold: Option<f64>,
+    blunder_control: f64,
+    forward_material_score_weight: f64,
 ) -> PyResult<(String, f64, u64)> {
     let mut repetition_counts = HashMap::new();
     for historical_fen in history_fens {
@@ -391,6 +424,8 @@ fn choose_engine_move_from_history(
         checkmate_weight,
         repetition_counts,
         top_k_score_threshold,
+        blunder_control,
+        forward_material_score_weight,
     )
 }
 
@@ -404,6 +439,7 @@ fn choose_engine_move_from_history(
     forward_score_weight,
     center_control_weight,
     checkmate_weight,
+    forward_material_score_weight=0.25,
 ))]
 #[cfg(feature = "python")]
 fn evaluate_position(
@@ -413,6 +449,7 @@ fn evaluate_position(
     forward_score_weight: f64,
     center_control_weight: f64,
     checkmate_weight: f64,
+    forward_material_score_weight: f64,
 ) -> PyResult<f64> {
     let pos = parse_position(fen)?;
     Ok(evaluate_white(
@@ -421,6 +458,7 @@ fn evaluate_position(
             legal_moves: legal_moves_weight,
             material: material_score_weight,
             forward: forward_score_weight,
+            forward_material: forward_material_score_weight,
             center: center_control_weight,
             checkmate: checkmate_weight,
         },
@@ -452,6 +490,12 @@ fn calculate_center_control(fen: &str) -> PyResult<(i32, i32)> {
 #[cfg(feature = "python")]
 fn calculate_flank_control(fen: &str) -> PyResult<(i32, i32)> {
     Ok(flank_control(&parse_position(fen)?.board()))
+}
+
+#[pyfunction]
+#[cfg(feature = "python")]
+fn calculate_forward_material(fen: &str) -> PyResult<(i32, i32)> {
+    Ok(forward_material(&parse_position(fen)?.board()))
 }
 
 #[pyfunction]
@@ -519,6 +563,7 @@ fn chess_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(calculate_forward, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_center_control, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_flank_control, m)?)?;
+    m.add_function(wrap_pyfunction!(calculate_forward_material, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_king_escape_squares, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_mate_pressure, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_auto_search_depth, m)?)?;

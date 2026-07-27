@@ -133,6 +133,7 @@ from app.games import (
     CENTER_CONTROL_WEIGHT,
     CHECKMATE_WEIGHT,
     FORWARD_SCORE_WEIGHT,
+    FORWARD_MATERIAL_SCORE_WEIGHT,
     LEGAL_MOVES_WEIGHT,
     MATERIAL_SCORE_WEIGHT,
     MAX_AUTO_SEARCH_DEPTH,
@@ -220,6 +221,9 @@ class SelfPlayGame:
     seed: int | None = None
     top_k: int = 1
     top_k_score_threshold: float | None = 3.0
+    # Probability that a move is selected from the complete legal move set,
+    # allowing intentional blunders. Zero keeps normal Top-K selection.
+    blunder_control: float = 0.0
     max_turns: int = 100
     start_fen: str = "startpos"
     white_weights: dict[str, float] | None = None
@@ -244,6 +248,8 @@ class SelfPlayConfig:
     # Optional maximum score loss from the best move for random Top-K choice.
     # Defaults to 3.0; None allows every candidate up to the Top-K count.
     top_k_score_threshold: float | None = 3.0
+    # Probability that a move is selected from the complete legal move set.
+    blunder_control: float = 0.0
     # Negamax search depth. None (the default) auto-derives depth per move
     # from remaining material via ``_auto_search_depth`` -- shallow while the
     # board is full, deeper once material has thinned out. Set an explicit
@@ -261,6 +267,7 @@ class SelfPlayConfig:
     legal_moves_weight: float = LEGAL_MOVES_WEIGHT
     material_score_weight: float = MATERIAL_SCORE_WEIGHT
     forward_score_weight: float = FORWARD_SCORE_WEIGHT
+    forward_material_score_weight: float = FORWARD_MATERIAL_SCORE_WEIGHT
     center_control_weight: float = CENTER_CONTROL_WEIGHT
     # Shared "goal is checkmate" pressure applied to both sides (not
     # per-player randomized): the objective is the same for everyone.
@@ -474,6 +481,8 @@ def _config_for_game(
         max_turns=config.max_turns,
         top_k=config.top_k,
         top_k_score_threshold=config.top_k_score_threshold,
+        forward_material_score_weight=config.forward_material_score_weight,
+        blunder_control=config.blunder_control,
         depth=config.depth,
         max_depth=config.max_depth,
         seed=_seed_for_game(config, game_index) if seed is None else seed,
@@ -1161,15 +1170,18 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
             legal_moves_weight=white_weights["legal_moves_weight"],
             material_score_weight=white_weights["material_score_weight"],
             forward_score_weight=white_weights["forward_score_weight"],
+            forward_material_score_weight=config.forward_material_score_weight,
             center_control_weight=white_weights["center_control_weight"],
             black_legal_moves_weight=black_weights["legal_moves_weight"],
             black_material_score_weight=black_weights["material_score_weight"],
             black_forward_score_weight=black_weights["forward_score_weight"],
+            black_forward_material_score_weight=config.forward_material_score_weight,
             black_center_control_weight=black_weights["center_control_weight"],
             checkmate_weight=config.checkmate_weight,
             depth=config.depth,
             max_depth=config.max_depth,
             top_k_score_threshold=config.top_k_score_threshold,
+            blunder_control=config.blunder_control,
         )
         # Rebuild the presentation board/PGN after the native loop. This is
         # linear formatting work; search, move generation, and board mutation
@@ -1253,6 +1265,7 @@ def _play_and_save_game(
     game.seed = config.seed
     game.top_k = config.top_k
     game.top_k_score_threshold = config.top_k_score_threshold
+    game.blunder_control = config.blunder_control
     game.max_turns = config.max_turns
     game.start_fen = config.fen or "startpos"
     print(
@@ -1423,6 +1436,7 @@ def save_self_play_results(games: list[SelfPlayGame], *, refresh_player_elos: bo
                 "seed": game.seed,
                 "top_k": game.top_k,
                 "top_k_score_threshold": game.top_k_score_threshold,
+                "blunder_control": game.blunder_control,
                 "max_turns": game.max_turns,
                 "start_fen": game.start_fen,
                 "result": game.result,
@@ -1813,6 +1827,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Only choose Top-K moves within this score distance of the best move (default: 3.0).",
     )
     parser.add_argument(
+        "--blunder-control",
+        type=float,
+        default=0.0,
+        help="Probability (0-1) of selecting any legal move instead of a Top-K move.",
+    )
+    parser.add_argument(
         "--depth",
         type=int,
         default=None,
@@ -1837,6 +1857,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--legal-moves-weight", type=float, default=LEGAL_MOVES_WEIGHT, help="Weight for legal move count.")
     parser.add_argument("--material-score-weight", type=float, default=MATERIAL_SCORE_WEIGHT, help="Weight for material balance.")
     parser.add_argument("--forward-score-weight", type=float, default=FORWARD_SCORE_WEIGHT, help="Weight for forward control.")
+    parser.add_argument("--forward-material-score-weight", type=float, default=FORWARD_MATERIAL_SCORE_WEIGHT, help="Weight for material in the forward zone.")
     parser.add_argument("--center-control-weight", type=float, default=CENTER_CONTROL_WEIGHT, help="Weight for center control.")
     parser.add_argument("--checkmate-weight", type=float, default=CHECKMATE_WEIGHT, help="Weight for the mate-pressure heuristic (drive the enemy king toward checkmate).")
     parser.add_argument("--fixed-player-weights", action="store_true", help="Use the same weights for both sides.")
@@ -1878,6 +1899,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.top_k_score_threshold is not None
             else None
         ),
+        blunder_control=max(0.0, min(1.0, args.blunder_control)),
         depth=(max(1, args.depth) if args.depth is not None else None),
         max_depth=max(1, args.max_depth),
         workers=(max(1, int(args.workers)) if args.workers else None),
@@ -1887,6 +1909,7 @@ def main(argv: list[str] | None = None) -> int:
         legal_moves_weight=args.legal_moves_weight,
         material_score_weight=args.material_score_weight,
         forward_score_weight=args.forward_score_weight,
+        forward_material_score_weight=args.forward_material_score_weight,
         center_control_weight=args.center_control_weight,
         checkmate_weight=args.checkmate_weight,
         randomize_player_weights=not args.fixed_player_weights,

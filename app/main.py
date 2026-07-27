@@ -33,6 +33,7 @@ from app.games import (
     FORWARD_SCORE_WEIGHT,
     CENTER_CONTROL_WEIGHT,
     CHECKMATE_WEIGHT,
+    MAX_AUTO_SEARCH_DEPTH,
 )
 from app.parser import parse_pgn_to_dataframe
 from app.self_play import (
@@ -598,7 +599,9 @@ def self_play_run(
     max_turns: int = Form(100),
     top_k: int = Form(1),
     top_k_score_threshold: str | None = Form("3"),
-    max_depth: int = Form(7),
+    forward_material_score_weight: str | None = Form("0.25"),
+    blunder_control: str | None = Form("0"),
+    max_depth: str | None = Form(None),
     workers: str | None = Form(None),
     seed: str | None = Form(None),
     run_name: str | None = Form(None),
@@ -622,6 +625,12 @@ def self_play_run(
     except ValueError:
         seed_value = None
     top_k_threshold_value = _parse_optional_float(top_k_score_threshold)
+    forward_material_weight_value = _parse_optional_float(forward_material_score_weight)
+    blunder_control_value = _parse_optional_float(blunder_control)
+    try:
+        max_depth_value = int(max_depth) if max_depth and max_depth.strip() else MAX_AUTO_SEARCH_DEPTH
+    except ValueError:
+        max_depth_value = MAX_AUTO_SEARCH_DEPTH
     config = SelfPlayConfig(
         games=max(1, games),
         max_turns=max(2, max_turns),
@@ -631,7 +640,9 @@ def self_play_run(
             if top_k_threshold_value is not None
             else None
         ),
-        max_depth=max(1, max_depth),
+        forward_material_score_weight=(forward_material_weight_value if forward_material_weight_value is not None else 0.25),
+        blunder_control=max(0.0, min(1.0, blunder_control_value or 0.0)),
+        max_depth=max(1, max_depth_value),
         workers=(max(1, workers_value) if workers_value else None),
         seed=seed_value,
         run_name=run_name.strip() if run_name and run_name.strip() else None,
@@ -752,7 +763,9 @@ def self_play_start(
     max_turns: int = Form(100),
     top_k: int = Form(1),
     top_k_score_threshold: str | None = Form("3"),
-    max_depth: int = Form(7),
+    forward_material_score_weight: str | None = Form("0.25"),
+    blunder_control: str | None = Form("0"),
+    max_depth: str | None = Form(None),
     workers: str | None = Form(None),
     seed: str | None = Form(None),
     run_name: str | None = Form(None),
@@ -776,6 +789,12 @@ def self_play_start(
     except ValueError:
         seed_value = None
     top_k_threshold_value = _parse_optional_float(top_k_score_threshold)
+    forward_material_weight_value = _parse_optional_float(forward_material_score_weight)
+    blunder_control_value = _parse_optional_float(blunder_control)
+    try:
+        max_depth_value = int(max_depth) if max_depth and max_depth.strip() else MAX_AUTO_SEARCH_DEPTH
+    except ValueError:
+        max_depth_value = MAX_AUTO_SEARCH_DEPTH
     config = SelfPlayConfig(
         games=max(1, games),
         max_turns=max(2, max_turns),
@@ -785,7 +804,9 @@ def self_play_start(
             if top_k_threshold_value is not None
             else None
         ),
-        max_depth=max(1, max_depth),
+        forward_material_score_weight=(forward_material_weight_value if forward_material_weight_value is not None else 0.25),
+        blunder_control=max(0.0, min(1.0, blunder_control_value or 0.0)),
+        max_depth=max(1, max_depth_value),
         workers=(max(1, workers_value) if workers_value else None),
         seed=seed_value,
         run_name=run_name.strip() if run_name and run_name.strip() else None,

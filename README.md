@@ -76,6 +76,10 @@ within 1.0 evaluation point of the best:
 uv run python -m app.self_play --games 10 --top-k 5 --top-k-score-threshold 1.0
 ```
 
+Use `--blunder-control 0.1` to give each move a 10% chance of being selected
+from the complete searched legal-move set, producing intentional blunders.
+The default is `0`, which leaves normal Top-K selection unchanged.
+
 For automatic scaling with a different cap:
 
 ```bash

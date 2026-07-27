@@ -33,6 +33,10 @@ pub struct SearchState {
     pub evals: u64,
     killers: HashMap<i32, Move>,
     tt: HashMap<u64, TtEntry>,
+    // Static evaluations are independent of the alpha/beta window.  Keeping
+    // them separate from the depth-qualified TT lets quiescence reuse work
+    // when different capture/check paths transpose to the same position.
+    eval_cache: HashMap<u64, f64>,
 }
 
 impl SearchState {
@@ -42,6 +46,7 @@ impl SearchState {
             evals: 0,
             killers: HashMap::new(),
             tt: HashMap::new(),
+            eval_cache: HashMap::new(),
         }
     }
 }
@@ -70,8 +75,15 @@ fn gives_check(pos: &Chess, m: Move) -> bool {
 }
 
 /// Ordering key for a move, higher searches first: TT move, then captures by
-/// MVV-LVA, then checks, then the killer move, then everything else.
-fn move_key(pos: &Chess, m: Move, killer: Option<Move>, tt_move: Option<Move>) -> (i32, i32, i32) {
+/// MVV-LVA, then the killer move, then everything else.
+///
+/// Checking whether a quiet move gives check requires cloning and playing the
+/// position. That clone used to happen here and then happen again immediately
+/// when the move was searched. At the nodes where ordering matters most this
+/// made move ordering nearly double the board-copy work. Captures, the TT move,
+/// and killers provide the useful ordering signal without that extra clone;
+/// quiescence still explicitly searches checking moves.
+fn move_key(m: Move, killer: Option<Move>, tt_move: Option<Move>) -> (i32, i32, i32) {
     if Some(m) == tt_move {
         return (4, 0, 0);
     }
@@ -80,11 +92,8 @@ fn move_key(pos: &Chess, m: Move, killer: Option<Move>, tt_move: Option<Move>) -
         let attacker = piece_points(m.role());
         return (3, captured, -attacker);
     }
-    if gives_check(pos, m) {
-        return (2, 0, 0);
-    }
     if Some(m) == killer {
-        return (1, 0, 0);
+        return (2, 0, 0);
     }
     (0, 0, 0)
 }
@@ -94,7 +103,7 @@ fn move_key(pos: &Chess, m: Move, killer: Option<Move>, tt_move: Option<Move>) -
 fn ordered_moves(pos: &Chess, killer: Option<Move>, tt_move: Option<Move>) -> Vec<Move> {
     let mut moves: Vec<Move> = pos.legal_moves().into_iter().collect();
     moves.sort_by(|a, b| {
-        move_key(pos, *b, killer, tt_move).cmp(&move_key(pos, *a, killer, tt_move))
+        move_key(*b, killer, tt_move).cmp(&move_key(*a, killer, tt_move))
     });
     moves
 }
@@ -119,8 +128,12 @@ fn quiescence(
 
     let in_check = pos.is_check();
     state.evals += 1;
+    let key = zobrist(pos);
     let stand_pat = {
-        let score = evaluate_white(pos, state.weights);
+        let score = *state
+            .eval_cache
+            .entry(key)
+            .or_insert_with(|| evaluate_white(pos, state.weights));
         if pos.turn() == Color::White {
             score
         } else {

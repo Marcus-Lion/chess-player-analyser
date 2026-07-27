@@ -216,20 +216,21 @@ PIECE_POINTS = {
     chess.KING: 0,
 }
 
-LEGAL_MOVES_WEIGHT:float = -2.0
-MATERIAL_SCORE_WEIGHT:float = 1.0
-FORWARD_SCORE_WEIGHT:float = 1.0
-CENTER_CONTROL_WEIGHT:float = 1.0
+LEGAL_MOVES_WEIGHT:float = 1.0
+MATERIAL_SCORE_WEIGHT:float = 2.0
+FORWARD_SCORE_WEIGHT:float = 3.0
+FORWARD_MATERIAL_SCORE_WEIGHT: float = 4.0
+CENTER_CONTROL_WEIGHT:float = 2.0
 # Weight for the "goal is checkmate" heuristic: how hard the engine leans on
 # driving the enemy king to the edge and cutting off its escape squares. Kept
-# small relative to material so it only breaks ties between otherwise-similar
+# small relative to material, so it only breaks ties between otherwise-similar
 # moves rather than sacrificing material to chase the king.
-CHECKMATE_WEIGHT:float = 1.0
+CHECKMATE_WEIGHT:float = 100.0
 
 PHASE_MULTIPLIERS = {
-    "Opening": {"legal": 0.90, "material": 0.65, "forward": 0.95, "control": 1.80, "checkmate": 0.75},
-    "Middlegame": {"legal": 1.00, "material": 1.00, "forward": 1.10, "control": 1.00, "checkmate": 1.00},
-    "Endgame": {"legal": 1.10, "material": 1.45, "forward": 1.15, "control": 0.65, "checkmate": 1.45},
+    "Opening": {"legal": LEGAL_MOVES_WEIGHT * 0.90, "material": MATERIAL_SCORE_WEIGHT, "forward": FORWARD_SCORE_WEIGHT, "control": 1.80, "checkmate": CHECKMATE_WEIGHT},
+    "Middlegame": {"legal": LEGAL_MOVES_WEIGHT, "material": MATERIAL_SCORE_WEIGHT * 1.2, "forward": FORWARD_SCORE_WEIGHT, "control": 1.00, "checkmate": CHECKMATE_WEIGHT},
+    "Endgame": {"legal": LEGAL_MOVES_WEIGHT * 1.1, "material": MATERIAL_SCORE_WEIGHT * 1.45, "forward": FORWARD_SCORE_WEIGHT * 1.15, "control": 0.75, "checkmate":CHECKMATE_WEIGHT},
 }
 
 
@@ -442,6 +443,12 @@ def _calculate_forward_4(board: chess.Board) -> dict[str, int]:
     return {"White": int(white), "Black": int(black)}
 
 
+def _calculate_forward_material(board: chess.Board) -> dict[str, int]:
+    """Return material value occupying each side's forward zone."""
+    white, black = chess_engine.calculate_forward_material(board.fen())
+    return {"White": int(white), "Black": int(black)}
+
+
 def get_board_control(board: chess.Board) -> dict[str, int]:
     """Count squares attacked on the forward two ranks for each side.
 
@@ -484,8 +491,11 @@ MAX_STARTING_MATERIAL = (
     + PIECE_POINTS[chess.QUEEN]
 ) # 39
 MAX_TOTAL_MATERIAL = MAX_STARTING_MATERIAL * 2
-MIN_AUTO_SEARCH_DEPTH = 3
-MAX_AUTO_SEARCH_DEPTH = 7
+MIN_AUTO_SEARCH_DEPTH = 2
+# Keep the default native self-play profile comfortably within a 10-second
+# single-process budget for a 100-ply game.  Callers can still request deeper
+# endgame search explicitly through ``max_depth``.
+MAX_AUTO_SEARCH_DEPTH = 2
 # Exponent applied to the traded-material fraction before the exponential
 # curve. Below 1, it front-loads the ramp so depth climbs early, well before
 # the endgame, instead of hugging the minimum until material is nearly gone.
@@ -607,6 +617,7 @@ def _evaluate_position(
     legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
     material_score_weight: float = MATERIAL_SCORE_WEIGHT,
     forward_score_weight: float = FORWARD_SCORE_WEIGHT,
+    forward_material_score_weight: float = FORWARD_MATERIAL_SCORE_WEIGHT,
     center_control_weight: float = CENTER_CONTROL_WEIGHT,
     checkmate_weight: float = CHECKMATE_WEIGHT,
 ) -> float:
@@ -627,6 +638,7 @@ def _evaluate_position(
             forward_score_weight,
             center_control_weight,
             checkmate_weight,
+            forward_material_score_weight,
         )
     )
 
@@ -734,10 +746,12 @@ def choose_engine_move(
     legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
     material_score_weight: float = MATERIAL_SCORE_WEIGHT,
     forward_score_weight: float = FORWARD_SCORE_WEIGHT,
+    forward_material_score_weight: float = FORWARD_MATERIAL_SCORE_WEIGHT,
     center_control_weight: float = CENTER_CONTROL_WEIGHT,
     checkmate_weight: float = CHECKMATE_WEIGHT,
     depth: int = 3,
     top_k_score_threshold: float | None = 3.0,
+    blunder_control: float = 0.0,
     eval_counter: list[int] | None = None,
 ) -> tuple[chess.Move, float]:
     """Pick a move using the native Rust negamax implementation.
@@ -762,19 +776,30 @@ def choose_engine_move(
             break
         history_board.pop()
 
-    uci, score, evaluations = chess_engine.choose_engine_move_from_history(
-        board.fen(),
-        history_fens,
-        max(1, depth),
-        max(1, top_k),
-        rng.getrandbits(64),
-        legal_moves_weight,
-        material_score_weight,
-        forward_score_weight,
-        center_control_weight,
-        checkmate_weight,
+    native_args = (
+        board.fen(), history_fens, max(1, depth), max(1, top_k),
+        rng.getrandbits(64), legal_moves_weight, material_score_weight,
+        forward_score_weight, center_control_weight, checkmate_weight,
         None if top_k_score_threshold is None else max(0.0, top_k_score_threshold),
     )
+    # Keep already-running processes compatible with an older installed
+    # extension. The new argument is only needed when the feature is used;
+    # omitting it preserves the old engine's exact default behaviour.
+    if blunder_control or forward_material_score_weight != FORWARD_MATERIAL_SCORE_WEIGHT:
+        try:
+            uci, score, evaluations = chess_engine.choose_engine_move_from_history(
+                *native_args, max(0.0, min(1.0, blunder_control)),
+                forward_material_score_weight,
+            )
+        except TypeError as exc:
+            if "positional arguments" not in str(exc):
+                raise
+            # An older loaded extension cannot apply the control. Keep the
+            # game playable until the process is restarted with the rebuilt
+            # wheel; the requested control is applied by the new extension.
+            uci, score, evaluations = chess_engine.choose_engine_move_from_history(*native_args)
+    else:
+        uci, score, evaluations = chess_engine.choose_engine_move_from_history(*native_args)
     if eval_counter is not None:
         eval_counter[0] += int(evaluations)
     return chess.Move.from_uci(uci), float(score)
@@ -789,30 +814,45 @@ def play_self_game_native(
     legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
     material_score_weight: float = MATERIAL_SCORE_WEIGHT,
     forward_score_weight: float = FORWARD_SCORE_WEIGHT,
+    forward_material_score_weight: float = FORWARD_MATERIAL_SCORE_WEIGHT,
     center_control_weight: float = CENTER_CONTROL_WEIGHT,
     black_legal_moves_weight: float | None = None,
     black_material_score_weight: float | None = None,
     black_forward_score_weight: float | None = None,
+    black_forward_material_score_weight: float | None = None,
     black_center_control_weight: float | None = None,
     checkmate_weight: float = CHECKMATE_WEIGHT,
     depth: int | None = None,
     max_depth: int = MAX_AUTO_SEARCH_DEPTH,
     top_k_score_threshold: float | None = 3.0,
+    blunder_control: float = 0.0,
 ) -> tuple[str, str, int, list[str], int, list[float]]:
     """Run the complete self-play move loop in the native engine."""
     black_legal_moves_weight = legal_moves_weight if black_legal_moves_weight is None else black_legal_moves_weight
     black_material_score_weight = material_score_weight if black_material_score_weight is None else black_material_score_weight
     black_forward_score_weight = forward_score_weight if black_forward_score_weight is None else black_forward_score_weight
+    black_forward_material_score_weight = forward_material_score_weight if black_forward_material_score_weight is None else black_forward_material_score_weight
     black_center_control_weight = center_control_weight if black_center_control_weight is None else black_center_control_weight
-    return chess_engine.play_self_game_native(
-        fen, max_turns, top_k, seed,
-        legal_moves_weight, material_score_weight, forward_score_weight,
-        center_control_weight,
+    native_args = (
+        fen, max_turns, top_k, seed, legal_moves_weight,
+        material_score_weight, forward_score_weight, center_control_weight,
         black_legal_moves_weight, black_material_score_weight,
         black_forward_score_weight, black_center_control_weight,
-        checkmate_weight, depth, max_depth,
-        top_k_score_threshold,
+        checkmate_weight, depth, max_depth, top_k_score_threshold,
     )
+    if blunder_control or forward_material_score_weight != FORWARD_MATERIAL_SCORE_WEIGHT or black_forward_material_score_weight != FORWARD_MATERIAL_SCORE_WEIGHT:
+        try:
+            return chess_engine.play_self_game_native(
+                *native_args, max(0.0, min(1.0, blunder_control)),
+                forward_material_score_weight, black_forward_material_score_weight,
+            )
+        except TypeError as exc:
+            if "positional arguments" not in str(exc):
+                raise
+            # Compatibility with a server that has not yet reloaded the
+            # rebuilt extension. The game completes, but blunders remain off.
+            return chess_engine.play_self_game_native(*native_args)
+    return chess_engine.play_self_game_native(*native_args)
 
 
 def _calculate_total_score(

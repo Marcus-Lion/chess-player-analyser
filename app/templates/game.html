@@ -88,6 +88,10 @@
     <div class="layout">
       <div class="panel board-panel">
         <div class="metrics">
+          <div class="metric">Legal Moves <span class="help-icon" title="Legal Moves is the count of legal options available to the side to move. More legal moves usually means more mobility and flexibility.">?</span><b id="legal_score">{{ "{:,}".format(detail.positions[0].score) }}</b></div>
+          <div class="metric">Score <span class="help-icon" title="Score uses phase-aware weights: opening center control and king safety, then endgame wing control and king activity.">?</span><b id="score">{{ "{:,.2f}".format(detail.positions[0].total_score) }}</b></div>
+          <div class="metric">Center <span class="help-icon" title="Center control counts control of central squares for each side. It is strongest in the opening.">?</span><b id="center">{{ "{:,}".format(detail.positions[0].center.White) }} / {{ "{:,}".format(detail.positions[0].center.Black) }}</b></div>
+          <div class="metric">Wing control <span class="help-icon" title="Outer-file control is blended into the strategic score as the game reaches the endgame.">?</span><b id="flank">{{ "{:,}".format(detail.positions[0].flank.White) }} / {{ "{:,}".format(detail.positions[0].flank.Black) }}</b></div>
           <div class="metric">
             <div class="metric-head">
               <span>Forward control <span class="help-icon" title="Forward control counts how much each side controls the forward ranks. The rows below show 1st, 2nd, and 3rd order control; the net value is White minus Black across those orders.">?</span></span>
@@ -136,10 +140,9 @@
             </table>
           </div>
           <div class="metric">Material <span class="help-icon" title="Material is the material balance score for White / Black in the current position. Higher means the side has more remaining piece value.">?</span><b id="material">{{ "{:,}".format(detail.positions[0].material.White) }} / {{ "{:,}".format(detail.positions[0].material.Black) }}</b></div>
-          <div class="metric">Center <span class="help-icon" title="Center control counts control of central squares for each side. It is strongest in the opening.">?</span><b id="center">{{ "{:,}".format(detail.positions[0].center.White) }} / {{ "{:,}".format(detail.positions[0].center.Black) }}</b></div>
-          <div class="metric">Wing control <span class="help-icon" title="Outer-file control is blended into the strategic score as the game reaches the endgame.">?</span><b id="flank">{{ "{:,}".format(detail.positions[0].flank.White) }} / {{ "{:,}".format(detail.positions[0].flank.Black) }}</b></div>
-          <div class="metric">Phase <b id="phase">{{ detail.positions[0].phase }}</b></div>
-          <div class="metric">Phase weights <span class="help-icon" title="The four score contributions are rebalanced as material comes off the board.">?</span>
+          <div class="metric phase-weights-group">
+            <div>Phase <b id="phase">{{ detail.positions[0].phase }}</b></div>
+            <div>Phase weights <span class="help-icon" title="The four score contributions are rebalanced as material comes off the board.">?</span></div>
             <table class="breakdown phase-weights" id="phase_weights">
               <tbody>
                 <tr><td>Material</td><td class="num" id="phase_material">{{ "{:,}".format(detail.positions[0].weight_percentages['Material']) }}%</td></tr>
@@ -149,8 +152,6 @@
               </tbody>
             </table>
           </div>
-          <div class="metric">Legal Moves <span class="help-icon" title="Legal Moves is the count of legal options available to the side to move. More legal moves usually means more mobility and flexibility.">?</span><b id="legal_score">{{ "{:,}".format(detail.positions[0].score) }}</b></div>
-          <div class="metric">Score <span class="help-icon" title="Score uses phase-aware weights: opening center control and king safety, then endgame wing control and king activity.">?</span><b id="score">{{ "{:,.2f}".format(detail.positions[0].total_score) }}</b></div>
           {% if game_summary and game_summary.white_weights and game_summary.black_weights %}
             <div class="metric">
               Weights <span class="help-icon" title="These are the engine weights used to score positions in this game.">?</span>

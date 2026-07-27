@@ -2,7 +2,7 @@
 //! heuristic in `app/games.py` (`_evaluate_position` and its helpers).
 //!
 //! It implements the evaluation exposed through the Python API: material
-//! differential, first-order forward
+//! differential, forward-material value, first-order forward
 //! control on the same 20 forward squares (`get_board_control`), central
 //! control of d4/e4/d5/e5, both-side mobility (the `_both_mobilities`
 //! turn-flip trick), and the "goal is checkmate" king-pressure term
@@ -18,6 +18,7 @@ pub struct Weights {
     pub legal_moves: f64,
     pub material: f64,
     pub forward: f64,
+    pub forward_material: f64,
     pub center: f64,
     pub checkmate: f64,
 }
@@ -52,6 +53,24 @@ fn material_diff(board: &Board) -> i32 {
         score += (w - b) * piece_points(role);
     }
     score
+}
+
+/// Material value occupying the side's forward zone. This rewards material
+/// that has actually advanced into the useful half of the board rather than
+/// counting only the raw piece inventory.
+pub fn forward_material(board: &Board) -> (i32, i32) {
+    let mut white = 0;
+    let mut black = 0;
+    for sq in WHITE_FORWARD.iter().chain(BLACK_FORWARD.iter()) {
+        let Some(piece) = board.piece_at(*sq) else { continue };
+        let value = piece_points(piece.role);
+        if piece.color == Color::White && WHITE_FORWARD.contains(sq) {
+            white += value;
+        } else if piece.color == Color::Black && BLACK_FORWARD.contains(sq) {
+            black += value;
+        }
+    }
+    (white, black)
 }
 
 // The forward squares scanned by `app.games.get_board_control`:
@@ -445,6 +464,9 @@ pub fn evaluate_white(pos: &Chess, w: Weights) -> f64 {
     let board = pos.board();
     let (white_control, black_control) = board_control(board);
     let material = material_diff(board);
+    let (white_forward_material, black_forward_material) = forward_material(board);
+    let material_with_forward = material as f64
+        + w.forward_material * (white_forward_material - black_forward_material) as f64;
     let center = center_diff(board);
     let flank = flank_diff(board);
     let phase = phase_value(board);
@@ -460,7 +482,7 @@ pub fn evaluate_white(pos: &Chess, w: Weights) -> f64 {
     };
     round2(
         w.legal_moves * legal_mult * (white_mobility - black_mobility) as f64
-            + w.material * material_mult * material as f64
+            + w.material * material_mult * material_with_forward
             + w.forward * forward_mult * (white_control - black_control) as f64
             + w.center * control_mult * strategic_control
             + w.checkmate * checkmate_mult * pressure,

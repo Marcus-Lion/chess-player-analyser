@@ -106,21 +106,6 @@
   <p><a href="/rl">Open RL training →</a></p>
 
   <div class="card">
-    <h2>Phase transition rules</h2>
-    <p class="muted">The phase is determined by remaining non-pawn material after each move. Minor pieces count as 1, rooks as 2, and queens as 4. Pawns and kings are excluded.</p>
-    <table>
-      <thead>
-        <tr><th>Phase</th><th>Material score</th><th>Typical emphasis</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>Opening</td><td>&gt; 13</td><td>Center control and king safety</td></tr>
-        <tr><td>Middlegame</td><td>10–13</td><td>Balanced positional factors</td></tr>
-        <tr><td>Endgame</td><td>0–9</td><td>Material, mobility, and king activity</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <div class="card">
     <form method="post" action="/self-play">
       <div class="grid">
         <div>
@@ -140,8 +125,16 @@
           <input name="top_k_score_threshold" type="number" min="0" step="any" placeholder="3" value="{{ config.top_k_score_threshold if config and config.top_k_score_threshold is not none else 3 }}" />
         </div>
         <div>
-          <label>Max depth <span class="help-icon" title="Maximum engine search depth used by automatic depth scaling. Higher values improve endgame lookahead but take longer.">?</span></label>
-          <input name="max_depth" type="number" min="1" value="{{ config.max_depth if config else 7 }}" required />
+          <label>Blunder control <span class="help-icon" title="Probability from 0 to 1 of selecting any legal move, allowing intentional blunders. Zero keeps normal Top-K selection.">?</span></label>
+          <input name="blunder_control" type="number" min="0" max="1" step="0.01" value="{{ config.blunder_control if config else 0 }}" />
+        </div>
+        <div>
+          <label>Forward material weight <span class="help-icon" title="Weight for material occupying the side's forward zone. Default: 0.25.">?</span></label>
+          <input name="forward_material_score_weight" type="number" step="any" value="{{ config.forward_material_score_weight if config else 0.25 }}" />
+        </div>
+        <div>
+          <label>Max depth <span class="help-icon" title="Maximum engine search depth used by automatic depth scaling. Leave blank to use the default depth of 2. Higher values improve endgame lookahead but take longer.">?</span></label>
+          <input name="max_depth" type="number" min="1" placeholder="default (2)" value="{{ config.max_depth if config else '' }}" />
         </div>
         <div>
           <label>Parallel workers <span class="help-icon" title="How many worker processes run self-play games at the same time.">?</span></label>

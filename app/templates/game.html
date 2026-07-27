@@ -74,8 +74,8 @@
       <p><strong>Termination:</strong> <a href="/self-play/terminations/{{ game_summary.termination|urlencode }}">{{ game_summary.termination_display or game_summary.termination }}</a></p>
     {% endif %}
     {% if game_summary.duration_seconds is not none %}
-      <p><strong>Time to play:</strong> {{ "%.2f"|format(game_summary.duration_seconds) }}s ·
-        <strong>Evaluations:</strong> {{ game_summary.evaluations }} total, {{ "%.0f"|format(game_summary.evaluations_per_move) }} per move</p>
+      <p><strong>Time to play:</strong> {{ "{:,.2f}".format(game_summary.duration_seconds) }}s ·
+        <strong>Evaluations:</strong> {{ "{:,}".format(game_summary.evaluations) }} total, {{ "{:,.0f}".format(game_summary.evaluations_per_move) }} per move</p>
     {% endif %}
   {% endif %}
 
@@ -91,11 +91,11 @@
           <div class="metric">
             <div class="metric-head">
               <span>Forward control <span class="help-icon" title="Forward control counts how much each side controls the forward ranks. The rows below show 1st, 2nd, and 3rd order control; the net value is White minus Black across those orders.">?</span></span>
-              <span class="value" id="forward_net">{{ detail.positions[0].forward_score }}</span>
+              <span class="value" id="forward_net">{{ "{:,}".format(detail.positions[0].forward_score) }}</span>
             </div>
             <div class="metric-subtle" id="forward_summary">
-              White {{ detail.positions[0].forward_1.White + detail.positions[0].forward_2.White }}
-              vs Black {{ detail.positions[0].forward_1.Black + detail.positions[0].forward_2.Black }}
+              White {{ "{:,}".format(detail.positions[0].forward_1.White + detail.positions[0].forward_2.White) }}
+              vs Black {{ "{:,}".format(detail.positions[0].forward_1.Black + detail.positions[0].forward_2.Black) }}
             </div>
             <table class="breakdown" id="forward_breakdown">
               {% set forward_4 = detail.positions[0].forward_4|default(detail.positions[0].forward_3, true) %}
@@ -110,57 +110,57 @@
               <tbody>
                 <tr>
                   <td>1st</td>
-                  <td class="num">{{ detail.positions[0].forward_1.White }}</td>
-                  <td class="num">{{ detail.positions[0].forward_1.Black }}</td>
-                  <td class="num">{{ detail.positions[0].forward_1.White - detail.positions[0].forward_1.Black }}</td>
+                  <td class="num">{{ "{:,}".format(detail.positions[0].forward_1.White) }}</td>
+                  <td class="num">{{ "{:,}".format(detail.positions[0].forward_1.Black) }}</td>
+                  <td class="num">{{ "{:,}".format(detail.positions[0].forward_1.White - detail.positions[0].forward_1.Black) }}</td>
                 </tr>
                 <tr>
                   <td>2nd</td>
-                  <td class="num">{{ detail.positions[0].forward_2.White }}</td>
-                  <td class="num">{{ detail.positions[0].forward_2.Black }}</td>
-                  <td class="num">{{ detail.positions[0].forward_2.White - detail.positions[0].forward_2.Black }}</td>
+                  <td class="num">{{ "{:,}".format(detail.positions[0].forward_2.White) }}</td>
+                  <td class="num">{{ "{:,}".format(detail.positions[0].forward_2.Black) }}</td>
+                  <td class="num">{{ "{:,}".format(detail.positions[0].forward_2.White - detail.positions[0].forward_2.Black) }}</td>
                 </tr>
                 <tr>
                   <td>3rd</td>
-                  <td class="num">{{ detail.positions[0].forward_3.White }}</td>
-                  <td class="num">{{ detail.positions[0].forward_3.Black }}</td>
-                  <td class="num">{{ detail.positions[0].forward_3.White - detail.positions[0].forward_3.Black }}</td>
+                  <td class="num">{{ "{:,}".format(detail.positions[0].forward_3.White) }}</td>
+                  <td class="num">{{ "{:,}".format(detail.positions[0].forward_3.Black) }}</td>
+                  <td class="num">{{ "{:,}".format(detail.positions[0].forward_3.White - detail.positions[0].forward_3.Black) }}</td>
                 </tr>
                 <tr>
                   <td>4th</td>
-                  <td class="num">{{ forward_4.White }}</td>
-                  <td class="num">{{ forward_4.Black }}</td>
-                  <td class="num">{{ forward_4.White - forward_4.Black }}</td>
+                  <td class="num">{{ "{:,}".format(forward_4.White) }}</td>
+                  <td class="num">{{ "{:,}".format(forward_4.Black) }}</td>
+                  <td class="num">{{ "{:,}".format(forward_4.White - forward_4.Black) }}</td>
                 </tr>
               </tbody>
             </table>
           </div>
-          <div class="metric">Material <span class="help-icon" title="Material is the material balance score for White / Black in the current position. Higher means the side has more remaining piece value.">?</span><b id="material">{{ detail.positions[0].material.White }} / {{ detail.positions[0].material.Black }}</b></div>
-          <div class="metric">Center <span class="help-icon" title="Center control counts control of central squares for each side. It is strongest in the opening.">?</span><b id="center">{{ detail.positions[0].center.White }} / {{ detail.positions[0].center.Black }}</b></div>
-          <div class="metric">Wing control <span class="help-icon" title="Outer-file control is blended into the strategic score as the game reaches the endgame.">?</span><b id="flank">{{ detail.positions[0].flank.White }} / {{ detail.positions[0].flank.Black }}</b></div>
+          <div class="metric">Material <span class="help-icon" title="Material is the material balance score for White / Black in the current position. Higher means the side has more remaining piece value.">?</span><b id="material">{{ "{:,}".format(detail.positions[0].material.White) }} / {{ "{:,}".format(detail.positions[0].material.Black) }}</b></div>
+          <div class="metric">Center <span class="help-icon" title="Center control counts control of central squares for each side. It is strongest in the opening.">?</span><b id="center">{{ "{:,}".format(detail.positions[0].center.White) }} / {{ "{:,}".format(detail.positions[0].center.Black) }}</b></div>
+          <div class="metric">Wing control <span class="help-icon" title="Outer-file control is blended into the strategic score as the game reaches the endgame.">?</span><b id="flank">{{ "{:,}".format(detail.positions[0].flank.White) }} / {{ "{:,}".format(detail.positions[0].flank.Black) }}</b></div>
           <div class="metric">Phase <b id="phase">{{ detail.positions[0].phase }}</b></div>
           <div class="metric">Phase weights <span class="help-icon" title="The four score contributions are rebalanced as material comes off the board.">?</span>
             <table class="breakdown phase-weights" id="phase_weights">
               <tbody>
-                <tr><td>Material</td><td class="num" id="phase_material">{{ detail.positions[0].weight_percentages['Material'] }}%</td></tr>
-                <tr><td>Mobility</td><td class="num" id="phase_mobility">{{ detail.positions[0].weight_percentages['Legal Moves'] }}%</td></tr>
-                <tr><td>Center</td><td class="num" id="phase_center">{{ detail.positions[0].weight_percentages['Center Control'] }}%</td></tr>
-                <tr><td>Forward</td><td class="num" id="phase_forward">{{ detail.positions[0].weight_percentages['Forward Score'] }}%</td></tr>
+                <tr><td>Material</td><td class="num" id="phase_material">{{ "{:,}".format(detail.positions[0].weight_percentages['Material']) }}%</td></tr>
+                <tr><td>Mobility</td><td class="num" id="phase_mobility">{{ "{:,}".format(detail.positions[0].weight_percentages['Legal Moves']) }}%</td></tr>
+                <tr><td>Center</td><td class="num" id="phase_center">{{ "{:,}".format(detail.positions[0].weight_percentages['Center Control']) }}%</td></tr>
+                <tr><td>Forward</td><td class="num" id="phase_forward">{{ "{:,}".format(detail.positions[0].weight_percentages['Forward Score']) }}%</td></tr>
               </tbody>
             </table>
           </div>
-          <div class="metric">Legal Moves <span class="help-icon" title="Legal Moves is the count of legal options available to the side to move. More legal moves usually means more mobility and flexibility.">?</span><b id="legal_score">{{ detail.positions[0].score }}</b></div>
-          <div class="metric">Score <span class="help-icon" title="Score uses phase-aware weights: opening center control and king safety, then endgame wing control and king activity.">?</span><b id="score">{{ "%.2f"|format(detail.positions[0].total_score) }}</b></div>
+          <div class="metric">Legal Moves <span class="help-icon" title="Legal Moves is the count of legal options available to the side to move. More legal moves usually means more mobility and flexibility.">?</span><b id="legal_score">{{ "{:,}".format(detail.positions[0].score) }}</b></div>
+          <div class="metric">Score <span class="help-icon" title="Score uses phase-aware weights: opening center control and king safety, then endgame wing control and king activity.">?</span><b id="score">{{ "{:,.2f}".format(detail.positions[0].total_score) }}</b></div>
           {% if game_summary and game_summary.white_weights and game_summary.black_weights %}
             <div class="metric">
               Weights <span class="help-icon" title="These are the engine weights used to score positions in this game.">?</span>
               <table class="breakdown weights-breakdown" id="weights_list">
                 <thead><tr><th>Component</th><th class="num">White</th><th class="num">Black</th></tr></thead>
                 <tbody>
-                  <tr><td>Mobility</td><td class="num">{{ "%.3f"|format(game_summary.white_weights.legal_moves_weight) }}</td><td class="num">{{ "%.3f"|format(game_summary.black_weights.legal_moves_weight) }}</td></tr>
-                  <tr><td>Material</td><td class="num">{{ "%.3f"|format(game_summary.white_weights.material_score_weight) }}</td><td class="num">{{ "%.3f"|format(game_summary.black_weights.material_score_weight) }}</td></tr>
-                  <tr><td>Forward</td><td class="num">{{ "%.3f"|format(game_summary.white_weights.forward_score_weight) }}</td><td class="num">{{ "%.3f"|format(game_summary.black_weights.forward_score_weight) }}</td></tr>
-                  <tr><td>Center</td><td class="num">{{ "%.3f"|format(game_summary.white_weights.center_control_weight) }}</td><td class="num">{{ "%.3f"|format(game_summary.black_weights.center_control_weight) }}</td></tr>
+                  <tr><td>Mobility</td><td class="num">{{ "{:,.3f}".format(game_summary.white_weights.legal_moves_weight) }}</td><td class="num">{{ "{:,.3f}".format(game_summary.black_weights.legal_moves_weight) }}</td></tr>
+                  <tr><td>Material</td><td class="num">{{ "{:,.3f}".format(game_summary.white_weights.material_score_weight) }}</td><td class="num">{{ "{:,.3f}".format(game_summary.black_weights.material_score_weight) }}</td></tr>
+                  <tr><td>Forward</td><td class="num">{{ "{:,.3f}".format(game_summary.white_weights.forward_score_weight) }}</td><td class="num">{{ "{:,.3f}".format(game_summary.black_weights.forward_score_weight) }}</td></tr>
+                  <tr><td>Center</td><td class="num">{{ "{:,.3f}".format(game_summary.white_weights.center_control_weight) }}</td><td class="num">{{ "{:,.3f}".format(game_summary.black_weights.center_control_weight) }}</td></tr>
                 </tbody>
               </table>
             </div>
@@ -192,8 +192,8 @@
               <th class="side-group black-group" colspan="4">Black</th>
             </tr>
             <tr>
-              <th>#</th><th>Move</th><th>Duration</th><th class="num">Score</th>
-              <th class="black-group">#</th><th>Move</th><th>Duration</th><th class="num">Score</th>
+              <th>#</th><th>Move</th><th>Duration (ms)</th><th class="num">Score</th>
+              <th class="black-group">#</th><th>Move</th><th>Duration (ms)</th><th class="num">Score</th>
             </tr>
           </thead>
           <tbody>
@@ -206,18 +206,18 @@
             {% set black_pos = moves|selectattr('side', 'equalto', 'Black')|first %}
             <tr>
               {% if white_pos %}
-                <td>{{ white_pos.ply }}</td>
+                <td class="num">{{ "{:,}".format(white_pos.ply) }}</td>
                 <td><a id="ply-{{ white_pos.ply }}" href="#ply-{{ white_pos.ply }}" data-index="{{ white_pos.ply }}" class="{% if white_pos.severity %}{{ white_pos.severity|lower }}{% endif %}">{{ white_pos.san }}{{ severity_suffix(white_pos.severity) }}</a></td>
-                <td>{% if white_pos.move_duration_seconds is defined and white_pos.move_duration_seconds is not none %}{{ "%.4f"|format(white_pos.move_duration_seconds) }}s{% else %}—{% endif %}</td>
-                <td class="num">{{ "%.2f"|format(white_pos.total_score) }}</td>
+                <td class="num">{% if white_pos.move_duration_seconds is defined and white_pos.move_duration_seconds is not none %}{{ "{:,.1f}".format(white_pos.move_duration_seconds * 1000) }}{% else %}—{% endif %}</td>
+                <td class="num">{{ "{:,.2f}".format(white_pos.total_score) }}</td>
               {% else %}
                 <td>—</td><td>—</td><td>—</td><td class="num">—</td>
               {% endif %}
               {% if black_pos %}
-                <td class="black-group">{{ black_pos.ply }}</td>
+                <td class="black-group num">{{ "{:,}".format(black_pos.ply) }}</td>
                 <td><a id="ply-{{ black_pos.ply }}" href="#ply-{{ black_pos.ply }}" data-index="{{ black_pos.ply }}" class="{% if black_pos.severity %}{{ black_pos.severity|lower }}{% endif %}">{{ black_pos.san }}{{ severity_suffix(black_pos.severity) }}</a></td>
-                <td>{% if black_pos.move_duration_seconds is defined and black_pos.move_duration_seconds is not none %}{{ "%.4f"|format(black_pos.move_duration_seconds) }}s{% else %}—{% endif %}</td>
-                <td class="num">{{ "%.2f"|format(black_pos.total_score) }}</td>
+                <td class="num">{% if black_pos.move_duration_seconds is defined and black_pos.move_duration_seconds is not none %}{{ "{:,.1f}".format(black_pos.move_duration_seconds * 1000) }}{% else %}—{% endif %}</td>
+                <td class="num">{{ "{:,.2f}".format(black_pos.total_score) }}</td>
               {% else %}
                 <td class="black-group">—</td><td>—</td><td>—</td><td class="num">—</td>
               {% endif %}
@@ -251,6 +251,24 @@
       const prevBtn = document.getElementById('prev_btn');
       const nextBtn = document.getElementById('next_btn');
       const lastBtn = document.getElementById('last_btn');
+      const integerFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+      const decimalFormat = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+      function formatTableNumbers() {
+        document.querySelectorAll('table .num').forEach((cell) => {
+          const text = cell.textContent.trim();
+          const match = text.match(/^(-?[\d,]+(?:\.\d+)?)(.*)$/);
+          if (!match) return;
+          const value = Number(match[1].replaceAll(',', ''));
+          if (!Number.isFinite(value)) return;
+          const decimalMatch = match[1].match(/\.(\d+)$/);
+          const decimals = decimalMatch ? decimalMatch[1].length : 0;
+          cell.textContent = new Intl.NumberFormat(undefined, {
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals,
+          }).format(value) + match[2];
+        });
+      }
 
       function indexFromHash() {
         const match = window.location.hash.match(/^#ply-(\d+)$/);
@@ -286,10 +304,10 @@
         slider.value = String(index);
         boardWrap.innerHTML = boardControlToggle.checked ? pos.svg_moves : pos.svg;
         const totals = forwardTotals(pos);
-        forwardNet.textContent = String(pos.forward_score);
-        forwardSummary.textContent = `White ${totals.white} vs Black ${totals.black}`;
-        material.textContent = `${pos.material.White} / ${pos.material.Black}`;
-        center.textContent = `${pos.center.White} / ${pos.center.Black}`;
+        forwardNet.textContent = integerFormat.format(pos.forward_score);
+        forwardSummary.textContent = `White ${integerFormat.format(totals.white)} vs Black ${integerFormat.format(totals.black)}`;
+        material.textContent = `${integerFormat.format(pos.material.White)} / ${integerFormat.format(pos.material.Black)}`;
+        center.textContent = `${integerFormat.format(pos.center.White)} / ${integerFormat.format(pos.center.Black)}`;
         flank.textContent = `${pos.flank.White} / ${pos.flank.Black}`;
         phase.textContent = pos.phase;
         const weights = pos.weight_percentages;
@@ -297,13 +315,18 @@
         phaseMobility.textContent = `${weights['Legal Moves']}%`;
         phaseCenter.textContent = `${weights['Center Control']}%`;
         phaseForward.textContent = `${weights['Forward Score']}%`;
-        score.textContent = Number(pos.total_score).toFixed(2);
-        legalScore.textContent = String(pos.score);
+        score.textContent = decimalFormat.format(pos.total_score);
+        legalScore.textContent = integerFormat.format(pos.score);
+        formatTableNumbers();
         label.textContent = describePosition(pos);
         setActiveLink(index);
-        const hash = `#ply-${pos.ply}`;
+        const hash = pos.ply === 0 ? '' : `#ply-${pos.ply}`;
         if (window.location.hash !== hash) {
-          history.replaceState(null, '', hash);
+          history.replaceState(
+            null,
+            '',
+            hash || `${window.location.pathname}${window.location.search}`,
+          );
         }
       }
 

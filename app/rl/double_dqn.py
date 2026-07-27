@@ -53,6 +53,54 @@ def _terminal_result(
     board: chess.Board,
     repetition_counts: Counter | None = None,
 ) -> tuple[str, str]:
+    def _is_perpetual_check(
+        board: chess.Board,
+        *,
+        lookback_plies: int = 16,
+        min_king_moves: int = 4,
+    ) -> bool:
+        needed_plies = 2 * min_king_moves
+        if min_king_moves <= 0 or len(board.move_stack) < needed_plies:
+            return False
+
+        tmp = board.copy(stack=True)
+        after = tmp.copy(stack=False)
+        records: list[tuple[bool, bool, bool, int | None]] = []
+        for _ in range(min(int(lookback_plies), len(tmp.move_stack))):
+            move = tmp.pop()
+            mover = not after.turn
+            gave_check = after.is_check()
+            piece = tmp.piece_at(move.from_square)
+            moved_king = piece is not None and piece.piece_type == chess.KING
+            king_to = move.to_square if moved_king else None
+            records.append((mover, gave_check, moved_king, king_to))
+            after = tmp.copy(stack=False)
+        if len(records) < needed_plies:
+            return False
+
+        records.reverse()
+        suffix = records[-needed_plies:]
+        for defender in (chess.WHITE, chess.BLACK):
+            attacker = not defender
+            defender_moves = [r for r in suffix if r[0] == defender]
+            attacker_moves = [r for r in suffix if r[0] == attacker]
+            if len(defender_moves) != min_king_moves or len(attacker_moves) != min_king_moves:
+                continue
+            if not all(moved_king for (_, _, moved_king, _) in defender_moves):
+                continue
+            king_squares = [sq for (_, _, _, sq) in defender_moves]
+            if any(sq is None for sq in king_squares):
+                continue
+            if len(set(king_squares)) != 2:
+                continue
+            if any(king_squares[i] != king_squares[i % 2] for i in range(len(king_squares))):
+                continue
+            if not all(gave_check for (_, gave_check, _, _) in attacker_moves):
+                continue
+            return True
+
+        return False
+
     if board.is_checkmate():
         return ("1-0" if board.turn == chess.BLACK else "0-1", "checkmate")
     if board.is_stalemate():
@@ -68,6 +116,8 @@ def _terminal_result(
     if (repetition_counts is None and board.can_claim_threefold_repetition()) or (
         repetition_counts is not None and _can_claim_threefold(board, repetition_counts)
     ):
+        if _is_perpetual_check(board):
+            return ("1/2-1/2", "perpetual check")
         return ("1/2-1/2", "3-fold-rep")
     if board.can_claim_fifty_moves():
         return ("1/2-1/2", "50-moves")

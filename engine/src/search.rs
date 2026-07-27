@@ -71,12 +71,7 @@ fn gives_check(pos: &Chess, m: Move) -> bool {
 
 /// Ordering key for a move, higher searches first: TT move, then captures by
 /// MVV-LVA, then checks, then the killer move, then everything else.
-fn move_key(
-    pos: &Chess,
-    m: Move,
-    killer: Option<Move>,
-    tt_move: Option<Move>,
-) -> (i32, i32, i32) {
+fn move_key(pos: &Chess, m: Move, killer: Option<Move>, tt_move: Option<Move>) -> (i32, i32, i32) {
     if Some(m) == tt_move {
         return (4, 0, 0);
     }
@@ -126,7 +121,11 @@ fn quiescence(
     state.evals += 1;
     let stand_pat = {
         let score = evaluate_white(pos, state.weights);
-        if pos.turn() == Color::White { score } else { -score }
+        if pos.turn() == Color::White {
+            score
+        } else {
+            -score
+        }
     };
 
     if remaining <= 0 && !in_check {
@@ -162,7 +161,13 @@ fn quiescence(
 }
 
 /// Negamax with alpha-beta from the side-to-move's perspective.
-pub fn negamax(pos: &Chess, depth: i32, mut alpha: f64, mut beta: f64, state: &mut SearchState) -> f64 {
+pub fn negamax(
+    pos: &Chess,
+    depth: i32,
+    mut alpha: f64,
+    mut beta: f64,
+    state: &mut SearchState,
+) -> f64 {
     if pos.is_checkmate() {
         return -(MATE_SCORE + depth as f64);
     }
@@ -226,7 +231,15 @@ pub fn negamax(pos: &Chess, depth: i32, mut alpha: f64, mut beta: f64, state: &m
     } else {
         TT_EXACT
     };
-    state.tt.insert(key, TtEntry { depth, score: best, flag, best_move });
+    state.tt.insert(
+        key,
+        TtEntry {
+            depth,
+            score: best,
+            flag,
+            best_move,
+        },
+    );
 
     best
 }

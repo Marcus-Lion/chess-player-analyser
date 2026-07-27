@@ -17,6 +17,24 @@ try:
     # layouts to the module API used by this application.
     if not hasattr(chess_engine, "choose_engine_move"):
         from chess_engine import chess_engine as chess_engine
+    missing_native = [
+        name for name in (
+            "play_self_game_native", "calculate_forward", "calculate_forward_4",
+            "calculate_center_control", "calculate_flank_control",
+            "calculate_king_escape_squares", "calculate_mate_pressure",
+            "calculate_auto_search_depth", "calculate_phase_value",
+            "legal_moves_and_tree",
+            "choose_engine_move_from_history",
+        )
+        if not hasattr(chess_engine, name)
+    ]
+    if missing_native:
+        raise RuntimeError(
+            "The installed chess_engine extension is stale and does not expose "
+            f"{', '.join(missing_native)}. Stop running Python processes, then rebuild "
+            "it with `uv run --with maturin maturin develop --release "
+            "-m engine/Cargo.toml`."
+        )
 except ImportError as exc:  # pragma: no cover - depends on local wheel installation
     raise RuntimeError(
         "The native chess_engine extension is required. Build/install it with "
@@ -221,12 +239,7 @@ def _game_phase_value(board: chess.Board) -> float:
     Non-pawn material is used so an opening pawn sacrifice does not
     prematurely turn the position into an endgame.
     """
-    phase_material = sum(
-        len(board.pieces(piece_type, color)) * value
-        for piece_type, value in ((chess.KNIGHT, 1), (chess.BISHOP, 1), (chess.ROOK, 2), (chess.QUEEN, 4))
-        for color in (chess.WHITE, chess.BLACK)
-    )
-    return max(0.0, min(1.0, (16.0 - phase_material) / 10.0))
+    return float(chess_engine.calculate_phase_value(board.fen()))
 
 
 def _phase_name(value: float) -> str:
@@ -397,40 +410,12 @@ def _style_arrows(svg: str) -> str:
 
 
 def _calculate_forward(board: chess.Board) -> tuple[dict[str, int], dict[str, int]]:
-    """Calculate 1st and 2nd order forward on the forward two ranks."""
-    f1 = get_board_control(board)
-    
-    f2 = {"White": 0, "Black": 0}
-    original_turn = board.turn
-    
-    # White 2nd order
-    board.turn = chess.WHITE
-    w_moves = list(board.legal_moves)
-    if w_moves:
-        total_w_c1 = 0
-        for m in w_moves:
-            board.push(m)
-            total_w_c1 += get_board_control(board)["White"]
-            board.pop()
-        f2["White"] = int(total_w_c1 / len(w_moves))
-    else:
-        f2["White"] = f1["White"]
-
-    # Black 2nd order
-    board.turn = chess.BLACK
-    b_moves = list(board.legal_moves)
-    if b_moves:
-        total_b_c1 = 0
-        for m in b_moves:
-            board.push(m)
-            total_b_c1 += get_board_control(board)["Black"]
-            board.pop()
-        f2["Black"] = int(total_b_c1 / len(b_moves))
-    else:
-        f2["Black"] = f1["Black"]
-        
-    board.turn = original_turn
-    return f1, f2
+    """Calculate first- and second-order forward control in Rust."""
+    f1, f2, _ = chess_engine.calculate_forward(board.fen())
+    return (
+        {"White": int(f1[0]), "Black": int(f1[1])},
+        {"White": int(f2[0]), "Black": int(f2[1])},
+    )
 
 
 def _calculate_forward_3(board: chess.Board) -> dict[str, int]:
@@ -442,31 +427,8 @@ def _calculate_forward_3(board: chess.Board) -> dict[str, int]:
     -selection path -- only for the game viewer's display, where it runs once
     per position instead of once per candidate move.
     """
-    f3 = {"White": 0, "Black": 0}
-    original_turn = board.turn
-
-    for color, key in ((chess.WHITE, "White"), (chess.BLACK, "Black")):
-        board.turn = color
-        own_moves = list(board.legal_moves)
-        total = 0
-        count = 0
-        for own_move in own_moves:
-            board.push(own_move)
-            reply_moves = list(board.legal_moves)
-            if reply_moves:
-                for reply in reply_moves:
-                    board.push(reply)
-                    total += get_board_control(board)[key]
-                    count += 1
-                    board.pop()
-            else:
-                total += get_board_control(board)[key]
-                count += 1
-            board.pop()
-        f3[key] = int(total / count) if count else get_board_control(board)[key]
-
-    board.turn = original_turn
-    return f3
+    _, _, f3 = chess_engine.calculate_forward(board.fen())
+    return {"White": int(f3[0]), "Black": int(f3[1])}
 
 
 def _calculate_forward_4(board: chess.Board) -> dict[str, int]:
@@ -476,39 +438,8 @@ def _calculate_forward_4(board: chess.Board) -> dict[str, int]:
     the side's next move. It is used only by the game viewer because the
     branching factor grows quickly at this depth.
     """
-    native_calculator = getattr(chess_engine, "calculate_forward_4", None)
-    if native_calculator is not None:
-        white, black = native_calculator(board.fen())
-        return {"White": int(white), "Black": int(black)}
-
-    f4 = {"White": 0, "Black": 0}
-    original_turn = board.turn
-
-    for color, key in ((chess.WHITE, "White"), (chess.BLACK, "Black")):
-        board.turn = color
-        own_moves = list(board.legal_moves)
-        total = 0
-        count = 0
-        for own_move in own_moves:
-            board.push(own_move)
-            for reply in list(board.legal_moves):
-                board.push(reply)
-                next_moves = list(board.legal_moves)
-                if next_moves:
-                    for next_move in next_moves:
-                        board.push(next_move)
-                        total += get_board_control(board)[key]
-                        count += 1
-                        board.pop()
-                else:
-                    total += get_board_control(board)[key]
-                    count += 1
-                board.pop()
-            board.pop()
-        f4[key] = int(total / count) if count else get_board_control(board)[key]
-
-    board.turn = original_turn
-    return f4
+    white, black = chess_engine.calculate_forward_4(board.fen())
+    return {"White": int(white), "Black": int(black)}
 
 
 def get_board_control(board: chess.Board) -> dict[str, int]:
@@ -583,52 +514,19 @@ def _auto_search_depth(
     it is below ``MIN_AUTO_SEARCH_DEPTH``, it becomes both the minimum and
     maximum so the requested cap is always respected.
     """
-    material = _calculate_material(board)
-    remaining = material["White"] + material["Black"]
-    remaining = max(0, min(MAX_TOTAL_MATERIAL, remaining))
-    fraction_traded = (MAX_TOTAL_MATERIAL - remaining) / MAX_TOTAL_MATERIAL
-    scaled_fraction = fraction_traded ** AUTO_SEARCH_DEPTH_CURVE_EXPONENT
-    effective_max_depth = max(1, max_depth)
-    effective_min_depth = min(MIN_AUTO_SEARCH_DEPTH, effective_max_depth)
-    depth_ratio = effective_max_depth / effective_min_depth
-    depth = effective_min_depth * depth_ratio ** scaled_fraction
-    depth_int = max(effective_min_depth, min(effective_max_depth, round(depth)))
-    return depth_int
+    return int(chess_engine.calculate_auto_search_depth(board.fen(), max_depth))
 
 
 def _calculate_center_control(board: chess.Board) -> dict[str, int]:
     """Count control of the 4 central squares (d4, e4, d5, e5)."""
-    d4 = chess.D4
-    e4 = chess.E4
-    d5 = chess.D5
-    e5 = chess.E5
-    return {
-        "White": (
-            board.is_attacked_by(chess.WHITE, d4)
-            + board.is_attacked_by(chess.WHITE, e4)
-            + board.is_attacked_by(chess.WHITE, d5)
-            + board.is_attacked_by(chess.WHITE, e5)
-        ),
-        "Black": (
-            board.is_attacked_by(chess.BLACK, d4)
-            + board.is_attacked_by(chess.BLACK, e4)
-            + board.is_attacked_by(chess.BLACK, d5)
-            + board.is_attacked_by(chess.BLACK, e5)
-        ),
-    }
+    white, black = chess_engine.calculate_center_control(board.fen())
+    return {"White": int(white), "Black": int(black)}
 
 
 def _calculate_flank_control(board: chess.Board) -> dict[str, int]:
     """Count control of the outer files where king-and-pawn endgames unfold."""
-    squares = [
-        chess.square(file, rank)
-        for file in (0, 1, 6, 7)
-        for rank in (2, 3, 4, 5)
-    ]
-    return {
-        "White": sum(board.is_attacked_by(chess.WHITE, square) for square in squares),
-        "Black": sum(board.is_attacked_by(chess.BLACK, square) for square in squares),
-    }
+    white, black = chess_engine.calculate_flank_control(board.fen())
+    return {"White": int(white), "Black": int(black)}
 
 
 def _king_escape_squares(board: chess.Board, king_color: chess.Color) -> int:
@@ -639,19 +537,7 @@ def _king_escape_squares(board: chess.Board, king_color: chess.Color) -> int:
     closer to being mated, so this is the raw signal the mate heuristic wants to
     minimise for the side under pressure.
     """
-    king_sq = board.king(king_color)
-    if king_sq is None:
-        return 0
-    enemy = not king_color
-    escapes = 0
-    for square in chess.SquareSet(chess.BB_KING_ATTACKS[king_sq]):
-        piece = board.piece_at(square)
-        if piece and piece.color == king_color:
-            continue
-        if board.is_attacked_by(enemy, square):
-            continue
-        escapes += 1
-    return escapes
+    return int(chess_engine.calculate_king_escape_squares(board.fen(), king_color == chess.WHITE))
 
 
 def _mate_pressure(board: chess.Board) -> float:
@@ -663,19 +549,7 @@ def _mate_pressure(board: chess.Board) -> float:
     self-play engine that *the goal is checkmate*, not merely a material lead:
     once ahead, it keeps herding the enemy king instead of shuffling.
     """
-    pressure = 0.0
-    for defender, sign in ((chess.BLACK, 1.0), (chess.WHITE, -1.0)):
-        king_sq = board.king(defender)
-        if king_sq is None:
-            continue
-        file = chess.square_file(king_sq)
-        rank = chess.square_rank(king_sq)
-        # 2 in the centre, up to 14 in a corner: the further out, the better
-        # for the attacker.
-        corner_proximity = abs(2 * file - 7) + abs(2 * rank - 7)
-        escapes = _king_escape_squares(board, defender)
-        pressure += sign * (corner_proximity - 2.0 * escapes)
-    return pressure
+    return float(chess_engine.calculate_mate_pressure(board.fen()))
 
 
 def _king_activity(board: chess.Board, phase: float) -> float:
@@ -880,24 +754,17 @@ def choose_engine_move(
 
     """
     rng = rng or random.Random()
-    stack_signature = tuple(board.move_stack)
-    cached_signature = getattr(board, "_engine_history_signature", ())
-    prior_fens = getattr(board, "_engine_prior_fens", None)
-    if prior_fens is None or stack_signature[:len(cached_signature)] != cached_signature:
-        cached_signature = ()
-        prior_fens = []
-    if len(stack_signature) > len(cached_signature):
-        history_board = board.copy(stack=True)
-        new_positions: list[str] = []
-        for _ in range(len(stack_signature) - len(cached_signature)):
-            history_board.pop()
-            new_positions.append(history_board.fen())
-        prior_fens.extend(reversed(new_positions))
-    board._engine_history_signature = stack_signature
-    board._engine_prior_fens = prior_fens
+    history_fens = []
+    history_board = board.copy(stack=True)
+    while True:
+        history_fens.append(history_board.fen())
+        if not history_board.move_stack:
+            break
+        history_board.pop()
 
-    uci, score, evaluations = chess_engine.choose_engine_move(
+    uci, score, evaluations = chess_engine.choose_engine_move_from_history(
         board.fen(),
+        history_fens,
         max(1, depth),
         max(1, top_k),
         rng.getrandbits(64),
@@ -906,7 +773,6 @@ def choose_engine_move(
         forward_score_weight,
         center_control_weight,
         checkmate_weight,
-        prior_fens,
         None if top_k_score_threshold is None else max(0.0, top_k_score_threshold),
     )
     if eval_counter is not None:
@@ -914,11 +780,46 @@ def choose_engine_move(
     return chess.Move.from_uci(uci), float(score)
 
 
+def play_self_game_native(
+    fen: str,
+    max_turns: int,
+    top_k: int,
+    seed: int,
+    *,
+    legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
+    material_score_weight: float = MATERIAL_SCORE_WEIGHT,
+    forward_score_weight: float = FORWARD_SCORE_WEIGHT,
+    center_control_weight: float = CENTER_CONTROL_WEIGHT,
+    black_legal_moves_weight: float | None = None,
+    black_material_score_weight: float | None = None,
+    black_forward_score_weight: float | None = None,
+    black_center_control_weight: float | None = None,
+    checkmate_weight: float = CHECKMATE_WEIGHT,
+    depth: int | None = None,
+    max_depth: int = MAX_AUTO_SEARCH_DEPTH,
+    top_k_score_threshold: float | None = 3.0,
+) -> tuple[str, str, int, list[str], int, list[float]]:
+    """Run the complete self-play move loop in the native engine."""
+    black_legal_moves_weight = legal_moves_weight if black_legal_moves_weight is None else black_legal_moves_weight
+    black_material_score_weight = material_score_weight if black_material_score_weight is None else black_material_score_weight
+    black_forward_score_weight = forward_score_weight if black_forward_score_weight is None else black_forward_score_weight
+    black_center_control_weight = center_control_weight if black_center_control_weight is None else black_center_control_weight
+    return chess_engine.play_self_game_native(
+        fen, max_turns, top_k, seed,
+        legal_moves_weight, material_score_weight, forward_score_weight,
+        center_control_weight,
+        black_legal_moves_weight, black_material_score_weight,
+        black_forward_score_weight, black_center_control_weight,
+        checkmate_weight, depth, max_depth,
+        top_k_score_threshold,
+    )
+
+
 def _calculate_total_score(
     mobility_score: int,
     material_score: int,
     forward_score: int,
-    center_score: int = 0,
+    center_score: float = 0.0,
     pressure: float = 0.0,
     *,
     legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
@@ -973,14 +874,16 @@ def render_board_svgs(board: chess.Board, lastmove: chess.Move | None = None) ->
     return svg, svg_moves
 
 
-def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None) -> tuple:
-    """Render board with legal moves arrows, and return SAN list, 2-ply move tree, control metrics, material metrics, scores and move scores."""
-    tree = {}
-    move_scores = {}
-    legal_moves = list(board.legal_moves)
-    arrows = _legal_move_arrows(board)
+def _native_legal_move_data(
+    board: chess.Board,
+) -> tuple[list[str], dict[str, list[str]], dict[str, int]]:
+    """Return legal SAN moves, their reply tree, and native move scores."""
+    legal_moves, tree, move_scores = chess_engine.legal_moves_and_tree(board.fen())
+    return list(legal_moves), dict(tree), dict(move_scores)
 
-    # Pre-calculate current control and material
+
+def _position_metrics(board: chess.Board) -> tuple:
+    """Calculate the non-rendering metrics displayed for one position."""
     f1, f2 = _calculate_forward(board)
     f3 = _calculate_forward_3(board)
     f4 = _calculate_forward_4(board)
@@ -998,29 +901,30 @@ def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None
     mobility_w, mobility_b = _both_mobilities(board)
     mobility_score = mobility_w - mobility_b
     pressure = _mate_pressure(board) + _king_activity(board, phase_value)
-    score = len(legal_moves)
     total_score = _calculate_total_score(
         mobility_score, material_score, forward_score, strategic_control_score, pressure,
         phase=phase_value,
     )
+    return (
+        f1, f2, f3, f4, material, center, flank,
+        forward_score, material_score, strategic_control_score,
+        total_score, phase, weight_percentages,
+    )
 
-    for move in legal_moves:
-        san = board.san(move)
 
-        # 1-ply deep lookahead for the tree and scores
-        board.push(move)
-        tree[san] = [board.san(m) for m in board.legal_moves]
+def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None) -> tuple:
+    """Render a position and combine native move data with viewer metrics."""
+    legal_moves, tree, move_scores = _native_legal_move_data(board)
+    arrows = _legal_move_arrows(board)
 
-        # Optimization: for move suggestions, use 1st order control ONLY to save time
-        # 2nd order control is expensive to calculate for every legal move (O(N^2))
-        sc1 = get_board_control(board)
+    (
+        f1, f2, f3, f4, material, center, flank,
+        forward_score, material_score, strategic_control_score,
+        total_score, phase, weight_percentages,
+    ) = _position_metrics(board)
+    score = len(legal_moves)
 
-        # Move score is simplified to 1st order difference after the move
-        move_scores[san] = sc1["White"] - sc1["Black"]
-
-        board.pop()
-
-    sans = [board.san(move) for move in legal_moves]
+    sans = list(legal_moves)
     svg = chess.svg.board(board, size=420, lastmove=lastmove, arrows=arrows)
     return (_style_arrows(svg), sans, tree, f1, f2, f3, f4, material, center, flank,
             forward_score, material_score, strategic_control_score, score,

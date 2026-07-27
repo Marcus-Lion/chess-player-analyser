@@ -105,8 +105,8 @@
             {% set black_item = moves|selectattr('side', 'equalto', 'Black')|first %}
             <div class="history-row">
               <span class="move-number">{{ move_number }}.</span>
-              <span class="move-white">{{ white_item.san if white_item else '' }}</span>
-              <span class="move-black">{{ black_item.san if black_item else '' }}</span>
+              <span class="move-white">{% if white_item %}{{ white_item.san }} ({{ "%.2f"|format(white_item.score) }}){% endif %}</span>
+              <span class="move-black">{% if black_item %}{{ black_item.san }} ({{ "%.2f"|format(black_item.score) }}){% endif %}</span>
             </div>
           {% endfor %}
         </div>

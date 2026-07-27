@@ -39,7 +39,13 @@ fn material_diff(board: &Board) -> i32 {
     let white = board.by_color(Color::White);
     let black = board.by_color(Color::Black);
     let mut score = 0;
-    for role in [Role::Pawn, Role::Knight, Role::Bishop, Role::Rook, Role::Queen] {
+    for role in [
+        Role::Pawn,
+        Role::Knight,
+        Role::Bishop,
+        Role::Rook,
+        Role::Queen,
+    ] {
         let rb = board.by_role(role);
         let w = (rb & white).into_iter().count() as i32;
         let b = (rb & black).into_iter().count() as i32;
@@ -51,17 +57,33 @@ fn material_diff(board: &Board) -> i32 {
 // The forward squares scanned by `app.games.get_board_control`:
 // White's are ranks 2-3, files d-h; Black's are ranks 6-7, files d-h.
 const WHITE_FORWARD: [Square; 10] = [
-    Square::D2, Square::E2, Square::F2, Square::G2, Square::H2,
-    Square::D3, Square::E3, Square::F3, Square::G3, Square::H3,
+    Square::D2,
+    Square::E2,
+    Square::F2,
+    Square::G2,
+    Square::H2,
+    Square::D3,
+    Square::E3,
+    Square::F3,
+    Square::G3,
+    Square::H3,
 ];
 const BLACK_FORWARD: [Square; 10] = [
-    Square::D6, Square::E6, Square::F6, Square::G6, Square::H6,
-    Square::D7, Square::E7, Square::F7, Square::G7, Square::H7,
+    Square::D6,
+    Square::E6,
+    Square::F6,
+    Square::G6,
+    Square::H6,
+    Square::D7,
+    Square::E7,
+    Square::F7,
+    Square::G7,
+    Square::H7,
 ];
 
 /// (white_control, black_control): how many of each side's forward squares
 /// that side attacks. Mirrors `get_board_control`.
-fn board_control(board: &Board) -> (i32, i32) {
+pub fn board_control(board: &Board) -> (i32, i32) {
     let occupied = board.occupied();
     let mut white = 0;
     for &sq in &WHITE_FORWARD {
@@ -78,8 +100,62 @@ fn board_control(board: &Board) -> (i32, i32) {
     (white, black)
 }
 
+/// Forward-control metrics for the current position. The side-specific
+/// averages intentionally force the requested side to move, matching the
+/// Python viewer's permissive ``board.turn`` override.
+pub fn forward_1_2_3(pos: &Chess) -> Result<((i32, i32), (i32, i32), (i32, i32)), String> {
+    let f1 = board_control(pos.board());
+    let mut f2 = (0, 0);
+    let mut f3 = (0, 0);
+
+    for (color, index) in [(Color::White, 0usize), (Color::Black, 1usize)] {
+        let own_control = |control: (i32, i32)| if index == 0 { control.0 } else { control.1 };
+        let root = if pos.turn() == color {
+            pos.clone()
+        } else {
+            match pos.clone().swap_turn()
+                .or_else(|e| e.ignore_invalid_ep_square())
+                .or_else(|e| e.ignore_impossible_check()) {
+                Ok(root) => root,
+                Err(_) => {
+                    let fallback = own_control(board_control(pos.board()));
+                    if index == 0 { f2.0 = fallback; f3.0 = fallback; }
+                    else { f2.1 = fallback; f3.1 = fallback; }
+                    continue;
+                }
+            }
+        };
+        let own_moves: Vec<_> = root.legal_moves().into_iter().collect();
+        let mut total2 = 0i64;
+        let mut total3 = 0i64;
+        let mut count3 = 0i64;
+        for own in &own_moves {
+            let mut after_own = root.clone();
+            after_own.play_unchecked(*own);
+            total2 += own_control(board_control(after_own.board())) as i64;
+            let replies: Vec<_> = after_own.legal_moves().into_iter().collect();
+            if replies.is_empty() {
+                total3 += own_control(board_control(after_own.board())) as i64;
+                count3 += 1;
+            } else {
+                for reply in replies {
+                    let mut after_reply = after_own.clone();
+                    after_reply.play_unchecked(reply);
+                    total3 += own_control(board_control(after_reply.board())) as i64;
+                    count3 += 1;
+                }
+            }
+        }
+        let fallback = own_control(board_control(root.board()));
+        let value2 = if own_moves.is_empty() { fallback } else { (total2 / own_moves.len() as i64) as i32 };
+        let value3 = if count3 == 0 { fallback } else { (total3 / count3) as i32 };
+        if index == 0 { f2.0 = value2; f3.0 = value3; } else { f2.1 = value2; f3.1 = value3; }
+    }
+    Ok((f1, f2, f3))
+}
+
 /// White minus Black control of the four central squares.
-fn center_diff(board: &Board) -> i32 {
+pub fn center_control(board: &Board) -> (i32, i32) {
     let occupied = board.occupied();
     let mut white = 0;
     let mut black = 0;
@@ -91,18 +167,32 @@ fn center_diff(board: &Board) -> i32 {
             black += 1;
         }
     }
+    (white, black)
+}
+
+pub fn center_diff(board: &Board) -> i32 {
+    let (white, black) = center_control(board);
     white - black
 }
 
 /// Fourth-order forward control: average the side's control after its move,
 /// the opponent's reply, and the side's next move.
-pub fn forward_4(pos: &Chess) -> (i32, i32) {
+pub fn forward_4(pos: &Chess) -> Result<(i32, i32), String> {
     let mut result = (0, 0);
     for (color, white) in [(Color::White, true), (Color::Black, false)] {
         let root = if pos.turn() == color {
             pos.clone()
         } else {
-            pos.clone().swap_turn().expect("legal turn swap")
+            match pos.clone().swap_turn()
+                .or_else(|e| e.ignore_invalid_ep_square())
+                .or_else(|e| e.ignore_impossible_check()) {
+                Ok(root) => root,
+                Err(_) => {
+                    let control = board_control(pos.board());
+                    if white { result.0 = control.0; } else { result.1 = control.1; }
+                    continue;
+                }
+            }
         };
         let mut total = 0i64;
         let mut count = 0i64;
@@ -130,36 +220,58 @@ pub fn forward_4(pos: &Chess) -> (i32, i32) {
         }
         let value = if count == 0 {
             let control = board_control(root.board());
-            if white { control.0 } else { control.1 }
+            if white {
+                control.0
+            } else {
+                control.1
+            }
         } else {
             (total / count) as i32
         };
-        if white { result.0 = value; } else { result.1 = value; }
+        if white {
+            result.0 = value;
+        } else {
+            result.1 = value;
+        }
     }
-    result
+    Ok(result)
 }
 
 /// Outer-file control used increasingly as the position simplifies.
 fn flank_diff(board: &Board) -> i32 {
+    let (white, black) = flank_control(board);
+    white - black
+}
+
+pub fn flank_control(board: &Board) -> (i32, i32) {
     let occupied = board.occupied();
     let mut white = 0;
     let mut black = 0;
     for file in [0u32, 1, 6, 7] {
         for rank in [2u32, 3, 4, 5] {
             let sq = Square::new(file + rank * 8);
-            if !board.attacks_to(sq, Color::White, occupied).is_empty() { white += 1; }
-            if !board.attacks_to(sq, Color::Black, occupied).is_empty() { black += 1; }
+            if !board.attacks_to(sq, Color::White, occupied).is_empty() {
+                white += 1;
+            }
+            if !board.attacks_to(sq, Color::Black, occupied).is_empty() {
+                black += 1;
+            }
         }
     }
-    white - black
+    (white, black)
 }
 
 /// 0 is the opening; 1 is a low-material endgame. Pawns are deliberately
 /// ignored so an opening pawn sacrifice does not force endgame weights.
-fn phase_value(board: &Board) -> f64 {
+pub fn phase_value(board: &Board) -> f64 {
     let mut remaining = 0i32;
     for role in [Role::Knight, Role::Bishop, Role::Rook, Role::Queen] {
-        let value = match role { Role::Knight | Role::Bishop => 1, Role::Rook => 2, Role::Queen => 4, _ => 0 };
+        let value = match role {
+            Role::Knight | Role::Bishop => 1,
+            Role::Rook => 2,
+            Role::Queen => 4,
+            _ => 0,
+        };
         remaining += (board.by_role(role).into_iter().count() as i32) * value;
     }
     ((16 - remaining) as f64 / 10.0).clamp(0.0, 1.0)
@@ -168,12 +280,22 @@ fn phase_value(board: &Board) -> f64 {
 fn king_activity(board: &Board, phase: f64) -> f64 {
     let mut score = 0.0;
     for (color, sign) in [(Color::White, 1.0), (Color::Black, -1.0)] {
-        let king = match board.king_of(color) { Some(sq) => sq, None => continue };
+        let king = match board.king_of(color) {
+            Some(sq) => sq,
+            None => continue,
+        };
         let file = (king.to_u32() % 8) as f64;
         let rank = (king.to_u32() / 8) as f64;
         if phase < 0.5 {
-            let safety = if (file == 2.0 || file == 6.0) && (rank == 0.0 || rank == 7.0) { 2.0 } else { 0.0 }
-                - if file == 4.0 && (rank == 0.0 || rank == 7.0) { 1.0 } else { 0.0 };
+            let safety = if (file == 2.0 || file == 6.0) && (rank == 0.0 || rank == 7.0) {
+                2.0
+            } else {
+                0.0
+            } - if file == 4.0 && (rank == 0.0 || rank == 7.0) {
+                1.0
+            } else {
+                0.0
+            };
             score += sign * safety * (1.0 - phase);
         } else {
             let centrality = 4.0 - (3.5 - file).abs() - (3.5 - rank).abs();
@@ -187,7 +309,7 @@ fn king_activity(board: &Board, phase: f64) -> f64 {
 /// and not attacked by the enemy (`app.games._king_escape_squares`).
 /// Like python-chess `is_attacked_by`, the king stays on the board when
 /// testing enemy attacks, so slider x-rays through the king are ignored.
-fn king_escape_squares(board: &Board, king_color: Color) -> i32 {
+pub fn king_escape_squares(board: &Board, king_color: Color) -> i32 {
     let king_sq = match board.king_of(king_color) {
         Some(sq) => sq,
         None => return 0,
@@ -212,7 +334,7 @@ fn king_escape_squares(board: &Board, king_color: Color) -> i32 {
 /// White-perspective checkmate pressure (`app.games._mate_pressure`):
 /// reward each side for driving the enemy king toward the edge/corner and
 /// stripping its escape squares.
-fn mate_pressure(board: &Board) -> f64 {
+pub fn mate_pressure(board: &Board) -> f64 {
     let mut pressure = 0.0;
     for (defender, sign) in [(Color::Black, 1.0), (Color::White, -1.0)] {
         let king_sq = match board.king_of(defender) {
@@ -291,7 +413,11 @@ fn pseudo_mobility(board: &Board, color: Color) -> i32 {
             if one_step < 64 && board.piece_at(Square::new(one_step)).is_none() {
                 count += 1;
                 if rank == start_rank {
-                    let two_step = if color == Color::White { idx + 16 } else { idx - 16 };
+                    let two_step = if color == Color::White {
+                        idx + 16
+                    } else {
+                        idx - 16
+                    };
                     if two_step < 64 && board.piece_at(Square::new(two_step)).is_none() {
                         count += 1;
                     }

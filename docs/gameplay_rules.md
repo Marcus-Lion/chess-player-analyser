@@ -85,13 +85,12 @@ ordering. One table is created per `choose_engine_move` call, shared
 across every root move's subtree, so a transposition reached via a different
 root move still benefits.
 
-### Threefold-repetition avoidance
+### Threefold-repetition scoring
 
-When the side to move is ahead by at least `REPETITION_AVOIDANCE_MATERIAL_PAWNS`
-(1 by default) pawn of material, moves that would create a third occurrence are
-penalized by `REPETITION_AVOIDANCE_PENALTY` (500) after scoring, so the
-engine presses for a win instead of settling for a draw when it's already
-ahead. Below that material threshold, repetitions are scored normally.
+When a candidate move makes threefold repetition claimable, the engine adjusts
+its score by 500 points based on material: `-500` for the materially stronger
+side and `+500` for the materially weaker side. Equal-material positions get
+no adjustment. The normal threefold and fivefold draw rules still apply.
 
 ## Position evaluation
 
@@ -149,3 +148,12 @@ move:
 If none of these trigger, the game is called a draw once `--max-turns` is
 reached (reported as `"max turns reached"`; the count covers every
 half-move, i.e. both White's and Black's turns).
+
+### Perpetual check (classification)
+
+Perpetual check is not a separate draw rule in the engine: it is treated as a
+threefold-repetition draw. When a threefold repetition is claimable, the
+termination is additionally *labelled* `"perpetual check"` if the recent move
+sequence matches continuous checking (one side gives check every turn) and the
+defending king’s replies are king moves back and forth between the same two
+squares.

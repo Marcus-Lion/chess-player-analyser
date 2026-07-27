@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import math
 import os
@@ -19,6 +20,105 @@ from pathlib import Path
 from uuid import uuid4
 import threading
 from collections.abc import Callable
+
+
+# Keep Windows Job Object handles alive for as long as the parent process is
+# alive.  When the parent exits, Windows closes these handles and terminates
+# every process in the job, including ProcessPoolExecutor descendants.
+_WINDOWS_WORKER_JOBS: list[int] = []
+
+
+def _put_process_in_parent_lifetime_job(proc: subprocess.Popen[Any]) -> None:
+    """Make ``proc`` and its descendants die when this process dies (Windows).
+
+    A detached subprocess has no parent-lifetime semantics on Windows.  A Job
+    Object with ``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`` supplies those semantics
+    and also covers grandchildren created by the worker's process pool.
+    """
+    if os.name != "nt":
+        return
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+    kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+    kernel32.SetInformationJobObject.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_uint,
+    ]
+    kernel32.SetInformationJobObject.restype = ctypes.c_int
+    kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    kernel32.AssignProcessToJobObject.restype = ctypes.c_int
+    kernel32.OpenProcess.argtypes = [ctypes.c_uint, ctypes.c_int, ctypes.c_uint]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+
+    class _JobBasicLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", ctypes.c_uint32),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", ctypes.c_uint32),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", ctypes.c_uint32),
+            ("SchedulingClass", ctypes.c_uint32),
+        ]
+
+    class _IoCounters(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_uint64),
+            ("WriteOperationCount", ctypes.c_uint64),
+            ("OtherOperationCount", ctypes.c_uint64),
+            ("ReadTransferCount", ctypes.c_uint64),
+            ("WriteTransferCount", ctypes.c_uint64),
+            ("OtherTransferCount", ctypes.c_uint64),
+        ]
+
+    class _JobExtendedLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _JobBasicLimitInformation),
+            ("IoInfo", _IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    # JOBOBJECT_EXTENDED_LIMIT_INFORMATION = 9;
+    # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000.
+    info = _JobExtendedLimitInformation()
+    info.BasicLimitInformation.LimitFlags = 0x2000
+    job = kernel32.CreateJobObjectW(None, None)
+    if not job:
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    # PROCESS_SET_QUOTA | PROCESS_TERMINATE are required by
+    # AssignProcessToJobObject.
+    process_handle = kernel32.OpenProcess(0x0100 | 0x0001, False, proc.pid)
+    if not process_handle:
+        kernel32.CloseHandle(job)
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        if not kernel32.SetInformationJobObject(
+            job,
+            9,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if not kernel32.AssignProcessToJobObject(job, process_handle):
+            raise ctypes.WinError(ctypes.get_last_error())
+    except Exception:
+        kernel32.CloseHandle(job)
+        raise
+    finally:
+        kernel32.CloseHandle(process_handle)
+
+    _WINDOWS_WORKER_JOBS.append(int(job))
 
 import chess
 import chess.pgn
@@ -44,6 +144,7 @@ from app.games import (
     _mate_pressure,
     _result_summary,
     choose_engine_move,
+    play_self_game_native,
 )
 from app.run_groups import build_run_grouping
 from app.players import PlayerProfile, get_player_roster, pick_two_players
@@ -94,8 +195,8 @@ SELF_PLAY_REBALANCE_BATCH_SIZE = max(1, _env_int("SELF_PLAY_REBALANCE_BATCH_SIZE
 # Completed games are persisted immediately. Elo is deliberately recalculated
 # less often because each refresh reads the complete saved-game history.
 SELF_PLAY_ELO_BATCH_SIZE = max(1, _env_int("SELF_PLAY_ELO_BATCH_SIZE", 32))
-SELF_PLAY_ELITE_COUNT = 4 # Players with the highest win rate
-SELF_PLAY_ELITE_MUTATION_STDDEV = max(0.0, _env_float("SELF_PLAY_ELITE_MUTATION_STDDEV", 0.10))
+SELF_PLAY_ELITE_COUNT = 1 # Players with the highest win rate
+SELF_PLAY_ELITE_MUTATION_STDDEV = _env_float("SELF_PLAY_ELITE_MUTATION_STDDEV", 0.10)
 
 
 @dataclass
@@ -107,6 +208,7 @@ class SelfPlayGame:
     pgn: str
     final_fen: str
     final_score: float
+    termination_display: str = ""
     outcome: str = ""
     winner: str = ""
     loser: str = ""
@@ -131,6 +233,7 @@ class SelfPlayGame:
     duration_seconds: float = 0.0
     evaluations: int = 0
     evaluations_per_move: float = 0.0
+    turn_durations_seconds: list[float] | None = None
 
 
 @dataclass
@@ -354,9 +457,9 @@ def _seed_for_game(config: SelfPlayConfig, game_index: int) -> int | None:
 
 
 def _paired_game_count(requested_games: int) -> int:
-    if requested_games <= 1:
-        return max(1, requested_games)
-    return requested_games if requested_games % 2 == 0 else requested_games + 1
+    # Keep the requested count exact. Even runs still use mirrored pairs;
+    # an odd run gets one additional unmirrored game.
+    return max(1, requested_games)
 
 
 def _config_for_game(
@@ -933,9 +1036,67 @@ def _terminal_reason(
     else:
         fivefold = repetition_counts[board._transposition_key()] >= 5
     if fivefold:
-        return ("1/2-1/2", "fivefold repetition")
+        return ("1/2-1/2", "5-fold-rep")
     if board.is_seventyfive_moves():
         return ("1/2-1/2", "75-move rule")
+
+    def _is_perpetual_check(
+        board: chess.Board,
+        *,
+        lookback_plies: int = 16,
+        min_king_moves: int = 4,
+    ) -> bool:
+        """Detect a perpetual-check loop (heuristic label) from recent moves.
+
+        This does not change the draw mechanics (threefold repetition is the
+        actual rule). It only classifies a claimable threefold repetition as
+        "perpetual check" when the recent move sequence matches:
+
+        - one side gives check on every turn, and
+        - the defending king responds by moving back and forth between the same
+          two squares.
+        """
+        needed_plies = 2 * min_king_moves
+        if min_king_moves <= 0 or len(board.move_stack) < needed_plies:
+            return False
+
+        tmp = board.copy(stack=True)
+        after = tmp.copy(stack=False)
+        records: list[tuple[bool, bool, bool, int | None]] = []
+        for _ in range(min(int(lookback_plies), len(tmp.move_stack))):
+            move = tmp.pop()
+            mover = not after.turn  # side that played `move`
+            gave_check = after.is_check()
+            piece = tmp.piece_at(move.from_square)
+            moved_king = piece is not None and piece.piece_type == chess.KING
+            king_to = move.to_square if moved_king else None
+            records.append((mover, gave_check, moved_king, king_to))
+            after = tmp.copy(stack=False)
+        if len(records) < needed_plies:
+            return False
+
+        records.reverse()  # chronological order
+        suffix = records[-needed_plies:]
+        for defender in (chess.WHITE, chess.BLACK):
+            attacker = not defender
+            defender_moves = [r for r in suffix if r[0] == defender]
+            attacker_moves = [r for r in suffix if r[0] == attacker]
+            if len(defender_moves) != min_king_moves or len(attacker_moves) != min_king_moves:
+                continue
+            if not all(moved_king for (_, _, moved_king, _) in defender_moves):
+                continue
+            king_squares = [sq for (_, _, _, sq) in defender_moves]
+            if any(sq is None for sq in king_squares):
+                continue
+            if len(set(king_squares)) != 2:
+                continue
+            if any(king_squares[i] != king_squares[i % 2] for i in range(len(king_squares))):
+                continue
+            if not all(gave_check for (_, gave_check, _, _) in attacker_moves):
+                continue
+            return True
+
+        return False
 
     if repetition_counts is None:
         can_claim_threefold = board.can_claim_threefold_repetition()
@@ -952,6 +1113,8 @@ def _terminal_reason(
                 finally:
                     board.pop()
     if can_claim_threefold:
+        if _is_perpetual_check(board):
+            return ("1/2-1/2", "perpetual check")
         return ("1/2-1/2", "3-fold-rep")
     if board.can_claim_fifty_moves():
         return ("1/2-1/2", "50-moves")
@@ -984,38 +1147,39 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
 
     node = game
     turn = 0
-    eval_counter = [0]
-    repetition_counts = Counter({board._transposition_key(): 1})
+    evaluations = 0
+    turn_durations_seconds: list[float] = []
     start_time = time.perf_counter()
-    result, termination = _terminal_reason(board, repetition_counts)
+    result = ""
+    termination = ""
     try:
-        while turn < config.max_turns and not result:
-            active_weights = white_weights if board.turn == chess.WHITE else black_weights
-            depth = config.depth if config.depth is not None else _auto_search_depth(
-                board,
-                game_id=f"{run_id}:{game_index}" if run_id else game_index,
-                max_depth=config.max_depth,
-            )
-            move, _ = choose_engine_move(
-                board,
-                rng,
-                config.top_k,
-                top_k_score_threshold=config.top_k_score_threshold,
-                legal_moves_weight=active_weights["legal_moves_weight"],
-                material_score_weight=active_weights["material_score_weight"],
-                forward_score_weight=active_weights["forward_score_weight"],
-                center_control_weight=active_weights["center_control_weight"],
-                checkmate_weight=config.checkmate_weight,
-                depth=depth,
-                eval_counter=eval_counter,
-            )
+        result, termination, turn, moves, evaluations, turn_durations_seconds = play_self_game_native(
+            board.fen(),
+            config.max_turns,
+            config.top_k,
+            rng.getrandbits(64),
+            legal_moves_weight=white_weights["legal_moves_weight"],
+            material_score_weight=white_weights["material_score_weight"],
+            forward_score_weight=white_weights["forward_score_weight"],
+            center_control_weight=white_weights["center_control_weight"],
+            black_legal_moves_weight=black_weights["legal_moves_weight"],
+            black_material_score_weight=black_weights["material_score_weight"],
+            black_forward_score_weight=black_weights["forward_score_weight"],
+            black_center_control_weight=black_weights["center_control_weight"],
+            checkmate_weight=config.checkmate_weight,
+            depth=config.depth,
+            max_depth=config.max_depth,
+            top_k_score_threshold=config.top_k_score_threshold,
+        )
+        # Rebuild the presentation board/PGN after the native loop. This is
+        # linear formatting work; search, move generation, and board mutation
+        # all remain inside Rust.
+        for uci in moves:
+            move = chess.Move.from_uci(uci)
             san = board.san(move)
             board.push(move)
-            repetition_counts[board._transposition_key()] += 1
             node = node.add_variation(move)
             node.comment = san
-            turn += 1
-            result, termination = _terminal_reason(board, repetition_counts)
     except Exception:
         # A crashed game shouldn't take the rest of the batch down with it
         # (this is submitted as one ProcessPoolExecutor unit of work per
@@ -1040,8 +1204,6 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
         summary = {"status": "Crash", "winner": "", "loser": ""}
     else:
         summary = _result_summary(result, white=white_player_name, black=black_player_name)
-    evaluations = eval_counter[0]
-
     return SelfPlayGame(
         index=game_index,
         result=result,
@@ -1064,6 +1226,7 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
         duration_seconds=duration_seconds,
         evaluations=evaluations,
         evaluations_per_move=(evaluations / turn) if turn else 0.0,
+        turn_durations_seconds=turn_durations_seconds,
     )
 
 
@@ -1125,9 +1288,6 @@ def run_self_play(
         return games
 
     total_games = _paired_game_count(config.games)
-    if total_games != config.games:
-        print(f"Mirrored self-play requires an even game count; rounding {config.games} up to {total_games}.")
-
     requested_workers = config.workers or DEFAULT_SELF_PLAY_WORKERS
     max_workers = max(1, min(int(requested_workers), total_games))
     print(f"Starting self-play process pool with {max_workers} workers", flush=True)
@@ -1154,6 +1314,11 @@ def run_self_play(
             future = executor.submit(_play_and_save_game, second_config, game_index + 1, run_id, played_at)
             future_to_game[future] = (game_index + 1, second_config)
             game_index += 2
+
+        if total_games % 2:
+            single_config = _config_for_game(config, game_index, mirror_colors=False)
+            future = executor.submit(_play_and_save_game, single_config, game_index, run_id, played_at)
+            future_to_game[future] = (game_index, single_config)
 
         completed_games: dict[int, SelfPlayGame] = {}
         completed_count = 0
@@ -1279,6 +1444,7 @@ def save_self_play_results(games: list[SelfPlayGame], *, refresh_player_elos: bo
                 "duration_seconds": game.duration_seconds,
                 "evaluations": game.evaluations,
                 "evaluations_per_move": game.evaluations_per_move,
+                "turn_durations_seconds": game.turn_durations_seconds,
                 "pgn": game.pgn,
             }
         )
@@ -1388,6 +1554,7 @@ def _normalize_result(row: dict) -> dict:
     row.setdefault("duration_seconds", 0.0)
     row.setdefault("evaluations", 0)
     row.setdefault("evaluations_per_move", 0.0)
+    row.setdefault("turn_durations_seconds", None)
     if "turns" not in row and "plies" in row:
         row["turns"] = row["plies"]
     if "plies" not in row and "turns" in row:
@@ -1567,8 +1734,7 @@ def start_self_play_job(config: SelfPlayConfig) -> dict:
     creationflags = 0
     if os.name == "nt":
         creationflags = (
-            subprocess.DETACHED_PROCESS
-            | subprocess.CREATE_NEW_PROCESS_GROUP
+            subprocess.CREATE_NEW_PROCESS_GROUP
             | subprocess.CREATE_NO_WINDOW
         )
 
@@ -1606,6 +1772,7 @@ def start_self_play_job(config: SelfPlayConfig) -> dict:
             close_fds=True,
             start_new_session=os.name != "nt",
         )
+        _put_process_in_parent_lifetime_job(proc)
         _write_job_pid_file(job_id, run_id, proc.pid, cmd)
         print(f"Launched self-play process {proc.pid} for job {job_id}", flush=True)
 

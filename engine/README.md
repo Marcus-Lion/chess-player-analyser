@@ -58,8 +58,22 @@ On Linux/Docker the default host toolchain works as-is (no override needed).
 
 - `choose_engine_move(fen, depth, top_k, seed, legal_moves_weight,
   material_score_weight, forward_score_weight, center_control_weight,
-  checkmate_weight, history_fens, top_k_score_threshold=3.0) ->
+  checkmate_weight, repetition_counts, top_k_score_threshold=3.0) ->
   (uci, score, evaluations)`
+- `choose_engine_move_from_history(fen, history_fens, ...) ->
+  (uci, score, evaluations)` — builds repetition hashes and counts natively
+  from historical FENs before searching.
+- `play_self_game_native(...) -> (result, termination, turns, moves, evaluations)`
+  — runs the complete board/move loop in Rust and returns UCI moves for PGN
+  formatting by the Python caller.
+- `calculate_forward(fen) -> (forward_1, forward_2, forward_3)` and
+  `calculate_forward_4(fen) -> (white, black)` — native forward-control
+  metrics used by the game viewer.
+- `calculate_center_control`, `calculate_flank_control`,
+  `calculate_king_escape_squares`, `calculate_mate_pressure`, and
+  `calculate_auto_search_depth` provide the remaining native board metrics
+  used by the evaluator and viewer. `calculate_phase_value` keeps the
+  material-based opening/endgame phase calculation native as well.
 - `evaluate_position(fen, legal_moves_weight, material_score_weight,
   forward_score_weight, center_control_weight, checkmate_weight) -> float`
   — White-perspective static eval, used for parity checks against

@@ -50,8 +50,18 @@
     .positions a.inaccuracy { color: #d4ac0d; }
     .positions a.mistake { color: #e67e22; }
     .positions a.blunder { color: #c0392b; }
+    .positions-table { margin-top: .5rem; }
+    .positions-table th, .positions-table td { white-space: nowrap; }
+    .positions-table .num { text-align: right; }
+    .positions-table .side-group { text-align: center; }
+    .positions-table .black-group { border-left: 1rem solid transparent; }
     .muted { color: #666; }
     .board-wrap svg { max-width: 100%; height: auto; display: block; }
+    .board-panel { display: flex; flex-direction: column; }
+    .board-panel .board-wrap { order: 1; }
+    .board-panel .controls { order: 2; }
+    .board-panel #position_slider { order: 3; width: 100%; }
+    .board-panel .metrics { order: 4; }
   </style>
 </head>
 <body>
@@ -76,7 +86,7 @@
     </p>
 
     <div class="layout">
-      <div class="panel">
+      <div class="panel board-panel">
         <div class="metrics">
           <div class="metric">
             <div class="metric-head">
@@ -175,29 +185,46 @@
       <div class="panel">
         <h2>Positions</h2>
         <p class="muted">Use the buttons, slider, or click a position to step through the game.</p>
-        <div class="positions" id="positions_list">
+        <table class="positions-table" id="positions_list">
+          <thead>
+            <tr>
+              <th class="side-group" colspan="4">White</th>
+              <th class="side-group black-group" colspan="4">Black</th>
+            </tr>
+            <tr>
+              <th>#</th><th>Move</th><th>Duration</th><th class="num">Score</th>
+              <th class="black-group">#</th><th>Move</th><th>Duration</th><th class="num">Score</th>
+            </tr>
+          </thead>
+          <tbody>
           {% macro severity_suffix(severity) %}{% if severity == 'Blunder' %} ??{% elif severity == 'Mistake' %} ?{% elif severity == 'Inaccuracy' %} ?!{% endif %}{% endmacro %}
-          {% for move_number, moves in detail.positions[1:]|groupby('move_number') %}
+          <tr>
+            <td colspan="8"><a id="ply-0" href="#ply-0" data-index="0">Start position</a></td>
+          </tr>
+          {% for move_number, moves in positions_data[1:]|groupby('move_number') %}
             {% set white_pos = moves|selectattr('side', 'equalto', 'White')|first %}
             {% set black_pos = moves|selectattr('side', 'equalto', 'Black')|first %}
-            <div class="position-row">
+            <tr>
               {% if white_pos %}
-                <a id="ply-{{ white_pos.ply }}" href="#ply-{{ white_pos.ply }}" data-index="{{ white_pos.ply }}" class="move-white{% if white_pos.severity %} {{ white_pos.severity|lower }}{% endif %}">
-                  {{ white_pos.ply }}. {{ white_pos.san }}{{ severity_suffix(white_pos.severity) }}<span class="muted"> {{ "%.2f"|format(white_pos.total_score) }}</span>
-                </a>
+                <td>{{ white_pos.ply }}</td>
+                <td><a id="ply-{{ white_pos.ply }}" href="#ply-{{ white_pos.ply }}" data-index="{{ white_pos.ply }}" class="{% if white_pos.severity %}{{ white_pos.severity|lower }}{% endif %}">{{ white_pos.san }}{{ severity_suffix(white_pos.severity) }}</a></td>
+                <td>{% if white_pos.move_duration_seconds is defined and white_pos.move_duration_seconds is not none %}{{ "%.4f"|format(white_pos.move_duration_seconds) }}s{% else %}—{% endif %}</td>
+                <td class="num">{{ "%.2f"|format(white_pos.total_score) }}</td>
               {% else %}
-                <span class="move-white"></span>
+                <td>—</td><td>—</td><td>—</td><td class="num">—</td>
               {% endif %}
               {% if black_pos %}
-                <a id="ply-{{ black_pos.ply }}" href="#ply-{{ black_pos.ply }}" data-index="{{ black_pos.ply }}" class="move-black{% if black_pos.severity %} {{ black_pos.severity|lower }}{% endif %}">
-                  {{ black_pos.ply }}. {{ black_pos.san }}{{ severity_suffix(black_pos.severity) }}<span class="muted"> {{ "%.2f"|format(black_pos.total_score) }}</span>
-                </a>
+                <td class="black-group">{{ black_pos.ply }}</td>
+                <td><a id="ply-{{ black_pos.ply }}" href="#ply-{{ black_pos.ply }}" data-index="{{ black_pos.ply }}" class="{% if black_pos.severity %}{{ black_pos.severity|lower }}{% endif %}">{{ black_pos.san }}{{ severity_suffix(black_pos.severity) }}</a></td>
+                <td>{% if black_pos.move_duration_seconds is defined and black_pos.move_duration_seconds is not none %}{{ "%.4f"|format(black_pos.move_duration_seconds) }}s{% else %}—{% endif %}</td>
+                <td class="num">{{ "%.2f"|format(black_pos.total_score) }}</td>
               {% else %}
-                <span class="move-black"></span>
+                <td class="black-group">—</td><td>—</td><td>—</td><td class="num">—</td>
               {% endif %}
-            </div>
+            </tr>
           {% endfor %}
-        </div>
+          </tbody>
+        </table>
       </div>
     </div>
 

@@ -4,7 +4,9 @@
     <content url="file://$MODULE_DIR$/engine">
       <sourceFolder url="file://$MODULE_DIR$/engine/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/engine/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/engine/target" />
     </content>
+    <orderEntry type="jdk" jdkName="P:\Marcus-Lion\chess-player-analyser\engine\.venv" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
 </module>

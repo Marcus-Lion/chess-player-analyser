@@ -607,7 +607,13 @@
         values.forEach((value) => {
           const option = document.createElement('option');
           option.value = value;
-          option.textContent = key === 'termination' && value === '3-fold-rep' ? '3-fold repetition' : value;
+          if (key === 'termination' && value === '3-fold-rep') {
+            option.textContent = '3-fold repetition';
+          } else if (key === 'termination' && value === 'perpetual check') {
+            option.textContent = 'Perpetual check';
+          } else {
+            option.textContent = value;
+          }
           select.appendChild(option);
         });
       }

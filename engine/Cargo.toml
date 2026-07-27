@@ -9,10 +9,14 @@ license = "GPL-3.0-or-later"
 name = "chess_engine"
 crate-type = ["cdylib"]
 
+[features]
+default = ["python"]
+python = ["dep:pyo3"]
+
 [dependencies]
-pyo3 = { version = "0.26", features = ["extension-module"] }
+pyo3 = { version = "0.26", features = ["extension-module"], optional = true }
 shakmaty = "0.30"
-rand = "0.8"
+rand = "0.10.2"
 
 # NB: keep the default unwind panic strategy -- PyO3 converts Rust panics into
 # Python exceptions by unwinding across the FFI boundary; panic="abort" would
@@ -20,3 +24,4 @@ rand = "0.8"
 [profile.release]
 lto = true
 codegen-units = 1
+

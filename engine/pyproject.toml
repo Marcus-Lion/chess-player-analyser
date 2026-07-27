@@ -7,6 +7,9 @@ name = "chess-engine"
 version = "0.1.0"
 requires-python = ">=3.14"
 description = "Native negamax self-play engine for chess-player-analyser"
+dependencies = [
+    "maturin>=1.14.1",
+]
 
 [tool.maturin]
 # Produce a single top-level extension module `chess_engine` that

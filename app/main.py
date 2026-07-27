@@ -23,6 +23,7 @@ load_dotenv()
 from app.chesscom import ChessComClient
 from app.games import (
     _result_summary,
+    _evaluate_position,
     choose_engine_move,
     load_game_summaries,
     load_game_detail,
@@ -446,11 +447,22 @@ def _legal_move_options(board: chess.Board) -> list[str]:
 
 
 def _append_history(history: list[dict], board: chess.Board, move: chess.Move) -> None:
+    san = board.san(move)
+    board.push(move)
+    try:
+        # Keep the displayed score tied to the resulting position.  The
+        # native evaluator reports a white-perspective score, so the same
+        # meaning is retained for human and engine moves.
+        score = _evaluate_position(board)
+    finally:
+        board.pop()
+
     history.append({
         "ply": len(history) + 1,
         "move_number": board.fullmove_number,
         "side": "White" if board.turn == chess.WHITE else "Black",
-        "san": board.san(move),
+        "san": san,
+        "score": score,
     })
 
 
@@ -635,7 +647,7 @@ def self_play_run(
     )
     recent_games = run_self_play(config)
     for game in recent_games:
-        game["termination_display"] = display_termination_label(game.get("termination"))
+        game.termination_display = display_termination_label(game.termination)
     page_context = _self_play_page_context(request)
     page_context["recent_games"] = recent_games
     page_context["config"] = config
@@ -1114,6 +1126,14 @@ def view_self_play_game(request: Request, run_id: str, index: int):
 
     detail = load_game_detail(row["pgn"], 1)
     positions_data = [asdict(pos) for pos in detail.positions] if detail else []
+    turn_durations = row.get("turn_durations_seconds") or []
+    for position in positions_data:
+        ply = position.get("ply", 0)
+        position["move_duration_seconds"] = (
+            turn_durations[ply - 1]
+            if ply > 0 and ply - 1 < len(turn_durations)
+            else None
+        )
     game_summary = {
         "status": row.get("outcome") or "",
         "winner": row.get("winner") or "",

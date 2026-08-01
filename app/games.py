@@ -84,6 +84,7 @@ class GamePosition:
     center_score: int  # White center - Black center
     score: int  # Legal move count for the side to move
     total_score: float  # Weighted blend of legal moves, material, forward, and center
+    score_breakdown: list[dict[str, str | float]]  # score, weight, and score * weight per component
     blunder_score: float  # Eval swing in the mover's favor lost to the opponent's best reply
     severity: str  # "" | "Inaccuracy" | "Mistake" | "Blunder", from _move_severity(blunder_score)
 
@@ -216,22 +217,128 @@ PIECE_POINTS = {
     chess.KING: 0,
 }
 
+# MVV-LVA uses the same relative values as the material heuristic.  The
+# multiplier makes the victim value dominate the attacker's value: winning a
+# queen with a pawn should be searched before winning a pawn with a queen.
+MVV_LVA_VICTIM_MULTIPLIER = 10
+
+
+def mvv_lva_score(board: chess.Board, move: chess.Move) -> int:
+    """Score a legal move for capture ordering using MVV-LVA.
+
+    Captures receive ``victim * 10 - attacker``; quiet moves score zero.
+    En-passant captures are treated as pawn captures even though the victim
+    is not physically on the destination square.  Higher scores are searched
+    first.  This is a move-ordering heuristic, not a claim that the capture
+    is tactically sound.
+    """
+    if not board.is_capture(move):
+        return 0
+
+    attacker = board.piece_at(move.from_square)
+    if attacker is None:
+        return 0
+
+    victim = board.piece_at(move.to_square)
+    if victim is None and board.is_en_passant(move):
+        victim_type = chess.PAWN
+    elif victim is None:
+        # Defensive fallback for malformed/non-legal moves.
+        return 0
+    else:
+        victim_type = victim.piece_type
+
+    return (
+        MVV_LVA_VICTIM_MULTIPLIER * PIECE_POINTS[victim_type]
+        - PIECE_POINTS[attacker.piece_type]
+    )
+
+
+def order_moves_mvv_lva(board: chess.Board, moves=None) -> list[chess.Move]:
+    """Return legal/candidate moves ordered from highest to lowest MVV-LVA."""
+    candidates = list(board.legal_moves if moves is None else moves)
+    return sorted(candidates, key=lambda move: mvv_lva_score(board, move), reverse=True)
+
 LEGAL_MOVES_WEIGHT:float = 1.0
 MATERIAL_SCORE_WEIGHT:float = 2.0
-FORWARD_SCORE_WEIGHT:float = 3.0
-FORWARD_MATERIAL_SCORE_WEIGHT: float = 4.0
+FORWARD_SCORE_WEIGHT:float = 2.0
+FORWARD_MATERIAL_SCORE_WEIGHT: float = 3.0
 CENTER_CONTROL_WEIGHT:float = 2.0
+PST_SCORE_WEIGHT: float = 0.01
 # Weight for the "goal is checkmate" heuristic: how hard the engine leans on
 # driving the enemy king to the edge and cutting off its escape squares. Kept
 # small relative to material, so it only breaks ties between otherwise-similar
 # moves rather than sacrificing material to chase the king.
-CHECKMATE_WEIGHT:float = 100.0
+CHECKMATE_WEIGHT:float = 1.0
 
 PHASE_MULTIPLIERS = {
     "Opening": {"legal": LEGAL_MOVES_WEIGHT * 0.90, "material": MATERIAL_SCORE_WEIGHT, "forward": FORWARD_SCORE_WEIGHT, "control": 1.80, "checkmate": CHECKMATE_WEIGHT},
     "Middlegame": {"legal": LEGAL_MOVES_WEIGHT, "material": MATERIAL_SCORE_WEIGHT * 1.2, "forward": FORWARD_SCORE_WEIGHT, "control": 1.00, "checkmate": CHECKMATE_WEIGHT},
     "Endgame": {"legal": LEGAL_MOVES_WEIGHT * 1.1, "material": MATERIAL_SCORE_WEIGHT * 1.45, "forward": FORWARD_SCORE_WEIGHT * 1.15, "control": 0.75, "checkmate":CHECKMATE_WEIGHT},
 }
+
+
+def _pst(rows: tuple[tuple[int, ...], ...]) -> tuple[int, ...]:
+    """Flatten rank-major PST rows into python-chess square order (a1..h8)."""
+    return tuple(value for rank in reversed(rows) for value in rank)
+
+
+# Values are centipawns, with rank 1 first in the source rows.  They are
+# intentionally modest: PSTs should refine material/mobility decisions, not
+# make the evaluator sacrifice a piece for a pretty square.
+PST_MIDDLEGAME = {
+    chess.PAWN: _pst(((0, 0, 0, 0, 0, 0, 0, 0), (5, 10, 10, -20, -20, 10, 10, 5),
+                      (5, -5, -10, 0, 0, -10, -5, 5), (0, 0, 0, 20, 20, 0, 0, 0),
+                      (5, 5, 10, 25, 25, 10, 5, 5), (10, 10, 20, 30, 30, 20, 10, 10),
+                      (50, 50, 50, 50, 50, 50, 50, 50), (0, 0, 0, 0, 0, 0, 0, 0))),
+    chess.KNIGHT: _pst(((-50, -40, -30, -30, -30, -30, -40, -50), (-40, -20, 0, 5, 5, 0, -20, -40),
+                        (-30, 5, 10, 15, 15, 10, 5, -30), (-30, 0, 15, 20, 20, 15, 0, -30),
+                        (-30, 5, 15, 20, 20, 15, 5, -30), (-30, 0, 10, 15, 15, 10, 0, -30),
+                        (-40, -20, 0, 0, 0, 0, -20, -40), (-50, -40, -30, -30, -30, -30, -40, -50))),
+    chess.BISHOP: _pst(((-20, -10, -10, -10, -10, -10, -10, -20), (-10, 5, 0, 0, 0, 0, 5, -10),
+                        (-10, 10, 10, 10, 10, 10, 10, -10), (-10, 0, 10, 10, 10, 10, 0, -10),
+                        (-10, 5, 5, 10, 10, 5, 5, -10), (-10, 0, 5, 10, 10, 5, 0, -10),
+                        (-10, 0, 0, 0, 0, 0, 0, -10), (-20, -10, -10, -10, -10, -10, -10, -20))),
+    chess.ROOK: _pst(((0, 0, 0, 5, 5, 0, 0, 0), (-5, 0, 0, 0, 0, 0, 0, -5),
+                      (-5, 0, 0, 0, 0, 0, 0, -5), (-5, 0, 0, 0, 0, 0, 0, -5),
+                      (-5, 0, 0, 0, 0, 0, 0, -5), (-5, 0, 0, 0, 0, 0, 0, -5),
+                      (5, 10, 10, 10, 10, 10, 10, 5), (0, 0, 0, 0, 0, 0, 0, 0))),
+    chess.QUEEN: _pst(((-20, -10, -10, 0, 0, -10, -10, -20), (-10, 0, 5, 0, 0, 0, 0, -10),
+                       (-10, 5, 5, 5, 5, 5, 0, -10), (0, 0, 5, 5, 5, 5, 0, -5),
+                       (-5, 0, 5, 5, 5, 5, 0, -5), (-10, 0, 5, 5, 5, 5, 0, -10),
+                       (-10, 0, 0, 0, 0, 0, 0, -10), (-20, -10, -10, 0, 0, -10, -10, -20))),
+    chess.KING: _pst(((-30, -40, -40, -50, -50, -40, -40, -30), (-30, -40, -40, -50, -50, -40, -40, -30),
+                      (-30, -40, -40, -50, -50, -40, -40, -30), (-30, -40, -40, -50, -50, -40, -40, -30),
+                      (-20, -30, -30, -40, -40, -30, -30, -20), (-10, -20, -20, -20, -20, -20, -20, -10),
+                      (20, 20, 0, 0, 0, 0, 20, 20), (20, 30, 10, 0, 0, 10, 30, 20))),
+}
+
+PST_ENDGAME = {
+    piece_type: values for piece_type, values in PST_MIDDLEGAME.items()
+}
+PST_ENDGAME[chess.PAWN] = _pst(((0, 0, 0, 0, 0, 0, 0, 0), (10, 10, 10, 10, 10, 10, 10, 10),
+                                (10, 10, 10, 10, 10, 10, 10, 10), (20, 20, 20, 20, 20, 20, 20, 20),
+                                (30, 30, 30, 30, 30, 30, 30, 30), (40, 40, 40, 40, 40, 40, 40, 40),
+                                (60, 60, 60, 60, 60, 60, 60, 60), (0, 0, 0, 0, 0, 0, 0, 0)))
+PST_ENDGAME[chess.KING] = _pst(((-50, -30, -30, -30, -30, -30, -30, -50), (-30, -10, 0, 0, 0, 0, -10, -30),
+                                (-30, 0, 20, 30, 30, 20, 0, -30), (-30, 0, 30, 40, 40, 30, 0, -30),
+                                (-30, 0, 30, 40, 40, 30, 0, -30), (-30, 0, 20, 30, 30, 20, 0, -30),
+                                (-30, -10, 0, 0, 0, 0, -10, -30), (-50, -30, -30, -30, -30, -30, -30, -50)))
+
+
+def _piece_square_score(board: chess.Board, phase: float | None = None) -> float:
+    """Return a tapered PST score from White's perspective, in pawn units."""
+    phase = _game_phase_value(board) if phase is None else max(0.0, min(1.0, phase))
+    score = 0.0
+    for square, piece in board.piece_map().items():
+        table_square = square if piece.color == chess.WHITE else chess.square(
+            chess.square_file(square), 7 - chess.square_rank(square)
+        )
+        middle = PST_MIDDLEGAME[piece.piece_type][table_square]
+        end = PST_ENDGAME[piece.piece_type][table_square]
+        value = (middle + phase * (end - middle)) / 100.0
+        score += value if piece.color == chess.WHITE else -value
+    return round(score, 3)
 
 
 def _game_phase_value(board: chess.Board) -> float:
@@ -630,7 +737,7 @@ def _evaluate_position(
     second-order term, which itself generates a full ply of moves) since
     this runs at every leaf of the search tree.
     """
-    return float(
+    native_score = float(
         chess_engine.evaluate_position(
             board.fen(),
             legal_moves_weight,
@@ -641,6 +748,10 @@ def _evaluate_position(
             forward_material_score_weight,
         )
     )
+    # The native evaluator owns the hot search path. Add the inexpensive PST
+    # refinement here for Python-side analyses (blunder scoring, RL, and the
+    # position viewer), preserving the extension's existing ABI.
+    return native_score + PST_SCORE_WEIGHT * _piece_square_score(board)
 
 
 MATE_SCORE = 1_000_000.0
@@ -698,7 +809,7 @@ def _blunder_score(board: chess.Board, move: chess.Move) -> float:
             return values[candidate]
         board.push(candidate)
         try:
-            replies = list(board.legal_moves)
+            replies = order_moves_mvv_lva(board)
             if not replies:
                 value = _terminal_aware_evaluate(board)
                 values[candidate] = -value if mover == chess.BLACK else value
@@ -718,7 +829,7 @@ def _blunder_score(board: chess.Board, move: chess.Move) -> float:
         finally:
             board.pop()
 
-    candidates = list(board.legal_moves)
+    candidates = order_moves_mvv_lva(board)
     if not candidates:
         return 0.0
 
@@ -861,6 +972,7 @@ def _calculate_total_score(
     forward_score: int,
     center_score: float = 0.0,
     pressure: float = 0.0,
+    pst_score: float = 0.0,
     *,
     legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
     material_score_weight: float = MATERIAL_SCORE_WEIGHT,
@@ -888,7 +1000,57 @@ def _calculate_total_score(
         + material_score_weight * material_score
         + forward_score_weight * forward_score
         + center_control_weight * center_score
+        + PST_SCORE_WEIGHT * pst_score
         + checkmate_weight * pressure, 2)
+
+
+def _score_breakdown(
+    mobility_score: float,
+    material_score: float,
+    forward_score: float,
+    center_score: float,
+    mate_pressure: float,
+    king_activity: float,
+    pst_score: float,
+    phase: float | None = None,
+) -> list[dict[str, str | float]]:
+    """Return the raw score, effective weight, and contribution per component."""
+    weights = {
+        "Mobility": LEGAL_MOVES_WEIGHT,
+        "Material": MATERIAL_SCORE_WEIGHT,
+        "Forward": FORWARD_SCORE_WEIGHT,
+        "Center": CENTER_CONTROL_WEIGHT,
+        "Mate pressure": CHECKMATE_WEIGHT,
+        "King activity": CHECKMATE_WEIGHT,
+        "PST": PST_SCORE_WEIGHT,
+    }
+    if phase is not None:
+        multipliers = _phase_multipliers(phase)
+        weights["Mobility"] *= multipliers["legal"] / LEGAL_MOVES_WEIGHT
+        weights["Material"] *= multipliers["material"] / MATERIAL_SCORE_WEIGHT
+        weights["Forward"] *= multipliers["forward"] / FORWARD_SCORE_WEIGHT
+        weights["Center"] *= multipliers["control"] / CENTER_CONTROL_WEIGHT
+        weights["Mate pressure"] *= multipliers["checkmate"] / CHECKMATE_WEIGHT
+        weights["King activity"] *= multipliers["checkmate"] / CHECKMATE_WEIGHT
+
+    scores = {
+        "Mobility": mobility_score,
+        "Material": material_score,
+        "Forward": forward_score,
+        "Center": center_score,
+        "Mate pressure": mate_pressure,
+        "King activity": king_activity,
+        "PST": pst_score,
+    }
+    return [
+        {
+            "component": component,
+            "score": round(scores[component], 3),
+            "weight": round(weights[component], 3),
+            "weighted_score": round(scores[component] * weights[component], 3),
+        }
+        for component in scores
+    ]
 
 
 def _legal_move_arrows(board: chess.Board) -> list[chess.svg.Arrow]:
@@ -940,15 +1102,24 @@ def _position_metrics(board: chess.Board) -> tuple:
     strategic_control_score = round((1.0 - phase_value) * center_score + phase_value * flank_score, 2)
     mobility_w, mobility_b = _both_mobilities(board)
     mobility_score = mobility_w - mobility_b
-    pressure = _mate_pressure(board) + _king_activity(board, phase_value)
+    mate_pressure = _mate_pressure(board)
+    king_activity = _king_activity(board, phase_value)
+    pressure = mate_pressure + king_activity
+    pst_score = _piece_square_score(board, phase_value)
+    score_breakdown = _score_breakdown(
+        mobility_score, material_score, forward_score,
+        strategic_control_score, mate_pressure, king_activity,
+        pst_score, phase_value,
+    )
     total_score = _calculate_total_score(
         mobility_score, material_score, forward_score, strategic_control_score, pressure,
+        pst_score,
         phase=phase_value,
     )
     return (
         f1, f2, f3, f4, material, center, flank,
         forward_score, material_score, strategic_control_score,
-        total_score, phase, weight_percentages,
+        total_score, score_breakdown, phase, weight_percentages,
     )
 
 
@@ -960,7 +1131,7 @@ def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None
     (
         f1, f2, f3, f4, material, center, flank,
         forward_score, material_score, strategic_control_score,
-        total_score, phase, weight_percentages,
+        total_score, score_breakdown, phase, weight_percentages,
     ) = _position_metrics(board)
     score = len(legal_moves)
 
@@ -968,7 +1139,7 @@ def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None
     svg = chess.svg.board(board, size=420, lastmove=lastmove, arrows=arrows)
     return (_style_arrows(svg), sans, tree, f1, f2, f3, f4, material, center, flank,
             forward_score, material_score, strategic_control_score, score,
-            total_score, move_scores, phase, weight_percentages)
+            total_score, score_breakdown, move_scores, phase, weight_percentages)
 
 
 def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
@@ -980,7 +1151,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
     headers = game.headers
     board = game.board()
 
-    start_moves_svg, start_legal, start_tree, start_f1, start_f2, start_f3, start_f4, start_material, start_center, start_flank, start_forward_score, start_material_score, start_center_score, start_score, start_total_score, start_scores, start_phase, start_weight_percentages = _legal_moves_and_tree(board)
+    start_moves_svg, start_legal, start_tree, start_f1, start_f2, start_f3, start_f4, start_material, start_center, start_flank, start_forward_score, start_material_score, start_center_score, start_score, start_total_score, start_score_breakdown, start_scores, start_phase, start_weight_percentages = _legal_moves_and_tree(board)
     positions: list[GamePosition] = [
         GamePosition(
             ply=0,
@@ -1007,6 +1178,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
             center_score=start_center_score,
             score=start_score,
             total_score=start_total_score,
+            score_breakdown=start_score_breakdown,
             blunder_score=0.0,
             severity="",
         )
@@ -1020,7 +1192,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
         san = board.san(move)
         blunder_score = _blunder_score(board, move)
         board.push(move)
-        moves_svg, legal, tree, f1, f2, f3, f4, material, center, flank, forward_score, material_score, center_score, score, total_score, scores, phase, weight_percentages = _legal_moves_and_tree(board, lastmove=move)
+        moves_svg, legal, tree, f1, f2, f3, f4, material, center, flank, forward_score, material_score, center_score, score, total_score, score_breakdown, scores, phase, weight_percentages = _legal_moves_and_tree(board, lastmove=move)
         positions.append(
             GamePosition(
                 ply=ply,
@@ -1047,6 +1219,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
                 center_score=center_score,
                 score=score,
                 total_score=total_score,
+                score_breakdown=score_breakdown,
                 blunder_score=blunder_score,
                 severity=_move_severity(blunder_score),
             )

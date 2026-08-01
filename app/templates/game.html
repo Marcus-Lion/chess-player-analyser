@@ -6,7 +6,7 @@
   <title>{{ username }} - Game {{ index }}</title>
   <style>
     body { font-family: system-ui, sans-serif; margin: 2rem; }
-    .layout { display: grid; grid-template-columns: 440px 1fr; gap: 1.5rem; align-items: start; }
+    .layout { display: grid; grid-template-columns: minmax(360px, 440px) minmax(0, 1fr); gap: 1.5rem; align-items: start; }
     .panel { border: 1px solid #ddd; border-radius: 12px; padding: 1rem; }
     .metrics { display: grid; grid-template-columns: repeat(2, minmax(120px, 1fr)); gap: .75rem; margin: 1rem 0; }
     .metric { border: 1px solid #eee; border-radius: 10px; padding: .75rem; }
@@ -37,6 +37,21 @@
     .breakdown th, .breakdown td { padding: .22rem 0; border-bottom: 1px solid #f1f5f9; }
     .breakdown th { text-align: left; color: #6b7280; font-weight: 600; }
     .breakdown td.num, .breakdown th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .score-breakdown-group { grid-column: 1 / -1; }
+    .top-score-metric { order: 1; }
+    .score-breakdown-group { order: 2; }
+    .secondary-score-metric, .phase-weights-group, .weights-metric { order: 3; }
+    .position-summary-source { display: none; }
+    .position-summary { display: grid; grid-template-columns: repeat(3, minmax(130px, 1fr)); gap: .75rem; margin-bottom: 1rem; }
+    .position-summary .metric { min-width: 0; }
+    @media (max-width: 700px) { .position-summary { grid-template-columns: repeat(2, minmax(130px, 1fr)); } }
+    @media (max-width: 420px) { .position-summary { grid-template-columns: 1fr; } }
+    .score-breakdown { table-layout: fixed; }
+    .score-breakdown th:first-child, .score-breakdown td:first-child { width: 34%; }
+    .score-breakdown th:nth-child(2), .score-breakdown td:nth-child(2) { width: 18%; }
+    .score-breakdown th:nth-child(3), .score-breakdown td:nth-child(3) { width: 18%; }
+    .score-breakdown th:nth-child(4), .score-breakdown td:nth-child(4) { width: 30%; }
+    .score-breakdown th, .score-breakdown td { white-space: nowrap; }
     .phase-weights td { padding: .18rem 0; }
     .controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .75rem 0; }
     .controls button { padding: .35rem .6rem; }
@@ -51,6 +66,8 @@
     .positions a.mistake { color: #e67e22; }
     .positions a.blunder { color: #c0392b; }
     .positions-table { margin-top: .5rem; }
+    .positions-panel { min-width: 0; overflow: hidden; }
+    .positions-panel .positions-table { width: 100%; }
     .positions-table th, .positions-table td { white-space: nowrap; }
     .positions-table .num { text-align: right; }
     .positions-table .side-group { text-align: center; }
@@ -62,6 +79,16 @@
     .board-panel .controls { order: 2; }
     .board-panel #position_slider { order: 3; width: 100%; }
     .board-panel .metrics { order: 4; }
+    @media (max-width: 900px) {
+      body { margin: 1rem; }
+      .layout { grid-template-columns: 1fr; }
+      .board-panel { max-width: 440px; width: 100%; justify-self: center; }
+    }
+    @media (max-width: 520px) {
+      .metrics { grid-template-columns: 1fr; }
+      .positions-panel { overflow-x: auto; }
+      .positions-panel .positions-table { width: max-content; min-width: 100%; }
+    }
   </style>
 </head>
 <body>
@@ -88,11 +115,22 @@
     <div class="layout">
       <div class="panel board-panel">
         <div class="metrics">
-          <div class="metric">Legal Moves <span class="help-icon" title="Legal Moves is the count of legal options available to the side to move. More legal moves usually means more mobility and flexibility.">?</span><b id="legal_score">{{ "{:,}".format(detail.positions[0].score) }}</b></div>
-          <div class="metric">Score <span class="help-icon" title="Score uses phase-aware weights: opening center control and king safety, then endgame wing control and king activity.">?</span><b id="score">{{ "{:,.2f}".format(detail.positions[0].total_score) }}</b></div>
-          <div class="metric">Center <span class="help-icon" title="Center control counts control of central squares for each side. It is strongest in the opening.">?</span><b id="center">{{ "{:,}".format(detail.positions[0].center.White) }} / {{ "{:,}".format(detail.positions[0].center.Black) }}</b></div>
-          <div class="metric">Wing control <span class="help-icon" title="Outer-file control is blended into the strategic score as the game reaches the endgame.">?</span><b id="flank">{{ "{:,}".format(detail.positions[0].flank.White) }} / {{ "{:,}".format(detail.positions[0].flank.Black) }}</b></div>
-          <div class="metric">
+          <div class="metric position-summary-source">Legal Moves <span class="help-icon" title="Legal Moves is the count of legal options available to the side to move. More legal moves usually means more mobility and flexibility.">?</span><b id="legal_score">{{ "{:,}".format(detail.positions[0].score) }}</b></div>
+          <div class="metric position-summary-source">Score <span class="help-icon" title="Score uses phase-aware weights: opening center control and king safety, then endgame wing control and king activity.">?</span><b id="score">{{ "{:,.2f}".format(detail.positions[0].total_score) }}</b></div>
+          <div class="metric score-breakdown-group">
+            <div>Score breakdown <span class="help-icon" title="Each row shows the raw position score, its effective phase-aware weight, and score multiplied by weight.">?</span></div>
+            <table class="breakdown score-breakdown" id="score_breakdown">
+              <thead><tr><th>Component</th><th class="num">Score</th><th class="num">Weight</th><th class="num">Score × weight</th></tr></thead>
+              <tbody>
+                {% for item in detail.positions[0].score_breakdown %}
+                <tr data-component="{{ item.component }}"><td>{{ item.component }}</td><td class="num breakdown-score">{{ "{:,.3f}".format(item.score) }}</td><td class="num breakdown-weight">{{ "{:,.3f}".format(item.weight) }}</td><td class="num breakdown-weighted-score">{{ "{:,.3f}".format(item.weighted_score) }}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <div class="metric top-score-metric position-summary-source">Center <span class="help-icon" title="Center control counts control of central squares for each side. It is strongest in the opening.">?</span><b id="center">{{ "{:,}".format(detail.positions[0].center.White) }} / {{ "{:,}".format(detail.positions[0].center.Black) }}</b></div>
+          <div class="metric top-score-metric position-summary-source">Wing control <span class="help-icon" title="Outer-file control is blended into the strategic score as the game reaches the endgame.">?</span><b id="flank">{{ "{:,}".format(detail.positions[0].flank.White) }} / {{ "{:,}".format(detail.positions[0].flank.Black) }}</b></div>
+          <div class="metric secondary-score-metric position-summary-source">
             <div class="metric-head">
               <span>Forward control <span class="help-icon" title="Forward control counts how much each side controls the forward ranks. The rows below show 1st, 2nd, and 3rd order control; the net value is White minus Black across those orders.">?</span></span>
               <span class="value" id="forward_net">{{ "{:,}".format(detail.positions[0].forward_score) }}</span>
@@ -139,7 +177,7 @@
               </tbody>
             </table>
           </div>
-          <div class="metric">Material <span class="help-icon" title="Material is the material balance score for White / Black in the current position. Higher means the side has more remaining piece value.">?</span><b id="material">{{ "{:,}".format(detail.positions[0].material.White) }} / {{ "{:,}".format(detail.positions[0].material.Black) }}</b></div>
+          <div class="metric top-score-metric position-summary-source">Material <span class="help-icon" title="Material is the material balance score for White / Black in the current position. Higher means the side has more remaining piece value.">?</span><b id="material">{{ "{:,}".format(detail.positions[0].material.White) }} / {{ "{:,}".format(detail.positions[0].material.Black) }}</b></div>
           <div class="metric phase-weights-group">
             <div>Phase <b id="phase">{{ detail.positions[0].phase }}</b></div>
             <div>Phase weights <span class="help-icon" title="The four score contributions are rebalanced as material comes off the board.">?</span></div>
@@ -153,7 +191,7 @@
             </table>
           </div>
           {% if game_summary and game_summary.white_weights and game_summary.black_weights %}
-            <div class="metric">
+            <div class="metric weights-metric">
               Weights <span class="help-icon" title="These are the engine weights used to score positions in this game.">?</span>
               <table class="breakdown weights-breakdown" id="weights_list">
                 <thead><tr><th>Component</th><th class="num">White</th><th class="num">Black</th></tr></thead>
@@ -183,7 +221,15 @@
         </div>
       </div>
 
-      <div class="panel">
+      <div class="panel positions-panel">
+        <div class="position-summary">
+          <div class="metric">Legal Moves <span class="help-icon">?</span><b id="summary_legal_score">{{ "{:,}".format(detail.positions[0].score) }}</b></div>
+          <div class="metric">Score <span class="help-icon">?</span><b id="summary_score">{{ "{:,.2f}".format(detail.positions[0].total_score) }}</b></div>
+          <div class="metric">Center <span class="help-icon">?</span><b id="summary_center">{{ "{:,}".format(detail.positions[0].center.White) }} / {{ "{:,}".format(detail.positions[0].center.Black) }}</b></div>
+          <div class="metric">Wing control <span class="help-icon">?</span><b id="summary_flank">{{ "{:,}".format(detail.positions[0].flank.White) }} / {{ "{:,}".format(detail.positions[0].flank.Black) }}</b></div>
+          <div class="metric">Forward control <span class="help-icon">?</span><b id="summary_forward">{{ "{:,}".format(detail.positions[0].forward_score) }}</b></div>
+          <div class="metric">Material <span class="help-icon">?</span><b id="summary_material">{{ "{:,}".format(detail.positions[0].material.White) }} / {{ "{:,}".format(detail.positions[0].material.Black) }}</b></div>
+        </div>
         <h2>Positions</h2>
         <p class="muted">Use the buttons, slider, or click a position to step through the game.</p>
         <table class="positions-table" id="positions_list">
@@ -239,6 +285,12 @@
       const material = document.getElementById('material');
       const center = document.getElementById('center');
       const flank = document.getElementById('flank');
+      const summaryLegalScore = document.getElementById('summary_legal_score');
+      const summaryScore = document.getElementById('summary_score');
+      const summaryCenter = document.getElementById('summary_center');
+      const summaryFlank = document.getElementById('summary_flank');
+      const summaryForward = document.getElementById('summary_forward');
+      const summaryMaterial = document.getElementById('summary_material');
       const phase = document.getElementById('phase');
       const phaseMaterial = document.getElementById('phase_material');
       const phaseMobility = document.getElementById('phase_mobility');
@@ -318,6 +370,19 @@
         phaseForward.textContent = `${weights['Forward Score']}%`;
         score.textContent = decimalFormat.format(pos.total_score);
         legalScore.textContent = integerFormat.format(pos.score);
+        summaryScore.textContent = decimalFormat.format(pos.total_score);
+        summaryLegalScore.textContent = integerFormat.format(pos.score);
+        summaryCenter.textContent = `${integerFormat.format(pos.center.White)} / ${integerFormat.format(pos.center.Black)}`;
+        summaryFlank.textContent = `${pos.flank.White} / ${pos.flank.Black}`;
+        summaryForward.textContent = integerFormat.format(pos.forward_score);
+        summaryMaterial.textContent = `${integerFormat.format(pos.material.White)} / ${integerFormat.format(pos.material.Black)}`;
+        for (const item of (pos.score_breakdown || [])) {
+          const row = document.querySelector(`#score_breakdown tr[data-component="${CSS.escape(item.component)}"]`);
+          if (!row) continue;
+          row.querySelector('.breakdown-score').textContent = decimalFormat.format(item.score);
+          row.querySelector('.breakdown-weight').textContent = decimalFormat.format(item.weight);
+          row.querySelector('.breakdown-weighted-score').textContent = decimalFormat.format(item.weighted_score);
+        }
         formatTableNumbers();
         label.textContent = describePosition(pos);
         setActiveLink(index);

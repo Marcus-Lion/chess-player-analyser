@@ -66,8 +66,9 @@
     .positions a.mistake { color: #e67e22; }
     .positions a.blunder { color: #c0392b; }
     .positions-table { margin-top: .5rem; }
-    .positions-panel { min-width: 0; overflow: hidden; }
-    .positions-panel .positions-table { width: 100%; }
+    .positions-panel { min-width: 0; width: fit-content; max-width: 100%; justify-self: start; overflow: hidden; }
+    .positions-panel .positions-table { width: max-content; }
+    .position-summary { width: 100%; }
     .positions-table th, .positions-table td { white-space: nowrap; }
     .positions-table .num { text-align: right; }
     .positions-table .side-group { text-align: center; }

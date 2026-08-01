@@ -185,6 +185,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = BASE_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 SELF_PLAY_JOBS_DIR = CACHE_DIR / "self_play_jobs"
+LOCAL_SELF_PLAY_RESULTS = CACHE_DIR / "self_play_results.json"
+
+
+def _neo4j_enabled() -> bool:
+    return os.getenv("NEO4J_ENABLED", "").lower() in ("1", "true", "yes", "on")
 SELF_PLAY_JOBS_DIR.mkdir(parents=True, exist_ok=True)
 DEFAULT_SELF_PLAY_WORKERS = min(max(1, os.process_cpu_count() or 1), 48)
 # Job status lives in memory (see SelfPlayJobHub); only each job's worker log
@@ -386,6 +391,8 @@ def _player_profile_from_row(base: PlayerProfile, row: dict) -> PlayerProfile:
 def load_current_player_roster() -> list[PlayerProfile]:
     """Load the latest self-play player weights from Neo4j, falling back to code defaults."""
     base_roster = {player.player_id: player for player in get_player_roster()}
+    if not _neo4j_enabled():
+        return list(base_roster.values())
     try:
         with Neo4jStore() as store:
             rows = store.load_self_play_players()
@@ -445,6 +452,8 @@ def _player_weight_sets(
 
 def _current_player_skill_levels() -> dict[str, float]:
     """Return the latest per-player Elo estimates from the player nodes."""
+    if not _neo4j_enabled():
+        return {}
     try:
         with Neo4jStore() as store:
             rows = store.load_self_play_players()
@@ -1410,6 +1419,8 @@ def run_self_play(
 
 
 def refresh_self_play_player_elos() -> int:
+    if not _neo4j_enabled():
+        return 0
     with Neo4jStore() as store:
         return store.refresh_self_play_player_elos()
 
@@ -1463,10 +1474,27 @@ def save_self_play_results(games: list[SelfPlayGame], *, refresh_player_elos: bo
             }
         )
 
-    with Neo4jStore() as store:
-        store.save_self_play_games(payloads)
-        if refresh_player_elos:
-            store.refresh_self_play_player_elos()
+    if _neo4j_enabled():
+        try:
+            with Neo4jStore() as store:
+                store.save_self_play_games(payloads)
+                if refresh_player_elos:
+                    store.refresh_self_play_player_elos()
+            return
+        except Exception:
+            traceback.print_exc()
+
+    # Cloud Run can operate without Neo4j, but its local filesystem is
+    # ephemeral and instance-local. Use this only as a no-configuration
+    # fallback; configure Neo4j for durable, shared self-play history.
+    existing = _load_local_self_play_results()
+    by_key = {
+        (str(row.get("run_id")), int(row.get("index", -1))): row
+        for row in existing
+    }
+    for payload in payloads:
+        by_key[(str(payload.get("run_id")), int(payload.get("index", -1)))] = payload
+    _save_local_self_play_results(list(by_key.values()))
 
 
 def _replace_worst_player_from_elite(batch_df, store: Neo4jStore) -> int:
@@ -1538,6 +1566,8 @@ def rebalance_self_play_players(games: list[SelfPlayGame]) -> int:
     """Update player weights from a batch using SHAP and elite replacement."""
     if not games:
         return 0
+    if not _neo4j_enabled():
+        return 0
 
     batch_df = self_play_to_dataframe([asdict(game) for game in games])
     if batch_df.empty:
@@ -1552,15 +1582,52 @@ def rebalance_self_play_players(games: list[SelfPlayGame]) -> int:
         return updated
 
 
+def _load_local_self_play_results() -> list[dict]:
+    if not LOCAL_SELF_PLAY_RESULTS.exists():
+        return []
+    try:
+        data = json.loads(LOCAL_SELF_PLAY_RESULTS.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def _save_local_self_play_results(rows: list[dict]) -> None:
+    LOCAL_SELF_PLAY_RESULTS.write_text(
+        json.dumps(rows, ensure_ascii=False), encoding="utf-8"
+    )
+
+
 def load_self_play_results(limit: int | None = 50) -> list[dict]:
-    with Neo4jStore() as store:
-        rows = store.load_self_play_games(limit)
+    if _neo4j_enabled():
+        try:
+            with Neo4jStore() as store:
+                rows = store.load_self_play_games(limit)
+            return [_normalize_result(row) for row in rows]
+        except Exception:
+            pass
+    rows = _load_local_self_play_results()
+    if limit is not None:
+        rows = rows[-limit:]
     return [_normalize_result(row) for row in rows]
 
 
 def load_self_play_result(run_id: str, index: int) -> dict | None:
-    with Neo4jStore() as store:
-        row = store.load_self_play_game(run_id, index)
+    if _neo4j_enabled():
+        try:
+            with Neo4jStore() as store:
+                row = store.load_self_play_game(run_id, index)
+            return _normalize_result(row) if row is not None else None
+        except Exception:
+            pass
+    row = next(
+        (
+            row for row in _load_local_self_play_results()
+            if str(row.get("run_id")) == str(run_id)
+            and int(row.get("index", -1)) == int(index)
+        ),
+        None,
+    )
     return _normalize_result(row) if row is not None else None
 
 

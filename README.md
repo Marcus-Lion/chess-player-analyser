@@ -204,7 +204,38 @@ gcloud run deploy chess-player-analyser \
   --region us-central1 \
   --allow-unauthenticated \
   --memory 2Gi --cpu 2 --timeout 1800
+  ```
+
+Neo4j is optional. Cloud Run runs without it and keeps temporary self-play
+results in instance-local storage. For durable shared history, use Neo4j Aura
+or another reachable cloud Neo4j deployment.
+
+### Optional cloud Neo4j configuration
+
+Create a password secret once (replace the placeholder locally; do not commit
+the password):
+
+```bash
+printf '%s' 'YOUR_NEO4J_PASSWORD' | gcloud secrets create neo4j-password \
+  --data-file=- --replication-policy=automatic
+gcloud secrets add-iam-policy-binding neo4j-password \
+  --member="serviceAccount:$(gcloud run services describe chess-player-analyser \
+  --region us-central1 --format='value(spec.template.spec.serviceAccountName)')" \
+  --role=roles/secretmanager.secretAccessor
 ```
+
+For Neo4j Aura, use the supplied `neo4j+s://...` URI. Enable Neo4j on the
+service and inject the password from Secret Manager:
+
+```bash
+gcloud run services update chess-player-analyser \
+  --region us-central1 \
+  --set-env-vars NEO4J_ENABLED=true,NEO4J_URI=neo4j+s://YOUR_AURA_HOST,NEO4J_USER=neo4j,NEO4J_DATABASE=neo4j \
+  --set-secrets NEO4J_PASSWORD=neo4j-password:latest
+```
+
+For a private Neo4j VM, Cloud Run also needs a Serverless VPC Access
+connector and firewall rules allowing Bolt traffic from that connector.
 
 Live deployment: project `chess-player-502601`, region `us-central1`, service
 `chess-player-analyser` at

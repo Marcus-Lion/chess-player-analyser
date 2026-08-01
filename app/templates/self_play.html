@@ -319,8 +319,8 @@
               <td>{% if row.white_player_id %}<a href="/self-play/players/{{ row.white_player_id }}">{{ row.white_player_name or "" }}</a>{% else %}{{ row.white_player_name or "" }}{% endif %}</td>
               <td>{% if row.black_player_id %}<a href="/self-play/players/{{ row.black_player_id }}">{{ row.black_player_name or "" }}</a>{% else %}{{ row.black_player_name or "" }}{% endif %}</td>
               <td><a href="/self-play/view/{{ row.run_id }}/{{ row.index }}">{{ row.result }}</a></td>
-              <td>{{ "%.0f"|format(row.WhiteElo if row.WhiteElo is not none else 0) }}</td>
-              <td>{{ "%.0f"|format(row.BlackElo if row.BlackElo is not none else 0) }}</td>
+              <td>{{ "%.0f"|format(row.get('WhiteElo', 0) or 0) }}</td>
+              <td>{{ "%.0f"|format(row.get('BlackElo', 0) or 0) }}</td>
               <td>{{ row.turns }}</td>
               <td><a href="/self-play/terminations/{{ row.termination|urlencode }}">{{ row.termination_display or row.termination }}</a></td>
               <td>{{ "%.2f"|format(row.final_score) }}</td>

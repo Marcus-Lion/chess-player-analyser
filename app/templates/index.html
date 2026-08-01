@@ -9,6 +9,7 @@
     input, button { font-size: 1rem; padding: .55rem; margin: .25rem 0; }
     label { display: block; margin-top: 1rem; font-weight: 600; }
     .card { border: 1px solid #ddd; border-radius: 12px; padding: 1.25rem; }
+    .danger { margin-top: 1rem; border: 1px solid #c0392b; color: #c0392b; background: #fff; border-radius: 6px; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -17,6 +18,10 @@
   <p><a href="/self-play">Run self-play harness</a></p>
   <p><a href="/rl">Run RL training</a></p>
   <p><a href="/play">Play a game</a></p>
+
+  <form method="post" action="/reboot" onsubmit="return confirm('Restart the application now? Active jobs may be interrupted.');">
+    <button class="danger" type="submit">Reboot app</button>
+  </form>
 
   <div class="card">
     <form method="post" action="/analyse">

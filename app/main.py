@@ -13,7 +13,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from dotenv import load_dotenv
-from fastapi import FastAPI, Form, Request, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import BackgroundTasks, FastAPI, Form, Request, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -524,6 +524,21 @@ def _play_context(
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
+
+
+def _terminate_current_instance() -> None:
+    """Terminate this worker after the reboot response has been sent."""
+    os._exit(0)
+
+
+@app.post("/reboot", response_class=HTMLResponse)
+def reboot(background_tasks: BackgroundTasks):
+    """Restart the current app instance; Cloud Run replaces it automatically."""
+    background_tasks.add_task(_terminate_current_instance)
+    return HTMLResponse(
+        "<html><body><p>Restarting application…</p>"
+        "<p><a href='/'>Return to the home page</a></p></body></html>"
+    )
 
 
 @app.get("/play", response_class=HTMLResponse)

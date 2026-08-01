@@ -612,7 +612,14 @@ def shap_balance_player_weights(
 
 def summary(df: pd.DataFrame) -> dict:
     if df.empty:
-        return {"games": 0}
+        return {
+            "games": 0,
+            "decisive_pct": 0.0,
+            "draw_pct": 0.0,
+            "white_win_pct": 0.0,
+            "avg_turns": 0.0,
+            "top_termination": "",
+        }
 
     games = len(df)
     decisive = int((~df["is_draw"]).sum())

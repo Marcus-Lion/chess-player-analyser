@@ -1,0 +1,23 @@
+.git/
+.venv/
+__pycache__/
+*.pyc
+cache/
+target/
+engine/target/
+engine/testsite2/
+.idea/
+.junie/
+.claude/
+.ollamassist/
+*.err.txt
+*.out.txt
+.env
+
+# YouTube chess-video workspace: local media and generated artifacts
+youtube-chess-videos/data/raw/
+youtube-chess-videos/data/processed/
+youtube-chess-videos/data/transcripts/
+youtube-chess-videos/data/analysis/
+youtube-chess-videos/reports/generated/
+youtube-chess-videos/.env*

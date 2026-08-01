@@ -10,8 +10,11 @@ retired Python search at the same evals/move.
 Built on [shakmaty](https://docs.rs/shakmaty) (chess rules / move generation /
 Zobrist hashing) via [PyO3](https://pyo3.rs) + [maturin](https://www.maturin.rs).
 
-## Build
+## Important references
+https://web.stanford.edu/class/psych209/Readings/SuttonBartoIPRLBook2ndEd.pdf
 
+
+## Build
 From the repo root, into the project's uv venv:
 
 ```powershell

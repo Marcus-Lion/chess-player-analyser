@@ -65,25 +65,20 @@ On Linux/Docker the default host toolchain works as-is (no override needed).
 - `choose_engine_move(fen, depth, top_k, seed, legal_moves_weight,
   material_score_weight, forward_score_weight, forward_material_score_weight,
   center_control_weight,
-  checkmate_weight, repetition_counts, top_k_score_threshold=3.0,
-  blunder_control=0.0) ->
+  checkmate_weight, repetition_counts, top_k_score_threshold=3.0) ->
   (uci, score, evaluations)`
 - `choose_engine_move_from_history(fen, history_fens, ...) ->
   (uci, score, evaluations)` — builds repetition hashes and counts natively
   from historical FENs before searching.
-- `play_self_game_native(..., blunder_control=0.0) ->
+- `play_self_game_native(...) ->
   (result, termination, turns, moves, evaluations)`
   — runs the complete board/move loop in Rust and returns UCI moves for PGN
   formatting by the Python caller.
 
-`forward_material_score_weight` defaults to `0.25`. It controls the material
+`forward_material_score_weight` defaults to `1.0`. It controls the material
 value assigned to pieces occupying the side's forward zone. Set it to `0` to
 disable the heuristic or increase it to reward advanced material more strongly.
 
-`blunder_control` is a probability in the range `0.0`–`1.0`. On a triggered
-move, the engine selects from all legal moves that it has searched, rather than
-from the normal Top-K candidates. This makes intentional mistakes reproducible
-with a seed while preserving legal play; `0.0` disables the control.
 - `calculate_forward(fen) -> (forward_1, forward_2, forward_3)` and
   `calculate_forward_4(fen) -> (white, black)` — native forward-control
   metrics used by the game viewer.
@@ -98,7 +93,7 @@ with a seed while preserving legal play; `0.0` disables the control.
   material-based opening/endgame phase calculation native as well.
 - `evaluate_position(fen, legal_moves_weight, material_score_weight,
   forward_score_weight, center_control_weight, checkmate_weight,
-  forward_material_score_weight=0.25) -> float`
+  forward_material_score_weight=1.0) -> float`
   — White-perspective static eval, used for parity checks against
   `app.games._evaluate_position`.
 

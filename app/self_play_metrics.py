@@ -10,7 +10,6 @@ WEIGHT_DIMENSIONS = [
     "legal_moves_weight",
     "material_score_weight",
     "forward_score_weight",
-    "center_control_weight",
 ]
 
 SHAP_BALANCE_TARGET_SCORE = 0.5
@@ -204,11 +203,9 @@ def export_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         "WhiteWeights_legal_moves_weight",
         "WhiteWeights_material_score_weight",
         "WhiteWeights_forward_score_weight",
-        "WhiteWeights_center_control_weight",
         "BlackWeights_legal_moves_weight",
         "BlackWeights_material_score_weight",
         "BlackWeights_forward_score_weight",
-        "BlackWeights_center_control_weight",
     ]
     ordered = [col for col in preferred if col in out.columns]
     ordered.extend(col for col in out.columns if col not in ordered)
@@ -675,14 +672,20 @@ def plies_by_termination(df: pd.DataFrame) -> pd.DataFrame:
     return turns_by_termination(df)
 
 
-def rolling_outcome_rates(df: pd.DataFrame, window: int = 50) -> pd.DataFrame:
-    window = min(window, len(df)) or 1
+def rolling_outcome_rates(df: pd.DataFrame, window: int = 50, limit: int = 1000) -> pd.DataFrame:
+    """Return chronological rolling outcome rates for the most recent games."""
+    # Results may be loaded newest-first from persistence. Rolling rates must
+    # follow the order games were played, not the order rows happened to load.
+    ordered = _ordered_self_play_rows(df)
+    window = min(window, len(ordered)) or 1
     rolling = pd.DataFrame({
-        "game_seq": df["game_seq"],
-        "White wins": df["white_won"].rolling(window, min_periods=1).mean(),
-        "Black wins": df["black_won"].rolling(window, min_periods=1).mean(),
-        "Draw": df["is_draw"].rolling(window, min_periods=1).mean(),
+        "game_seq": range(1, len(ordered) + 1),
+        "White wins": ordered["white_won"].rolling(window, min_periods=1).mean().to_numpy(),
+        "Black wins": ordered["black_won"].rolling(window, min_periods=1).mean().to_numpy(),
+        "Draw": ordered["is_draw"].rolling(window, min_periods=1).mean().to_numpy(),
     })
+    if limit > 0:
+        rolling = rolling.tail(limit).reset_index(drop=True)
     return rolling.melt(id_vars="game_seq", var_name="outcome", value_name="rate")
 
 

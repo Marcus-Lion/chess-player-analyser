@@ -86,11 +86,10 @@
               <td data-value="{{ player.losses }}">{{ player.losses }}</td>
               <td data-value="{{ player.score_pct }}">{{ "%.1f"|format(player.score_pct * 100) }}%</td>
               <td data-value="{{ player.elo }}">{{ "%.0f"|format(player.elo) }}</td>
-              <td class="weights" data-value="lm={{ "%.2f"|format(player.legal_moves_weight) }}, mat={{ "%.2f"|format(player.material_score_weight) }}, fwd={{ "%.2f"|format(player.forward_score_weight) }}, cc={{ "%.2f"|format(player.center_control_weight) }}">
+            <td class="weights" data-value="lm={{ "%.2f"|format(player.legal_moves_weight) }}, mat={{ "%.2f"|format(player.material_score_weight) }}, fwd={{ "%.2f"|format(player.forward_score_weight) }}">
                 lm={{ "%.2f"|format(player.legal_moves_weight) }},
                 mat={{ "%.2f"|format(player.material_score_weight) }},
-                fwd={{ "%.2f"|format(player.forward_score_weight) }},
-                cc={{ "%.2f"|format(player.center_control_weight) }}
+                fwd={{ "%.2f"|format(player.forward_score_weight) }}
               </td>
             </tr>
           {% endfor %}

@@ -103,10 +103,12 @@ so an opening pawn sacrifice does not by itself trigger endgame weighting.
 
 | Component | Weight | What it measures |
 |---|---|---|
-| Legal moves | `LEGAL_MOVES_WEIGHT` (-2.0) | White-minus-Black mobility. |
+| Legal moves | `LEGAL_MOVES_WEIGHT` (1.0) | White-minus-Black mobility. |
 | Material | `MATERIAL_SCORE_WEIGHT` (1.0) | Piece points: pawn=1, knight/bishop=3, rook=5, queen=9. |
 | Forward control | `FORWARD_SCORE_WEIGHT` (1.0) | Squares attacked on each side's forward two ranks. |
+| Forward material | `FORWARD_MATERIAL_SCORE_WEIGHT` (1.0) | Material value for pieces occupying the side's forward zone. |
 | Strategic control | `CENTER_CONTROL_WEIGHT` (1.0) | Central squares (d4/e4/d5/e5) in the opening, blended toward outer-file/wing squares in the endgame. |
+| Piece-square scoring | `PST_SCORE_WEIGHT` (1.0) | Tapered piece-square preferences across opening, middlegame, and endgame. |
 | Checkmate pressure | `CHECKMATE_WEIGHT` (1.0) | King-safety/mate-threat heuristic (`_mate_pressure`). |
 
 King activity is included in the checkmate-pressure term: castled, sheltered

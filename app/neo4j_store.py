@@ -140,6 +140,8 @@ class Neo4jStore:
             "FOR (g:SelfPlayGame) ON (g.played_at)",
             "CREATE INDEX self_play_game_run_id IF NOT EXISTS "
             "FOR (g:SelfPlayGame) ON (g.run_id)",
+            "CREATE INDEX self_play_game_run_index IF NOT EXISTS "
+            "FOR (g:SelfPlayGame) ON (g.run_id, g.index)",
             "CREATE INDEX self_play_game_run_group IF NOT EXISTS "
             "FOR (g:SelfPlayGame) ON (g.run_group)",
             "CREATE INDEX self_play_game_run_date IF NOT EXISTS "
@@ -166,11 +168,9 @@ class Neo4jStore:
         row["white_legal_moves_weight"] = white_weights.get("legal_moves_weight")
         row["white_material_score_weight"] = white_weights.get("material_score_weight")
         row["white_forward_score_weight"] = white_weights.get("forward_score_weight")
-        row["white_center_control_weight"] = white_weights.get("center_control_weight")
         row["black_legal_moves_weight"] = black_weights.get("legal_moves_weight")
         row["black_material_score_weight"] = black_weights.get("material_score_weight")
         row["black_forward_score_weight"] = black_weights.get("forward_score_weight")
-        row["black_center_control_weight"] = black_weights.get("center_control_weight")
         row["termination_key"] = row.get("termination")
         row["termination_label"] = row.get("termination")
         return row
@@ -212,8 +212,7 @@ class Neo4jStore:
                 white.description = row.white_player_description,
                 white.legal_moves_weight = row.white_legal_moves_weight,
                 white.material_score_weight = row.white_material_score_weight,
-                white.forward_score_weight = row.white_forward_score_weight,
-                white.center_control_weight = row.white_center_control_weight
+                white.forward_score_weight = row.white_forward_score_weight
             MERGE (g)-[:PLAYED_AS_WHITE]->(white)
         )
         FOREACH (_ IN CASE WHEN row.black_player_id IS NULL THEN [] ELSE [1] END |
@@ -222,8 +221,7 @@ class Neo4jStore:
                 black.description = row.black_player_description,
                 black.legal_moves_weight = row.black_legal_moves_weight,
                 black.material_score_weight = row.black_material_score_weight,
-                black.forward_score_weight = row.black_forward_score_weight,
-                black.center_control_weight = row.black_center_control_weight
+                black.forward_score_weight = row.black_forward_score_weight
             MERGE (g)-[:PLAYED_AS_BLACK]->(black)
         )
         FOREACH (_ IN CASE WHEN row.termination_key IS NULL THEN [] ELSE [1] END |
@@ -295,17 +293,14 @@ class Neo4jStore:
             p.legal_moves_weight = row.updated_legal_moves_weight,
             p.material_score_weight = row.updated_material_score_weight,
             p.forward_score_weight = row.updated_forward_score_weight,
-            p.center_control_weight = row.updated_center_control_weight,
             p.last_balance_games = row.games,
             p.last_balance_score_pct = row.score_pct,
             p.last_balance_shap_legal_moves_weight = row.shap_legal_moves_weight,
             p.last_balance_shap_material_score_weight = row.shap_material_score_weight,
             p.last_balance_shap_forward_score_weight = row.shap_forward_score_weight,
-            p.last_balance_shap_center_control_weight = row.shap_center_control_weight,
             p.last_balance_delta_legal_moves_weight = row.delta_legal_moves_weight,
             p.last_balance_delta_material_score_weight = row.delta_material_score_weight,
-            p.last_balance_delta_forward_score_weight = row.delta_forward_score_weight,
-            p.last_balance_delta_center_control_weight = row.delta_center_control_weight
+            p.last_balance_delta_forward_score_weight = row.delta_forward_score_weight
         """
         with self._driver.session(database=self.database) as session:
             session.run(query, rows=rows)
@@ -339,9 +334,12 @@ class Neo4jStore:
         return rows
 
     def load_self_play_game(self, run_id: str, index: int) -> dict | None:
-        query = "MATCH (g:SelfPlayGame {game_key: $game_key}) RETURN g LIMIT 1"
+        query = (
+            "MATCH (g:SelfPlayGame {run_id: $run_id, index: $index}) "
+            "RETURN g LIMIT 1"
+        )
         with self._driver.session(database=self.database) as session:
-            record = session.run(query, game_key=f"{run_id}:{index}").single()
+            record = session.run(query, run_id=run_id, index=index).single()
         if record is None:
             return None
         return self._decode_self_play_row(dict(record["g"]))

@@ -125,12 +125,8 @@
           <input name="top_k_score_threshold" type="number" min="0" step="any" placeholder="3" value="{{ config.top_k_score_threshold if config and config.top_k_score_threshold is not none else 3 }}" />
         </div>
         <div>
-          <label>Blunder control <span class="help-icon" title="Probability from 0 to 1 of selecting any legal move, allowing intentional blunders. Zero keeps normal Top-K selection.">?</span></label>
-          <input name="blunder_control" type="number" min="0" max="1" step="0.01" value="{{ config.blunder_control if config else 0 }}" />
-        </div>
-        <div>
-          <label>Forward material weight <span class="help-icon" title="Weight for material occupying the side's forward zone. Default: 0.25.">?</span></label>
-          <input name="forward_material_score_weight" type="number" step="any" value="{{ config.forward_material_score_weight if config else 0.25 }}" />
+          <label>Forward material weight <span class="help-icon" title="Weight for material occupying the side's forward zone. Default: 1.0.">?</span></label>
+          <input name="forward_material_score_weight" type="number" step="any" value="{{ config.forward_material_score_weight if config else 1.0 }}" />
         </div>
         <div>
           <label>Max depth <span class="help-icon" title="Maximum engine search depth used by automatic depth scaling. Leave blank to use the default depth of 2. Higher values improve endgame lookahead but take longer.">?</span></label>
@@ -172,11 +168,6 @@
             <td>Forward weight <span class="help-icon" title="Weight for forward control, which measures influence on the forward ranks.">?</span></td>
             <td><input name="white_forward_score_weight" type="number" step="any" value="{{ config.white_forward_score_weight if config and config.white_forward_score_weight is not none else '' }}" /></td>
             <td><input name="black_forward_score_weight" type="number" step="any" value="{{ config.black_forward_score_weight if config and config.black_forward_score_weight is not none else '' }}" /></td>
-          </tr>
-          <tr>
-            <td>Center weight <span class="help-icon" title="Weight for central-square control. Higher values favor central pressure.">?</span></td>
-            <td><input name="white_center_control_weight" type="number" step="any" value="{{ config.white_center_control_weight if config and config.white_center_control_weight is not none else '' }}" /></td>
-            <td><input name="black_center_control_weight" type="number" step="any" value="{{ config.black_center_control_weight if config and config.black_center_control_weight is not none else '' }}" /></td>
           </tr>
         </tbody>
       </table>
@@ -227,11 +218,6 @@
                   <td>Forward</td>
                   <td>{{ "%.3f"|format(game.white_weights.forward_score_weight) }}</td>
                   <td>{{ "%.3f"|format(game.black_weights.forward_score_weight) }}</td>
-                </tr>
-                <tr>
-                  <td>Center</td>
-                  <td>{{ "%.3f"|format(game.white_weights.center_control_weight) }}</td>
-                  <td>{{ "%.3f"|format(game.black_weights.center_control_weight) }}</td>
                 </tr>
               </tbody>
             </table>
@@ -315,7 +301,7 @@
                 data-termination="{{ row.termination }}"
                 data-turns="{{ row.turns }}"
                 data-final-score="{{ row.final_score }}">
-              <td data-local-timestamp>{{ row.played_at }}</td>
+              <td data-local-timestamp><a href="/self-play/view/{{ row.run_id }}/{{ row.index }}">{{ row.played_at }}</a></td>
               <td>{% if row.white_player_id %}<a href="/self-play/players/{{ row.white_player_id }}">{{ row.white_player_name or "" }}</a>{% else %}{{ row.white_player_name or "" }}{% endif %}</td>
               <td>{% if row.black_player_id %}<a href="/self-play/players/{{ row.black_player_id }}">{{ row.black_player_name or "" }}</a>{% else %}{{ row.black_player_name or "" }}{% endif %}</td>
               <td><a href="/self-play/view/{{ row.run_id }}/{{ row.index }}">{{ row.result }}</a></td>

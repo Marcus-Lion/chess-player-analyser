@@ -4,7 +4,6 @@ from dataclasses import dataclass
 import random
 
 from app.games import (
-    CENTER_CONTROL_WEIGHT,
     FORWARD_SCORE_WEIGHT,
     LEGAL_MOVES_WEIGHT,
     MATERIAL_SCORE_WEIGHT,
@@ -14,7 +13,6 @@ BASE_WEIGHT_MEANS = {
     "legal_moves_weight": LEGAL_MOVES_WEIGHT,
     "material_score_weight": MATERIAL_SCORE_WEIGHT,
     "forward_score_weight": FORWARD_SCORE_WEIGHT,
-    "center_control_weight": CENTER_CONTROL_WEIGHT,
 }
 
 
@@ -26,7 +24,6 @@ class PlayerProfile:
     legal_moves_weight: float
     material_score_weight: float
     forward_score_weight: float
-    center_control_weight: float
 
     @property
     def weights(self) -> dict[str, float]:
@@ -34,7 +31,6 @@ class PlayerProfile:
             "legal_moves_weight": self.legal_moves_weight,
             "material_score_weight": self.material_score_weight,
             "forward_score_weight": self.forward_score_weight,
-            "center_control_weight": self.center_control_weight,
         }
 
 
@@ -72,7 +68,6 @@ def _build_profile(player_id: str, name: str, description: str, seed: int) -> Pl
         legal_moves_weight=_clamp(rng.gauss(BASE_WEIGHT_MEANS["legal_moves_weight"], stddev)),
         material_score_weight=_clamp(rng.gauss(BASE_WEIGHT_MEANS["material_score_weight"], stddev)),
         forward_score_weight=_clamp(rng.gauss(BASE_WEIGHT_MEANS["forward_score_weight"], stddev)),
-        center_control_weight=_clamp(rng.gauss(BASE_WEIGHT_MEANS["center_control_weight"], stddev)),
     )
 
 

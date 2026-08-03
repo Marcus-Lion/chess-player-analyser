@@ -130,19 +130,22 @@ import dotenv
 dotenv.load_dotenv()
 
 from app.games import (
-    CENTER_CONTROL_WEIGHT,
     CHECKMATE_WEIGHT,
     FORWARD_SCORE_WEIGHT,
     FORWARD_MATERIAL_SCORE_WEIGHT,
     LEGAL_MOVES_WEIGHT,
     MATERIAL_SCORE_WEIGHT,
+    PST_SCORE_WEIGHT,
     MAX_AUTO_SEARCH_DEPTH,
     _auto_search_depth,
-    _calculate_center_control,
     _calculate_forward,
+    _calculate_forward_material,
     _calculate_material,
     _calculate_total_score,
+    _game_phase_value,
+    _king_activity,
     _mate_pressure,
+    _piece_square_score,
     _result_summary,
     choose_engine_move,
     play_self_game_native,
@@ -226,9 +229,6 @@ class SelfPlayGame:
     seed: int | None = None
     top_k: int = 1
     top_k_score_threshold: float | None = 3.0
-    # Probability that a move is selected from the complete legal move set,
-    # allowing intentional blunders. Zero keeps normal Top-K selection.
-    blunder_control: float = 0.0
     max_turns: int = 100
     start_fen: str = "startpos"
     white_weights: dict[str, float] | None = None
@@ -253,8 +253,6 @@ class SelfPlayConfig:
     # Optional maximum score loss from the best move for random Top-K choice.
     # Defaults to 3.0; None allows every candidate up to the Top-K count.
     top_k_score_threshold: float | None = 3.0
-    # Probability that a move is selected from the complete legal move set.
-    blunder_control: float = 0.0
     # Negamax search depth. None (the default) auto-derives depth per move
     # from remaining material via ``_auto_search_depth`` -- shallow while the
     # board is full, deeper once material has thinned out. Set an explicit
@@ -273,23 +271,22 @@ class SelfPlayConfig:
     material_score_weight: float = MATERIAL_SCORE_WEIGHT
     forward_score_weight: float = FORWARD_SCORE_WEIGHT
     forward_material_score_weight: float = FORWARD_MATERIAL_SCORE_WEIGHT
-    center_control_weight: float = CENTER_CONTROL_WEIGHT
+    pst_score_weight: float = PST_SCORE_WEIGHT
     # Shared "goal is checkmate" pressure applied to both sides (not
     # per-player randomized): the objective is the same for everyone.
     checkmate_weight: float = CHECKMATE_WEIGHT
+    king_safety_weight: float = CHECKMATE_WEIGHT
     randomize_player_weights: bool = True
     player_weight_min: float = -4.0
     player_weight_max: float = 4.0
-    # Fixed per-side overrides: when all four are set for a side, that
+    # Fixed per-side overrides: when all three are set for a side, that
     # side skips randomization and always uses these exact weights.
     white_legal_moves_weight: float | None = None
     white_material_score_weight: float | None = None
     white_forward_score_weight: float | None = None
-    white_center_control_weight: float | None = None
     black_legal_moves_weight: float | None = None
     black_material_score_weight: float | None = None
     black_forward_score_weight: float | None = None
-    black_center_control_weight: float | None = None
     mirror_colors: bool = False
 
 
@@ -358,21 +355,19 @@ def _saved_self_play_game(row: dict) -> SelfPlayGame:
     return SelfPlayGame(**values)
 
 
-def _score_weights(config: SelfPlayConfig) -> tuple[float, float, float, float]:
+def _score_weights(config: SelfPlayConfig) -> tuple[float, float, float]:
     return (
         config.legal_moves_weight,
         config.material_score_weight,
         config.forward_score_weight,
-        config.center_control_weight,
     )
 
 
-def _weight_tuple_to_dict(weights: tuple[float, float, float, float]) -> dict[str, float]:
+def _weight_tuple_to_dict(weights: tuple[float, float, float]) -> dict[str, float]:
     return {
         "legal_moves_weight": weights[0],
         "material_score_weight": weights[1],
         "forward_score_weight": weights[2],
-        "center_control_weight": weights[3],
     }
 
 
@@ -384,7 +379,6 @@ def _player_profile_from_row(base: PlayerProfile, row: dict) -> PlayerProfile:
         legal_moves_weight=float(row.get("legal_moves_weight", base.legal_moves_weight)),
         material_score_weight=float(row.get("material_score_weight", base.material_score_weight)),
         forward_score_weight=float(row.get("forward_score_weight", base.forward_score_weight)),
-        center_control_weight=float(row.get("center_control_weight", base.center_control_weight)),
     )
 
 
@@ -413,10 +407,9 @@ def _fixed_side_weights(
     lm = getattr(config, f"{side}_legal_moves_weight")
     mat = getattr(config, f"{side}_material_score_weight")
     fwd = getattr(config, f"{side}_forward_score_weight")
-    cc = getattr(config, f"{side}_center_control_weight")
-    if lm is None or mat is None or fwd is None or cc is None:
+    if lm is None or mat is None or fwd is None:
         return None
-    return _weight_tuple_to_dict((lm, mat, fwd, cc))
+    return _weight_tuple_to_dict((lm, mat, fwd))
 
 
 def _player_weight_sets(
@@ -491,7 +484,7 @@ def _config_for_game(
         top_k=config.top_k,
         top_k_score_threshold=config.top_k_score_threshold,
         forward_material_score_weight=config.forward_material_score_weight,
-        blunder_control=config.blunder_control,
+        pst_score_weight=config.pst_score_weight,
         depth=config.depth,
         max_depth=config.max_depth,
         seed=_seed_for_game(config, game_index) if seed is None else seed,
@@ -500,19 +493,17 @@ def _config_for_game(
         legal_moves_weight=config.legal_moves_weight,
         material_score_weight=config.material_score_weight,
         forward_score_weight=config.forward_score_weight,
-        center_control_weight=config.center_control_weight,
         checkmate_weight=config.checkmate_weight,
+        king_safety_weight=config.king_safety_weight,
         randomize_player_weights=config.randomize_player_weights,
         player_weight_min=config.player_weight_min,
         player_weight_max=config.player_weight_max,
         white_legal_moves_weight=config.white_legal_moves_weight,
         white_material_score_weight=config.white_material_score_weight,
         white_forward_score_weight=config.white_forward_score_weight,
-        white_center_control_weight=config.white_center_control_weight,
         black_legal_moves_weight=config.black_legal_moves_weight,
         black_material_score_weight=config.black_material_score_weight,
         black_forward_score_weight=config.black_forward_score_weight,
-        black_center_control_weight=config.black_center_control_weight,
         mirror_colors=mirror_colors,
     )
 
@@ -844,22 +835,20 @@ def _evaluate_board(board: chess.Board, config: SelfPlayConfig | None = None, le
         legal_moves = len(list(board.legal_moves))
     f1, f2 = _calculate_forward(board)
     material = _calculate_material(board)
-    center = _calculate_center_control(board)
     forward_score = (f1["White"] + f2["White"]) - (f1["Black"] + f2["Black"])
     material_score = material["White"] - material["Black"]
-    center_score = center["White"] - center["Black"]
-    legal_moves_weight, material_score_weight, forward_score_weight, center_control_weight = _score_weights(
+    legal_moves_weight, material_score_weight, forward_score_weight = _score_weights(
         config or SelfPlayConfig()
     )
     return _calculate_total_score(
         legal_moves,
         material_score,
         forward_score,
-        center_score,
+        0.0,
         legal_moves_weight=legal_moves_weight,
         material_score_weight=material_score_weight,
         forward_score_weight=forward_score_weight,
-        center_control_weight=center_control_weight,
+        center_control_weight=0.0,
     )
 
 
@@ -881,7 +870,7 @@ def _result_target(board: chess.Board, result: str) -> float:
     return 0.5
 
 
-def _extract_samples_from_pgn(pgn_text: str) -> list[tuple[int, int, int, float, int, float]]:
+def _extract_samples_from_pgn(pgn_text: str) -> list[tuple[int, int, int, int, float, float, float, int, float]]:
     game = chess.pgn.read_game(StringIO(pgn_text))
     if game is None:
         return []
@@ -892,18 +881,24 @@ def _extract_samples_from_pgn(pgn_text: str) -> list[tuple[int, int, int, float,
 
     board = game.board()
     node = game
-    samples: list[tuple[int, int, int, float, int, float]] = []
+    samples: list[tuple[int, int, int, int, float, float, float, int, float]] = []
 
     while node.variations:
         f1, f2 = _calculate_forward(board)
         material = _calculate_material(board)
         forward_score = (f1["White"] + f2["White"]) - (f1["Black"] + f2["Black"])
         material_score = material["White"] - material["Black"]
+        forward_material = _calculate_forward_material(board)
+        forward_material_score = forward_material["White"] - forward_material["Black"]
+        phase = _game_phase_value(board)
         samples.append((
             len(list(board.legal_moves)),
             material_score,
             forward_score,
+            forward_material_score,
+            _piece_square_score(board, phase),
             _mate_pressure(board),
+            _king_activity(board, phase),
             1 if board.turn == chess.WHITE else -1,
             _result_target(board, result),
         ))
@@ -919,28 +914,31 @@ def _score_pct_to_elo(score_pct: float) -> float:
 
 
 def _candidate_score_pct(
-    samples: list[tuple[int, int, int, float, int, float]],
-    weights: tuple[float, float, float, float, float],
+    samples: list[tuple[int, int, int, int, float, float, float, int, float]],
+    weights: tuple[float, float, float, float, float, float, float],
     *,
     temperature: float,
 ) -> float:
     if not samples:
         return 0.0
 
-    lm_w, mat_w, fwd_w, cc_w, mate_w = weights
+    lm_w, mat_w, fwd_w, fwd_mat_w, pst_w, mate_w, safety_w = weights
     total_score = 0.0
-    for legal_moves, material_score, forward_score, mate_pressure, side_sign, target in samples:
-        # Note: tuning samples don't have center_score; using 0 for simplicity during tuning
+    for legal_moves, material_score, forward_score, forward_material_score, pst_score, mate_pressure, king_safety, side_sign, target in samples:
+        # Tuning samples use the same three player weights as self-play.
         score = _calculate_total_score(
             legal_moves,
-            material_score,
+            material_score + fwd_mat_w * forward_material_score,
             forward_score,
             center_score=0,
+            pressure=mate_pressure,
+            pst_score=0,
             legal_moves_weight=lm_w,
             material_score_weight=mat_w,
             forward_score_weight=fwd_w,
-            center_control_weight=cc_w,
-        ) + mate_w * mate_pressure
+            center_control_weight=0.0,
+            checkmate_weight=mate_w,
+        ) + pst_w * pst_score + safety_w * king_safety
         utility = score * side_sign
         probability = _sigmoid(utility / max(temperature, 1e-6))
         total_score += probability if target >= 0.5 else (1.0 - probability)
@@ -948,8 +946,8 @@ def _candidate_score_pct(
 
 
 def _evaluate_candidate(
-    samples: list[tuple[int, int, int, float, int, float]],
-    weights: tuple[float, float, float, float, float],
+    samples: list[tuple[int, int, int, int, float, float, float, int, float]],
+    weights: tuple[float, float, float, float, float, float, float],
     *,
     temperature: float,
 ) -> float:
@@ -966,7 +964,7 @@ def tune_score_weights(
     max_multiplier: float = 4.0,
 ) -> dict:
     rng = random.Random(seed)
-    samples: list[tuple[int, int, int, float, int, float]] = []
+    samples: list[tuple[int, int, int, int, float, float, float, int, float]] = []
     for row in corpus:
         samples.extend(_extract_samples_from_pgn(row.get("pgn", "")))
 
@@ -978,7 +976,11 @@ def tune_score_weights(
     train_samples = samples[:split]
     validation_samples = samples[split:] or samples[:]
 
-    base_weights = (LEGAL_MOVES_WEIGHT, MATERIAL_SCORE_WEIGHT, FORWARD_SCORE_WEIGHT, CENTER_CONTROL_WEIGHT, CHECKMATE_WEIGHT)
+    base_weights = (
+        LEGAL_MOVES_WEIGHT, MATERIAL_SCORE_WEIGHT, FORWARD_SCORE_WEIGHT,
+        FORWARD_MATERIAL_SCORE_WEIGHT, PST_SCORE_WEIGHT, CHECKMATE_WEIGHT,
+        CHECKMATE_WEIGHT,
+    )
     best_weights = base_weights
     best_validation_elo = _evaluate_candidate(validation_samples, base_weights, temperature=temperature)
     history: list[dict[str, float]] = [
@@ -986,8 +988,10 @@ def tune_score_weights(
             "legal_moves_weight": base_weights[0],
             "material_score_weight": base_weights[1],
             "forward_score_weight": base_weights[2],
-            "center_control_weight": base_weights[3],
-            "checkmate_weight": base_weights[4],
+            "forward_material_score_weight": base_weights[3],
+            "pst_score_weight": base_weights[4],
+            "checkmate_weight": base_weights[5],
+            "king_safety_weight": base_weights[6],
             "validation_elo": best_validation_elo,
         }
     ]
@@ -1006,8 +1010,10 @@ def tune_score_weights(
             "legal_moves_weight": candidate[0],
             "material_score_weight": candidate[1],
             "forward_score_weight": candidate[2],
-            "center_control_weight": candidate[3],
-            "checkmate_weight": candidate[4],
+            "forward_material_score_weight": candidate[3],
+            "pst_score_weight": candidate[4],
+            "checkmate_weight": candidate[5],
+            "king_safety_weight": candidate[6],
             "training_elo": training_elo,
             "validation_elo": validation_elo,
         })
@@ -1020,8 +1026,10 @@ def tune_score_weights(
             "legal_moves_weight": best_weights[0],
             "material_score_weight": best_weights[1],
             "forward_score_weight": best_weights[2],
-            "center_control_weight": best_weights[3],
-            "checkmate_weight": best_weights[4],
+            "forward_material_score_weight": best_weights[3],
+            "pst_score_weight": best_weights[4],
+            "checkmate_weight": best_weights[5],
+            "king_safety_weight": best_weights[6],
         },
         "best_validation_elo": best_validation_elo,
         "samples": len(samples),
@@ -1180,17 +1188,16 @@ def play_self_game(config: SelfPlayConfig, game_index: int, run_id: str | None =
             material_score_weight=white_weights["material_score_weight"],
             forward_score_weight=white_weights["forward_score_weight"],
             forward_material_score_weight=config.forward_material_score_weight,
-            center_control_weight=white_weights["center_control_weight"],
+            center_control_weight=0.0,
             black_legal_moves_weight=black_weights["legal_moves_weight"],
             black_material_score_weight=black_weights["material_score_weight"],
             black_forward_score_weight=black_weights["forward_score_weight"],
             black_forward_material_score_weight=config.forward_material_score_weight,
-            black_center_control_weight=black_weights["center_control_weight"],
+            black_center_control_weight=0.0,
             checkmate_weight=config.checkmate_weight,
             depth=config.depth,
             max_depth=config.max_depth,
             top_k_score_threshold=config.top_k_score_threshold,
-            blunder_control=config.blunder_control,
         )
         # Rebuild the presentation board/PGN after the native loop. This is
         # linear formatting work; search, move generation, and board mutation
@@ -1274,7 +1281,6 @@ def _play_and_save_game(
     game.seed = config.seed
     game.top_k = config.top_k
     game.top_k_score_threshold = config.top_k_score_threshold
-    game.blunder_control = config.blunder_control
     game.max_turns = config.max_turns
     game.start_fen = config.fen or "startpos"
     print(
@@ -1447,7 +1453,6 @@ def save_self_play_results(games: list[SelfPlayGame], *, refresh_player_elos: bo
                 "seed": game.seed,
                 "top_k": game.top_k,
                 "top_k_score_threshold": game.top_k_score_threshold,
-                "blunder_control": game.blunder_control,
                 "max_turns": game.max_turns,
                 "start_fen": game.start_fen,
                 "result": game.result,
@@ -1529,7 +1534,6 @@ def _replace_worst_player_from_elite(batch_df, store: Neo4jStore) -> int:
         "legal_moves_weight",
         "material_score_weight",
         "forward_score_weight",
-        "center_control_weight",
     )
     mutated = {
         dimension: min(
@@ -1547,11 +1551,9 @@ def _replace_worst_player_from_elite(batch_df, store: Neo4jStore) -> int:
         "shap_legal_moves_weight": 0.0,
         "shap_material_score_weight": 0.0,
         "shap_forward_score_weight": 0.0,
-        "shap_center_control_weight": 0.0,
         "delta_legal_moves_weight": mutated["legal_moves_weight"] - float(worst_row.get("legal_moves_weight") or 0.0),
         "delta_material_score_weight": mutated["material_score_weight"] - float(worst_row.get("material_score_weight") or 0.0),
         "delta_forward_score_weight": mutated["forward_score_weight"] - float(worst_row.get("forward_score_weight") or 0.0),
-        "delta_center_control_weight": mutated["center_control_weight"] - float(worst_row.get("center_control_weight") or 0.0),
     }
     update.update({f"updated_{dimension}": value for dimension, value in mutated.items()})
     store.update_self_play_player_weights([update])
@@ -1894,12 +1896,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Only choose Top-K moves within this score distance of the best move (default: 3.0).",
     )
     parser.add_argument(
-        "--blunder-control",
-        type=float,
-        default=0.0,
-        help="Probability (0-1) of selecting any legal move instead of a Top-K move.",
-    )
-    parser.add_argument(
         "--depth",
         type=int,
         default=None,
@@ -1925,8 +1921,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--material-score-weight", type=float, default=MATERIAL_SCORE_WEIGHT, help="Weight for material balance.")
     parser.add_argument("--forward-score-weight", type=float, default=FORWARD_SCORE_WEIGHT, help="Weight for forward control.")
     parser.add_argument("--forward-material-score-weight", type=float, default=FORWARD_MATERIAL_SCORE_WEIGHT, help="Weight for material in the forward zone.")
-    parser.add_argument("--center-control-weight", type=float, default=CENTER_CONTROL_WEIGHT, help="Weight for center control.")
+    parser.add_argument("--pst-score-weight", type=float, default=PST_SCORE_WEIGHT, help="Weight for piece-square scoring during tuning.")
     parser.add_argument("--checkmate-weight", type=float, default=CHECKMATE_WEIGHT, help="Weight for the mate-pressure heuristic (drive the enemy king toward checkmate).")
+    parser.add_argument("--king-safety-weight", type=float, default=CHECKMATE_WEIGHT, help="Weight for king safety and endgame king activity during tuning.")
     parser.add_argument("--fixed-player-weights", action="store_true", help="Use the same weights for both sides.")
     parser.add_argument(
         "--player-weight-min",
@@ -1966,7 +1963,6 @@ def main(argv: list[str] | None = None) -> int:
             if args.top_k_score_threshold is not None
             else None
         ),
-        blunder_control=max(0.0, min(1.0, args.blunder_control)),
         depth=(max(1, args.depth) if args.depth is not None else None),
         max_depth=max(1, args.max_depth),
         workers=(max(1, int(args.workers)) if args.workers else None),
@@ -1977,8 +1973,9 @@ def main(argv: list[str] | None = None) -> int:
         material_score_weight=args.material_score_weight,
         forward_score_weight=args.forward_score_weight,
         forward_material_score_weight=args.forward_material_score_weight,
-        center_control_weight=args.center_control_weight,
+        pst_score_weight=args.pst_score_weight,
         checkmate_weight=args.checkmate_weight,
+        king_safety_weight=args.king_safety_weight,
         randomize_player_weights=not args.fixed_player_weights,
         player_weight_min=args.player_weight_min,
         player_weight_max=args.player_weight_max,
@@ -1996,15 +1993,19 @@ def main(argv: list[str] | None = None) -> int:
         config.legal_moves_weight = best["legal_moves_weight"]
         config.material_score_weight = best["material_score_weight"]
         config.forward_score_weight = best["forward_score_weight"]
-        config.center_control_weight = best["center_control_weight"]
+        config.forward_material_score_weight = best["forward_material_score_weight"]
+        config.pst_score_weight = best["pst_score_weight"]
         config.checkmate_weight = best["checkmate_weight"]
+        config.king_safety_weight = best["king_safety_weight"]
         print(
             "Best weights: "
             f"legal_moves={config.legal_moves_weight:.6f}, "
             f"material={config.material_score_weight:.6f}, "
             f"forward={config.forward_score_weight:.6f}, "
-            f"center={config.center_control_weight:.6f}, "
-            f"checkmate={config.checkmate_weight:.6f}"
+            f"forward_material={config.forward_material_score_weight:.6f}, "
+            f"pst={config.pst_score_weight:.6f}, "
+            f"checkmate={config.checkmate_weight:.6f}, "
+            f"king_safety={config.king_safety_weight:.6f}"
         )
         print(f"Validation Elo: {tuning['best_validation_elo']:.2f}")
         if args.tune_output:

@@ -76,10 +76,6 @@ within 1.0 evaluation point of the best:
 uv run python -m app.self_play --games 10 --top-k 5 --top-k-score-threshold 1.0
 ```
 
-Use `--blunder-control 0.1` to give each move a 10% chance of being selected
-from the complete searched legal-move set, producing intentional blunders.
-The default is `0`, which leaves normal Top-K selection unchanged.
-
 For automatic scaling with a different cap:
 
 ```bash
@@ -128,12 +124,15 @@ bar and submit button stuck forever.
 
 Every game gets its own independently randomized set of weights by default,
 for both the CLI and the web form. If you want to pit two fixed weight
-profiles against each other instead, set all four weights (legal-moves,
-material, forward, center) for a side — the web form's weight fields are
+profiles against each other instead, set all three weights (legal-moves,
+material, forward) for a side — the web form's weight fields are
 optional and only take effect once a side's full set is filled in.
 The per-player random weight draw now uses absolute float values between
 `0.0` and `4.0`; you can override the bounds with
 `SELF_PLAY_PLAYER_WEIGHT_MIN` and `SELF_PLAY_PLAYER_WEIGHT_MAX` in `.env`.
+The global tuning pass can also learn forward-material, piece-square,
+checkmate-pressure, and king-safety weights from games played by those
+independent profiles.
 
 Games end on checkmate, stalemate, insufficient material, threefold
 repetition, or the fifty-move rule (the fivefold repetition and 75-move

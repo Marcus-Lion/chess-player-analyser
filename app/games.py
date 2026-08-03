@@ -260,11 +260,11 @@ def order_moves_mvv_lva(board: chess.Board, moves=None) -> list[chess.Move]:
     return sorted(candidates, key=lambda move: mvv_lva_score(board, move), reverse=True)
 
 LEGAL_MOVES_WEIGHT:float = 1.0
-MATERIAL_SCORE_WEIGHT:float = 2.0
-FORWARD_SCORE_WEIGHT:float = 2.0
-FORWARD_MATERIAL_SCORE_WEIGHT: float = 3.0
-CENTER_CONTROL_WEIGHT:float = 2.0
-PST_SCORE_WEIGHT: float = 0.01
+MATERIAL_SCORE_WEIGHT:float = 1.0
+FORWARD_SCORE_WEIGHT:float = 1.0
+FORWARD_MATERIAL_SCORE_WEIGHT: float = 1.0
+CENTER_CONTROL_WEIGHT:float = 1.0
+PST_SCORE_WEIGHT: float = 1.0
 # Weight for the "goal is checkmate" heuristic: how hard the engine leans on
 # driving the enemy king to the edge and cutting off its escape squares. Kept
 # small relative to material, so it only breaks ties between otherwise-similar
@@ -862,7 +862,6 @@ def choose_engine_move(
     checkmate_weight: float = CHECKMATE_WEIGHT,
     depth: int = 3,
     top_k_score_threshold: float | None = 3.0,
-    blunder_control: float = 0.0,
     eval_counter: list[int] | None = None,
 ) -> tuple[chess.Move, float]:
     """Pick a move using the native Rust negamax implementation.
@@ -896,11 +895,10 @@ def choose_engine_move(
     # Keep already-running processes compatible with an older installed
     # extension. The new argument is only needed when the feature is used;
     # omitting it preserves the old engine's exact default behaviour.
-    if blunder_control or forward_material_score_weight != FORWARD_MATERIAL_SCORE_WEIGHT:
+    if forward_material_score_weight != FORWARD_MATERIAL_SCORE_WEIGHT:
         try:
             uci, score, evaluations = chess_engine.choose_engine_move_from_history(
-                *native_args, max(0.0, min(1.0, blunder_control)),
-                forward_material_score_weight,
+                *native_args, forward_material_score_weight,
             )
         except TypeError as exc:
             if "positional arguments" not in str(exc):
@@ -936,7 +934,6 @@ def play_self_game_native(
     depth: int | None = None,
     max_depth: int = MAX_AUTO_SEARCH_DEPTH,
     top_k_score_threshold: float | None = 3.0,
-    blunder_control: float = 0.0,
 ) -> tuple[str, str, int, list[str], int, list[float]]:
     """Run the complete self-play move loop in the native engine."""
     black_legal_moves_weight = legal_moves_weight if black_legal_moves_weight is None else black_legal_moves_weight
@@ -951,11 +948,10 @@ def play_self_game_native(
         black_forward_score_weight, black_center_control_weight,
         checkmate_weight, depth, max_depth, top_k_score_threshold,
     )
-    if blunder_control or forward_material_score_weight != FORWARD_MATERIAL_SCORE_WEIGHT or black_forward_material_score_weight != FORWARD_MATERIAL_SCORE_WEIGHT:
+    if forward_material_score_weight != FORWARD_MATERIAL_SCORE_WEIGHT or black_forward_material_score_weight != FORWARD_MATERIAL_SCORE_WEIGHT:
         try:
             return chess_engine.play_self_game_native(
-                *native_args, max(0.0, min(1.0, blunder_control)),
-                forward_material_score_weight, black_forward_material_score_weight,
+                *native_args, forward_material_score_weight, black_forward_material_score_weight,
             )
         except TypeError as exc:
             if "positional arguments" not in str(exc):

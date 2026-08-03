@@ -132,7 +132,6 @@ fn auto_depth(pos: &Chess, max_depth: i32) -> i32 {
     depth=None,
     max_depth=2,
     top_k_score_threshold=Some(3.0),
-    blunder_control=0.0,
     forward_material_score_weight=0.25,
     black_forward_material_score_weight=0.25,
 ))]
@@ -155,7 +154,6 @@ fn play_self_game_native(
     depth: Option<i32>,
     max_depth: i32,
     top_k_score_threshold: Option<f64>,
-    blunder_control: f64,
     forward_material_score_weight: f64,
     black_forward_material_score_weight: f64,
 ) -> PyResult<(String, String, u32, Vec<String>, u64, Vec<f64>)> {
@@ -207,16 +205,7 @@ fn play_self_game_native(
         if scored[0].0 < 0.0 && !immediate_stalemates.is_empty() { scored.retain(|(_, m)| immediate_stalemates.contains(m)); }
         let top_n = (top_k.max(1) as usize).min(scored.len());
         let count = match top_k_score_threshold { Some(t) => scored[..top_n].iter().take_while(|(s, _)| scored[0].0 - *s <= t.max(0.0)).count().max(1), None => top_n };
-        // Blunder control is an explicit probability of abandoning the
-        // normal Top-K candidate set.  The move is still searched and scored,
-        // so this produces reproducible, legal mistakes rather than noise in
-        // the board loop.  0.0 preserves the normal engine behaviour.
-        let blunder_control = blunder_control.clamp(0.0, 1.0);
-        let chosen_index = if blunder_control > 0.0 && rng.random::<f64>() < blunder_control {
-            rng.random_range(0..scored.len())
-        } else {
-            rng.random_range(0..count)
-        };
+        let chosen_index = rng.random_range(0..count);
         let chosen = scored[chosen_index].1;
         moves.push(chosen.to_uci(CastlingMode::Standard).to_string());
         pos.play_unchecked(chosen);
@@ -256,7 +245,6 @@ fn play_self_game_native(
     checkmate_weight,
     repetition_counts,
     top_k_score_threshold=Some(3.0),
-    blunder_control=0.0,
     forward_material_score_weight=0.25,
 ))]
 #[allow(clippy::too_many_arguments)]
@@ -273,7 +261,6 @@ fn choose_engine_move(
     checkmate_weight: f64,
     repetition_counts: HashMap<u64, u32>,
     top_k_score_threshold: Option<f64>,
-    blunder_control: f64,
     forward_material_score_weight: f64,
 ) -> PyResult<(String, f64, u64)> {
     let pos = parse_position(fen)?;
@@ -356,12 +343,7 @@ fn choose_engine_move(
             StdRng::from_rng(&mut system_rng)
         }
     };
-    let blunder_control = blunder_control.clamp(0.0, 1.0);
-    let chosen_index = if blunder_control > 0.0 && rng.random::<f64>() < blunder_control {
-        rng.random_range(0..scored.len())
-    } else {
-        rng.random_range(0..candidate_count)
-    };
+    let chosen_index = rng.random_range(0..candidate_count);
     let (score, chosen) = scored[chosen_index];
     let uci = chosen.to_uci(CastlingMode::Standard).to_string();
     Ok((uci, score, state.evals))
@@ -383,7 +365,6 @@ fn choose_engine_move(
     center_control_weight,
     checkmate_weight,
     top_k_score_threshold=Some(3.0),
-    blunder_control=0.0,
     forward_material_score_weight=0.25,
 ))]
 #[allow(clippy::too_many_arguments)]
@@ -400,7 +381,6 @@ fn choose_engine_move_from_history(
     center_control_weight: f64,
     checkmate_weight: f64,
     top_k_score_threshold: Option<f64>,
-    blunder_control: f64,
     forward_material_score_weight: f64,
 ) -> PyResult<(String, f64, u64)> {
     let mut repetition_counts = HashMap::new();
@@ -424,7 +404,6 @@ fn choose_engine_move_from_history(
         checkmate_weight,
         repetition_counts,
         top_k_score_threshold,
-        blunder_control,
         forward_material_score_weight,
     )
 }

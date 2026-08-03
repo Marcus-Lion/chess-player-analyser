@@ -31,7 +31,6 @@ from app.games import (
     LEGAL_MOVES_WEIGHT,
     MATERIAL_SCORE_WEIGHT,
     FORWARD_SCORE_WEIGHT,
-    CENTER_CONTROL_WEIGHT,
     CHECKMATE_WEIGHT,
     MAX_AUTO_SEARCH_DEPTH,
 )
@@ -312,8 +311,9 @@ def _make_self_play_charts(df: pd.DataFrame) -> dict[str, str]:
     rolling = rolling_outcome_rates(df)
     if not rolling.empty:
         fig = px.line(rolling, x="game_seq", y="rate", color="outcome",
-                      title="Rolling outcome rate over games played",
+                      title="Rolling outcome rate over the last 1,000 games (50-game window)",
                       category_orders={"outcome": OUTCOME_ORDER})
+        fig.update_traces(mode="lines+markers")
         charts["rolling_outcomes"] = _fig_html(fig)
 
     weight_advantage = win_rate_by_weight_advantage_all(df)
@@ -587,6 +587,57 @@ def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+def _markdown_files() -> list[Path]:
+    files = []
+    for path in [BASE_DIR / "README.md", BASE_DIR / "engine" / "README.md", BASE_DIR / "docs"]:
+        if path.is_file() and path.suffix.lower() == ".md":
+            files.append(path)
+        elif path.is_dir():
+            files.extend(item for item in path.rglob("*.md") if item.is_file())
+    return sorted(files, key=lambda item: item.relative_to(BASE_DIR).as_posix().lower())
+
+
+def _markdown_title(path: Path) -> str:
+    relative = path.relative_to(BASE_DIR).as_posix()
+    if relative == "engine/README.md":
+        return "Engine README"
+    if relative == "docs/RL.md":
+        return "Re-enforcement Learning"
+    return path.stem.replace("_", " ").title()
+
+
+@app.get("/documentation", response_class=HTMLResponse)
+def documentation_index(request: Request):
+    documents = [
+        {"path": path.relative_to(BASE_DIR).as_posix(), "title": _markdown_title(path)}
+        for path in _markdown_files()
+    ]
+    return templates.TemplateResponse("documentation.html", {
+        "request": request,
+        "documents": documents,
+    })
+
+
+@app.get("/documentation/{doc_path:path}", response_class=HTMLResponse)
+def documentation_page(request: Request, doc_path: str):
+    requested = (BASE_DIR / doc_path).resolve()
+    allowed = {path.resolve() for path in _markdown_files()}
+    if requested not in allowed:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return templates.TemplateResponse("documentation.html", {
+        "request": request,
+        "documents": [
+            {"path": path.relative_to(BASE_DIR).as_posix(), "title": _markdown_title(path)}
+            for path in _markdown_files()
+        ],
+        "document": {
+            "path": requested.relative_to(BASE_DIR).as_posix(),
+            "title": _markdown_title(requested),
+            "content": requested.read_text(encoding="utf-8"),
+        },
+    })
+
+
 def _terminate_current_instance() -> None:
     """Terminate this worker after the reboot response has been sent."""
     os._exit(0)
@@ -675,8 +726,7 @@ def self_play_run(
     max_turns: int = Form(100),
     top_k: int = Form(1),
     top_k_score_threshold: str | None = Form("3"),
-    forward_material_score_weight: str | None = Form("0.25"),
-    blunder_control: str | None = Form("0"),
+    forward_material_score_weight: str | None = Form("1.0"),
     max_depth: str | None = Form(None),
     workers: str | None = Form(None),
     seed: str | None = Form(None),
@@ -685,11 +735,9 @@ def self_play_run(
     white_legal_moves_weight: str | None = Form(None),
     white_material_score_weight: str | None = Form(None),
     white_forward_score_weight: str | None = Form(None),
-    white_center_control_weight: str | None = Form(None),
     black_legal_moves_weight: str | None = Form(None),
     black_material_score_weight: str | None = Form(None),
     black_forward_score_weight: str | None = Form(None),
-    black_center_control_weight: str | None = Form(None),
 ):
     fen = fen.strip() if fen and fen.strip() else None
     try:
@@ -702,7 +750,6 @@ def self_play_run(
         seed_value = None
     top_k_threshold_value = _parse_optional_float(top_k_score_threshold)
     forward_material_weight_value = _parse_optional_float(forward_material_score_weight)
-    blunder_control_value = _parse_optional_float(blunder_control)
     try:
         max_depth_value = int(max_depth) if max_depth and max_depth.strip() else MAX_AUTO_SEARCH_DEPTH
     except ValueError:
@@ -716,8 +763,7 @@ def self_play_run(
             if top_k_threshold_value is not None
             else None
         ),
-        forward_material_score_weight=(forward_material_weight_value if forward_material_weight_value is not None else 0.25),
-        blunder_control=max(0.0, min(1.0, blunder_control_value or 0.0)),
+        forward_material_score_weight=(forward_material_weight_value if forward_material_weight_value is not None else 1.0),
         max_depth=max(1, max_depth_value),
         workers=(max(1, workers_value) if workers_value else None),
         seed=seed_value,
@@ -726,11 +772,9 @@ def self_play_run(
         white_legal_moves_weight=_parse_optional_float(white_legal_moves_weight),
         white_material_score_weight=_parse_optional_float(white_material_score_weight),
         white_forward_score_weight=_parse_optional_float(white_forward_score_weight),
-        white_center_control_weight=_parse_optional_float(white_center_control_weight),
         black_legal_moves_weight=_parse_optional_float(black_legal_moves_weight),
         black_material_score_weight=_parse_optional_float(black_material_score_weight),
         black_forward_score_weight=_parse_optional_float(black_forward_score_weight),
-        black_center_control_weight=_parse_optional_float(black_center_control_weight),
     )
     recent_games = run_self_play(config)
     for game in recent_games:
@@ -783,7 +827,6 @@ def self_play_players_delete_all(request: Request):
                 "legal_moves_weight": player.legal_moves_weight,
                 "material_score_weight": player.material_score_weight,
                 "forward_score_weight": player.forward_score_weight,
-                "center_control_weight": player.center_control_weight,
                 "games": int(getattr(row, "games", 0) or 0),
                 "wins": int(getattr(row, "wins", 0) or 0),
                 "draws": int(getattr(row, "draws", 0) or 0),
@@ -814,7 +857,6 @@ def self_play_players_delete_all(request: Request):
             "legal_moves_weight": player.legal_moves_weight,
             "material_score_weight": player.material_score_weight,
             "forward_score_weight": player.forward_score_weight,
-            "center_control_weight": player.center_control_weight,
             "games": int(getattr(row, "games", 0) or 0),
             "wins": int(getattr(row, "wins", 0) or 0),
             "draws": int(getattr(row, "draws", 0) or 0),
@@ -839,8 +881,7 @@ def self_play_start(
     max_turns: int = Form(100),
     top_k: int = Form(1),
     top_k_score_threshold: str | None = Form("3"),
-    forward_material_score_weight: str | None = Form("0.25"),
-    blunder_control: str | None = Form("0"),
+    forward_material_score_weight: str | None = Form("1.0"),
     max_depth: str | None = Form(None),
     workers: str | None = Form(None),
     seed: str | None = Form(None),
@@ -849,11 +890,9 @@ def self_play_start(
     white_legal_moves_weight: str | None = Form(None),
     white_material_score_weight: str | None = Form(None),
     white_forward_score_weight: str | None = Form(None),
-    white_center_control_weight: str | None = Form(None),
     black_legal_moves_weight: str | None = Form(None),
     black_material_score_weight: str | None = Form(None),
     black_forward_score_weight: str | None = Form(None),
-    black_center_control_weight: str | None = Form(None),
 ):
     fen = fen.strip() if fen and fen.strip() else None
     try:
@@ -866,7 +905,6 @@ def self_play_start(
         seed_value = None
     top_k_threshold_value = _parse_optional_float(top_k_score_threshold)
     forward_material_weight_value = _parse_optional_float(forward_material_score_weight)
-    blunder_control_value = _parse_optional_float(blunder_control)
     try:
         max_depth_value = int(max_depth) if max_depth and max_depth.strip() else MAX_AUTO_SEARCH_DEPTH
     except ValueError:
@@ -880,8 +918,7 @@ def self_play_start(
             if top_k_threshold_value is not None
             else None
         ),
-        forward_material_score_weight=(forward_material_weight_value if forward_material_weight_value is not None else 0.25),
-        blunder_control=max(0.0, min(1.0, blunder_control_value or 0.0)),
+        forward_material_score_weight=(forward_material_weight_value if forward_material_weight_value is not None else 1.0),
         max_depth=max(1, max_depth_value),
         workers=(max(1, workers_value) if workers_value else None),
         seed=seed_value,
@@ -890,11 +927,9 @@ def self_play_start(
         white_legal_moves_weight=_parse_optional_float(white_legal_moves_weight),
         white_material_score_weight=_parse_optional_float(white_material_score_weight),
         white_forward_score_weight=_parse_optional_float(white_forward_score_weight),
-        white_center_control_weight=_parse_optional_float(white_center_control_weight),
         black_legal_moves_weight=_parse_optional_float(black_legal_moves_weight),
         black_material_score_weight=_parse_optional_float(black_material_score_weight),
         black_forward_score_weight=_parse_optional_float(black_forward_score_weight),
-        black_center_control_weight=_parse_optional_float(black_center_control_weight),
     )
     return JSONResponse(start_self_play_job(config))
 
@@ -1024,14 +1059,6 @@ async def self_play_ws(websocket: WebSocket, job_id: str) -> None:
 def self_play_analysis(request: Request):
     rows = load_self_play_results(limit=None)
     df = self_play_to_dataframe(rows)
-    table_df = self_play_export_dataframe(df)
-    hide_columns = {
-        "white_player_id",
-        "white_player_description",
-        "black_player_id",
-        "black_player_description",
-    }
-    display_df = table_df.drop(columns=[col for col in hide_columns if col in table_df.columns])
     elo = estimate_side_elos(df)
     summary = self_play_summary(df)
     summary["black_win_pct"] = max(0.0, 1.0 - summary["white_win_pct"] - summary["draw_pct"])
@@ -1040,9 +1067,6 @@ def self_play_analysis(request: Request):
         "summary": summary,
         "elo": elo,
         "charts": _make_self_play_charts(df) if not df.empty else {},
-        "table_columns": list(display_df.columns),
-        "table_rows": display_df.to_dict(orient="records"),
-        "csv_url": "/self-play/analysis.csv",
     })
 
 
@@ -1125,7 +1149,6 @@ def self_play_players(request: Request):
             "legal_moves_weight": player.legal_moves_weight,
             "material_score_weight": player.material_score_weight,
             "forward_score_weight": player.forward_score_weight,
-            "center_control_weight": player.center_control_weight,
             "games": int(getattr(row, "games", 0) or 0),
             "wins": int(getattr(row, "wins", 0) or 0),
             "draws": int(getattr(row, "draws", 0) or 0),

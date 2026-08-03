@@ -22,6 +22,9 @@
     .muted { color: #666; }
     .table-wrap { overflow: auto; max-width: 100%; border: 1px solid #ddd; border-radius: 12px; }
     .weights { font-size: .9rem; color: #444; }
+    .chart { margin: 1.5rem 0; }
+    .chart-grid { display: grid; grid-template-columns: repeat(2, minmax(320px, 1fr)); gap: 1rem; }
+    @media (max-width: 900px) { .chart-grid { grid-template-columns: 1fr; } }
     .danger {
       background: #b91c1c;
       color: white;
@@ -45,6 +48,18 @@
   <form method="post" action="/self-play/players/delete-all" onsubmit="return confirm('Delete all saved self-play player nodes? This cannot be undone.');" style="margin: 0 0 1rem 0;">
     <button type="submit" class="danger">Delete all players</button>
   </form>
+
+  {% if charts %}
+    <div class="card">
+      <h2>Performance vs weights</h2>
+      <p class="muted">Each point is a player; point size shows completed games. Players without completed games are omitted.</p>
+      <div class="chart-grid">
+        {% for chart in charts.values() %}
+          <div class="chart">{{ chart | safe }}</div>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
 
   <div class="card">
     <div class="table-wrap">

@@ -345,6 +345,67 @@ def _make_self_play_charts(df: pd.DataFrame) -> dict[str, str]:
     return charts
 
 
+def _make_player_weight_charts(players: list[dict]) -> dict[str, str]:
+    """Build one player-performance scatter plot for each personality weight."""
+    points = pd.DataFrame(players)
+    if points.empty or "score_pct" not in points.columns:
+        return {}
+
+    # A player with no completed games has no meaningful performance value to
+    # compare with its weights, so leave those rows out of the plots.
+    points = points[points["games"].fillna(0).astype(float) > 0].copy()
+    if points.empty:
+        return {}
+
+    charts = {}
+    for dim in WEIGHT_DIMENSIONS:
+        if dim not in points.columns:
+            continue
+        label = dim.replace("_weight", "").replace("_", " ").title()
+        fig = px.scatter(
+            points,
+            x=dim,
+            y="score_pct",
+            size="games",
+            hover_name="name",
+            hover_data={
+                dim: ":.3f",
+                "score_pct": ":.1%",
+                "games": True,
+                "elo": ":.0f",
+            },
+            title=f"Player score vs {label} weight",
+            labels={
+                dim: f"{label} weight",
+                "score_pct": "Score percentage",
+                "games": "Games",
+                "elo": "Elo",
+            },
+        )
+        regression_points = points[[dim, "score_pct"]].apply(pd.to_numeric, errors="coerce").dropna()
+        if len(regression_points) >= 2 and regression_points[dim].nunique() >= 2:
+            x_values = regression_points[dim].sort_values()
+            x_min, x_max = float(x_values.iloc[0]), float(x_values.iloc[-1])
+            slope = float((
+                regression_points[dim].sub(regression_points[dim].mean())
+                * regression_points["score_pct"].sub(regression_points["score_pct"].mean())
+            ).sum() / (
+                (regression_points[dim] - regression_points[dim].mean()) ** 2
+            ).sum())
+            intercept = float(regression_points["score_pct"].mean() - slope * regression_points[dim].mean())
+            fig.add_trace(go.Scatter(
+                x=[x_min, x_max],
+                y=[intercept + slope * x_min, intercept + slope * x_max],
+                mode="lines",
+                name="Regression line",
+                line={"color": "#111827", "dash": "dash", "width": 2},
+                hoverinfo="skip",
+            ))
+        fig.update_yaxes(tickformat=".0%")
+        charts[f"player_weight_{dim}"] = _fig_html(fig)
+    return charts
+
+
 def _make_player_timeline_chart(timeline: pd.DataFrame, player_name: str) -> str | None:
     if timeline.empty:
         return None
@@ -1078,6 +1139,7 @@ def self_play_players(request: Request):
     return templates.TemplateResponse("self_play_players.html", {
         "request": request,
         "players": players,
+        "charts": _make_player_weight_charts(players),
     })
 
 

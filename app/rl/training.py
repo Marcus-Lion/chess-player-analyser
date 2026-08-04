@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from dataclasses import asdict
 from concurrent.futures import ProcessPoolExecutor
 import json
+import os
 from pathlib import Path
 import random
 from collections.abc import Callable
@@ -134,7 +135,10 @@ def train_from_self_play(
     if save_path is None:
         save_path = run_root / "model.npz"
 
-    worker_count = max(1, int(config.self_play_workers))
+    worker_count = int(config.self_play_workers)
+    if worker_count <= 0:
+        worker_count = os.cpu_count() or 1
+    worker_count = max(1, worker_count)
 
     if worker_count == 1:
         for episode in range(1, config.episodes + 1):

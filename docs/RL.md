@@ -182,8 +182,8 @@ Open `/rl` in the app and submit a run. The page shows:
 - training curves for policy and value loss
 - evaluation summary
 
-The form includes a `Self-play workers` field so you can run more than one
-episode at a time using processes.
+The form includes a `Self-play workers` field. Leave it blank to automatically
+use the host CPU count, or enter a smaller value to cap parallelism.
 
 The job runs in a background thread, so the request returns immediately.
 

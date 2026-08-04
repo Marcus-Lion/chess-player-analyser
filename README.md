@@ -2,6 +2,8 @@
 
 A Python/FastAPI web app that fetches public Chess.com games for any username and generates chess analytics.
 
+Demo: https://chess-player-analyser-859165106671.us-central1.run.app/
+
 ## Features
 
 - Monthly performance rating

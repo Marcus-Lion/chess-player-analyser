@@ -13,6 +13,7 @@ import numpy as np
 from app.rl.config import RLConfig
 from app.rl.dataset import SelfPlayEpisode, TrainingSample
 from app.rl.model import ChessRLModel, _softmax
+from app.games import _evaluate_position
 
 
 _DIRICHLET_ALPHA = 0.3
@@ -123,6 +124,13 @@ def _value_for_side(result: str, side_to_move: str) -> float:
     if result == "0-1":
         return 1.0 if side_to_move == "Black" else -1.0
     return 0.0
+
+
+def _max_turn_draw_value(board: chess.Board, side_to_move: str) -> float:
+    """Use the final heuristic position as a learning signal for max-turn draws."""
+    score = float(_evaluate_position(board))
+    value = math.tanh(score / 10.0)
+    return value if side_to_move == "White" else -value
 
 
 def _sample_from_policy(policy: dict[str, float], rng: random.Random) -> str:
@@ -298,74 +306,6 @@ def _select_child(node: _MCTSNode, *, c_puct: float) -> tuple[str, _MCTSNode]:
     return best_move, best_child
 
 
-def _select_child_with_repetition_bias(
-    node: _MCTSNode,
-    board: chess.Board,
-    *,
-    c_puct: float,
-    root_value: float,
-    repetition_avoidance: float,
-    repetition_threshold: float,
-    ply: int,
-    max_turns: int,
-    repetition_counts: Counter,
-) -> tuple[str, _MCTSNode]:
-    force_progress = ply >= max(0, max_turns - 12)
-    if repetition_avoidance <= 0.0 or (root_value <= repetition_threshold and not force_progress):
-        return _select_child(node, c_puct=c_puct)
-
-    best_move = ""
-    best_child = None
-    best_score = float("-inf")
-    sqrt_visits = math.sqrt(max(1, node.visits))
-    strength = min(1.0, max(0.0, (root_value - repetition_threshold) / max(1e-6, 1.0 - repetition_threshold)))
-    phase = min(1.0, max(0.0, (ply - 16) / 24.0))
-    urgency = 1.0 if force_progress else 0.0
-    draw_strength = strength if root_value > repetition_threshold else 0.35
-    draw_strength = max(draw_strength, urgency * 0.75)
-    repetition_penalty = repetition_avoidance * draw_strength * (0.35 + 0.65 * phase + urgency * 0.50)
-    stalemate_penalty = repetition_penalty * 1.75
-    quiet_move_penalty = repetition_penalty * (0.25 + 0.75 * phase + urgency * 0.65)
-
-    for move, child in node.children.items():
-        move_obj = chess.Move.from_uci(move)
-        q = child.value
-        u = c_puct * child.prior * sqrt_visits / (1 + child.visits)
-        score = q + u
-        candidate_board = board.copy(stack=False)
-        candidate_board.push(move_obj)
-        if candidate_board.is_checkmate():
-            score += repetition_penalty * 2.0
-        else:
-            if candidate_board.is_stalemate():
-                score -= stalemate_penalty
-            candidate_key = candidate_board._transposition_key()
-            candidate_occurrences = repetition_counts[candidate_key] + 1
-            if candidate_occurrences >= 2:
-                score -= repetition_penalty * 0.35
-            candidate_counts = repetition_counts.copy()
-            candidate_counts[candidate_key] += 1
-            if _can_claim_threefold(candidate_board, candidate_counts):
-                score -= repetition_penalty * 1.25
-            if (
-                ply >= 24
-                and candidate_board.halfmove_clock >= 20
-                and not board.is_capture(move_obj)
-                and not board.gives_check(move_obj)
-                and not board.is_castling(move_obj)
-                and move_obj.promotion is None
-            ):
-                score -= quiet_move_penalty
-        if score > best_score:
-            best_move = move
-            best_child = child
-            best_score = score
-
-    if best_child is None:
-        raise RuntimeError("MCTS selection failed to choose a child")
-    return best_move, best_child
-
-
 def _run_mcts(
     board: chess.Board,
     model: ChessRLModel,
@@ -373,11 +313,6 @@ def _run_mcts(
     simulations: int,
     c_puct: float,
     root_exploration: float,
-    root_value: float,
-    repetition_avoidance: float,
-    repetition_threshold: float,
-    ply: int,
-    max_turns: int,
     rng: random.Random,
 ) -> _MCTSNode:
     root = _MCTSNode()
@@ -405,17 +340,7 @@ def _run_mcts(
                 )
                 break
 
-            move, child = _select_child_with_repetition_bias(
-                node,
-                search_board,
-                c_puct=c_puct,
-                root_value=root_value,
-                repetition_avoidance=repetition_avoidance,
-                repetition_threshold=repetition_threshold,
-                ply=ply,
-                max_turns=max_turns,
-                repetition_counts=repetition_counts,
-            )
+            move, child = _select_child(node, c_puct=c_puct)
             search_board.push(chess.Move.from_uci(move))
             repetition_counts[search_board._transposition_key()] += 1
             node = child
@@ -475,11 +400,6 @@ def play_self_play_game(
             simulations=config.mcts_simulations,
             c_puct=config.mcts_c_puct,
             root_exploration=config.mcts_root_exploration if config.self_play_exploration > 0 else 0.0,
-            root_value=root_value,
-            repetition_avoidance=config.self_play_repetition_avoidance,
-            repetition_threshold=config.self_play_repetition_threshold,
-            ply=turn,
-            max_turns=config.max_turns,
             rng=rng,
         )
         visits = {move: child.visits for move, child in root.children.items() if child.visits > 0}
@@ -523,7 +443,10 @@ def play_self_play_game(
 
     for sample in samples:
         sample.result = result
-        sample.value_target = _value_for_side(result, sample.side_to_move)
+        if result == "1/2-1/2" and termination == "max turns":
+            sample.value_target = _max_turn_draw_value(board, sample.side_to_move)
+        else:
+            sample.value_target = _value_for_side(result, sample.side_to_move)
 
     return SelfPlayEpisode(
         game_id=game_id,

@@ -151,8 +151,8 @@
           <input name="batch_size" type="number" min="1" placeholder="preset default" />
         </div>
         <div>
-          <label>Self-play workers <span class="help-icon" title="Number of parallel processes used to generate self-play games.">?</span></label>
-          <input name="self_play_workers" type="number" min="1" value="1" />
+          <label>Self-play workers <span class="help-icon" title="Number of parallel processes used to generate self-play games. Leave blank to use the host CPU count.">?</span></label>
+          <input name="self_play_workers" type="number" min="1" placeholder="auto (CPU count)" value="" />
         </div>
         <div>
           <label>Replay capacity <span class="help-icon" title="Maximum number of samples kept in the replay buffer. Older samples fall out when the buffer fills.">?</span></label>
@@ -177,14 +177,6 @@
         <div>
           <label>Exploration <span class="help-icon" title="How much Dirichlet noise is mixed into the root policy during self-play.">?</span></label>
           <input name="exploration" type="number" step="any" min="0" placeholder="preset default" />
-        </div>
-        <div>
-          <label>Repetition avoid <span class="help-icon" title="Strength of the anti-repetition bias when the position already looks favorable.">?</span></label>
-          <input name="repetition_avoidance" type="number" step="any" min="0" placeholder="0.35" />
-        </div>
-        <div>
-          <label>Repetition threshold <span class="help-icon" title="Model value above which repetition avoidance starts to apply.">?</span></label>
-          <input name="repetition_threshold" type="number" step="any" min="-1" max="1" placeholder="0.20" />
         </div>
         <div>
           <label>Eval games <span class="help-icon" title="Number of evaluation games played against the heuristic baseline after training.">?</span></label>
@@ -306,6 +298,7 @@
       <span class="muted">Policy and value loss by episode</span>
     </div>
     <div id="training_chart" class="chart-wrap"></div>
+    <div id="outcome_chart" class="chart-wrap"></div>
   </div>
 
   <script>
@@ -510,6 +503,28 @@
       `;
     }
 
+    function renderOutcomeChart(history) {
+      const container = document.getElementById('outcome_chart');
+      if (!container) return;
+      const points = Array.isArray(history) ? history.slice(-20) : [];
+      if (!points.length) {
+        container.innerHTML = '<div class="chart-empty">Outcome rates will appear after the first episode completes.</div>';
+        return;
+      }
+      const counts = { wins: 0, losses: 0, draws: 0 };
+      points.forEach((step) => {
+        if (step?.result === '1-0') counts.wins += 1;
+        else if (step?.result === '0-1') counts.losses += 1;
+        else counts.draws += 1;
+      });
+      const total = points.length;
+      const bar = (label, count, color) => {
+        const pct = (count / total) * 100;
+        return `<div style="margin:.55rem 0"><div style="display:flex;justify-content:space-between"><span>${label}</span><span>${count}/${total} (${pct.toFixed(1)}%)</span></div><div style="height:12px;background:#eef2f7;border-radius:999px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${color}"></div></div></div>`;
+      };
+      container.innerHTML = `<strong>Recent outcome rates</strong><span class="muted"> · last ${total} episodes</span>${bar('White wins', counts.wins, '#2563eb')}${bar('Black wins', counts.losses, '#dc2626')}${bar('Draws', counts.draws, '#9ca3af')}`;
+    }
+
     async function copyText(text, button) {
       if (!text) {
         return;
@@ -669,18 +684,21 @@
         const data = await response.json();
         if (!data || data.state === 'idle') {
           renderTrainingChart([]);
+          renderOutcomeChart([]);
           return;
         }
         const body = document.getElementById('status_body');
         body.innerHTML = renderStatusCard(data);
         applyLocalTimestamps(body);
         renderTrainingChart(data.training_history || []);
+        renderOutcomeChart(data.training_history || []);
       } catch (error) {
         // ignore transient fetch errors
       }
     }
 
     renderTrainingChart(initialStatus?.training_history || []);
+    renderOutcomeChart(initialStatus?.training_history || []);
     refreshStatus();
     setInterval(refreshStatus, 3000);
   </script>

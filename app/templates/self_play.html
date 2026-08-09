@@ -54,32 +54,68 @@
       background: #3b82f6;
       transition: width 0.2s ease;
     }
-    .filters {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: end;
-      gap: .75rem;
-      margin-bottom: 1rem;
-      padding-bottom: 1rem;
-      border-bottom: 1px solid #eee;
+    .table-wrap {
+      overflow: auto;
+      max-width: 100%;
+      border: 1px solid #ddd;
+      border-radius: 12px;
     }
-    .filters label {
-      display: flex;
-      flex-direction: column;
-      margin-top: 0;
-      font-weight: 600;
-      font-size: .8rem;
-      gap: .2rem;
+    .results-table {
+      table-layout: auto;
+      min-width: 1300px;
     }
-    .filters input, .filters select {
-      font-size: .9rem;
-      padding: .35rem;
+    .results-table th,
+    .results-table td {
+      white-space: nowrap;
+    }
+    .results-table th {
+      position: sticky;
+      top: 0;
+      background: #fafafa;
+      z-index: 2;
+      cursor: pointer;
+      user-select: none;
+    }
+    .results-table th.sort-asc::after { content: " ▲"; font-size: .8em; }
+    .results-table th.sort-desc::after { content: " ▼"; font-size: .8em; }
+    .results-table th.filter-cell {
+      top: 2.25rem;
+      cursor: default;
+      z-index: 1;
+    }
+    .results-table th.filter-cell input,
+    .results-table th.filter-cell select {
+      width: 100%;
+      box-sizing: border-box;
+      font-size: .85rem;
+      padding: .25rem .3rem;
       margin: 0;
     }
-    .filters .range { flex-direction: row; align-items: center; gap: .35rem; }
-    .filters .range input { width: 5.5rem; }
-    .filters button { align-self: flex-end; }
-    #filter_count { margin-bottom: .5rem; }
+    .results-table th.filter-cell .range {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: .3rem;
+      align-items: center;
+    }
+    .results-table th.filter-cell .range input {
+      width: 100%;
+      min-width: 5.5rem;
+    }
+    .results-table th.filter-cell .range span {
+      color: #666;
+      font-size: .85rem;
+    }
+    .table-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: .75rem;
+      margin-bottom: 1rem;
+    }
+    .table-toolbar button {
+      margin-left: auto;
+    }
+    #filter_count { margin: 0; }
     .danger {
       background: #b91c1c;
       color: white;
@@ -144,9 +180,40 @@
           <label>Run name <span class="help-icon" title="Human-readable grouping label used to organize saved results by date and name.">?</span></label>
           <input name="run_name" type="text" placeholder="self-play" />
         </div>
+        <div>
+          <label>Opponent mode <span class="help-icon" title="Use the native engine on both sides, or play the local engine against Lichess AI.">?</span></label>
+          <select name="opponent_mode">
+            <option value="native" selected>Native engine</option>
+            <option value="lichess">Lichess</option>
+          </select>
+          {% if not lichess_token_available %}
+            <p class="muted" style="margin: .35rem 0 0 0;">Lichess AI is unavailable until <code>LICHESS_API_TOKEN</code> or <code>LICHESS_TOKEN</code> is set.</p>
+          {% endif %}
+        </div>
+        <div>
+          <label>Lichess AI level <span class="help-icon" title="Skill level used for the remote Lichess AI opponent.">?</span></label>
+          <input name="lichess_ai_level" type="number" min="1" max="8" value="5" />
+        </div>
+        <div>
+          <label>Lichess clock limit <span class="help-icon" title="Initial clock time for the Lichess AI game, in seconds.">?</span></label>
+          <input name="lichess_clock_limit" type="number" min="1" value="180" />
+        </div>
+        <div>
+          <label>Lichess increment <span class="help-icon" title="Per-move increment for the Lichess AI game, in seconds.">?</span></label>
+          <input name="lichess_clock_increment" type="number" min="0" value="2" />
+        </div>
+        <div>
+          <label>Local color <span class="help-icon" title="When using Lichess AI, choose whether the local engine plays White, Black, or a random side per game.">?</span></label>
+          <select name="lichess_play_as_white">
+            <option value="random" {% if not config or config.lichess_play_as_white is none %}selected{% endif %}>Random</option>
+            <option value="true" {% if config and config.lichess_play_as_white is sameas true %}selected{% endif %}>White</option>
+            <option value="false" {% if config and config.lichess_play_as_white is sameas false %}selected{% endif %}>Black</option>
+          </select>
+        </div>
       </div>
 
       <p class="muted" style="margin-bottom: 0;">Each game selects player profiles independently by default, using their current learned weights. Enter all four weights for a side to override that side with a fixed profile; partial entries are ignored.</p>
+      <p class="muted">For Lichess AI mode, set <code>LICHESS_API_TOKEN</code> in the environment before starting the run.</p>
 
       <label style="margin-bottom: .25rem;">Optional fixed weights</label>
       <table class="weights-table">
@@ -195,6 +262,9 @@
           <b><a href="/self-play/view/{{ game.run_id }}/{{ game.index }}">Game {{ game.index }} · {{ game.result }} · {{ game.turns }} turns</a></b>
           <div>Outcome: {{ game.outcome }}{% if game.winner %} · Winner: {{ game.winner }}{% endif %}{% if game.loser %} · Loser: {{ game.loser }}{% endif %}</div>
           <div>Players: {% if game.white_player_id %}<a href="/self-play/players/{{ game.white_player_id }}">{{ game.white_player_name }}</a>{% else %}{{ game.white_player_name }}{% endif %} vs {% if game.black_player_id %}<a href="/self-play/players/{{ game.black_player_id }}">{{ game.black_player_name }}</a>{% else %}{{ game.black_player_name }}{% endif %}</div>
+          {% if game.opponent_mode and game.opponent_mode != 'native' %}
+            <div>Mode: {{ game.opponent_mode }}{% if game.lichess_ai_level is not none %} · Lichess AI level {{ game.lichess_ai_level }}{% endif %}{% if game.lichess_play_as_white is none %} · Local engine color: Random{% elif game.lichess_play_as_white %} · Local engine as White{% else %} · Local engine as Black{% endif %}</div>
+          {% endif %}
           <div>Termination: {{ game.termination_display or game.termination }}</div>
           <div>Final score: {{ "%.2f"|format(game.final_score) }}</div>
           <div>Time to play: {{ "%.2f"|format(game.duration_seconds) }}s · Evaluations: {{ game.evaluations }} total, {{ "%.0f"|format(game.evaluations_per_move) }} per move</div>
@@ -247,60 +317,59 @@
       <button type="submit" class="danger">Delete all prior self-play</button>
     </form>
     {% if results %}
-      <div class="filters">
-        <label>Result
-          <select id="filter_result"><option value="">All</option></select>
-        </label>
-        <label>Outcome
-          <select id="filter_outcome"><option value="">All</option></select>
-        </label>
-        <label>Termination
-          <select id="filter_termination"><option value="">All</option></select>
-        </label>
-        <label>ABS(Final score)
-          <span class="range">
-            <select id="filter_score_cmp">
-              <option value="gt">&gt;</option>
-              <option value="lt">&lt;</option>
-            </select>
-            <input type="number" step="0.01" min="0" id="filter_score_value" placeholder="value" />
-          </span>
-        </label>
-        <label>Played at
-          <span class="range">
-            <input type="date" id="filter_played_from" />
-            <span>–</span>
-            <input type="date" id="filter_played_to" />
-          </span>
-        </label>
+      <div class="table-toolbar">
+        <p id="filter_count" class="muted"></p>
         <button type="button" id="filter_reset">Reset filters</button>
       </div>
-      <p id="filter_count" class="muted"></p>
-      <table id="results_table" style="width:100%;text-align:right">
+      <div class="table-wrap">
+      <table id="results_table" class="results-table" style="width:100%;text-align:right">
         <thead>
           <tr>
-            <th width="160px">Played at</th>
-            <th width="150px">White player</th>
-            <th width="150px">Black player</th>
-            <th width="75px" style="text-align:center">Result</th>
-            <th style="text-align:right">White Elo</th>
-            <th style="text-align:right">Black Elo</th>
-            <th style="text-align:right">Turns</th>
-            <th>Termination</th>
-            <th style="text-align:right">Score</th>
-            <th style="text-align:right">Duration</th>
-            <th style="text-align:right">Evals/move</th>
+            <th data-sort="date">Played at</th>
+            <th data-sort="text">White player</th>
+            <th data-sort="text">Black player</th>
+            <th data-sort="text" style="text-align:center">Result</th>
+            <th data-sort="number" style="text-align:right">White Elo</th>
+            <th data-sort="number" style="text-align:right">Black Elo</th>
+            <th data-sort="number" style="text-align:right">Turns</th>
+            <th data-sort="text">Termination</th>
+            <th data-sort="number" style="text-align:right">Score</th>
+            <th data-sort="number" style="text-align:right">Duration</th>
+            <th data-sort="number" style="text-align:right">Evals/move</th>
+          </tr>
+          <tr class="filter-row">
+            <th class="filter-cell"><input id="filter_played_at" type="date" aria-label="Filter played at by date" /></th>
+            <th class="filter-cell"><input id="filter_white_player" type="text" placeholder="Filter white player" aria-label="Filter white player" /></th>
+            <th class="filter-cell"><input id="filter_black_player" type="text" placeholder="Filter black player" aria-label="Filter black player" /></th>
+            <th class="filter-cell">
+              <select id="filter_result" aria-label="Filter result">
+                <option value="">All</option>
+              </select>
+            </th>
+            <th class="filter-cell"><input id="filter_white_elo" type="number" step="any" placeholder="Filter white Elo" aria-label="Filter white Elo" /></th>
+            <th class="filter-cell"><input id="filter_black_elo" type="number" step="any" placeholder="Filter black Elo" aria-label="Filter black Elo" /></th>
+            <th class="filter-cell"><input id="filter_turns" type="number" step="any" placeholder="Filter turns" aria-label="Filter turns" /></th>
+            <th class="filter-cell"><input id="filter_termination" type="text" placeholder="Filter termination" aria-label="Filter termination" /></th>
+            <th class="filter-cell"><input id="filter_score" type="number" step="any" placeholder="Filter score" aria-label="Filter score" /></th>
+            <th class="filter-cell"><input id="filter_duration" type="number" step="any" placeholder="Filter duration" aria-label="Filter duration" /></th>
+            <th class="filter-cell"><input id="filter_evals" type="number" step="any" placeholder="Filter evals/move" aria-label="Filter evals per move" /></th>
           </tr>
         </thead>
         <tbody>
           {% for row in results|reverse %}
             <tr class="result-row"
                 data-played-at="{{ row.played_at }}"
+                data-played-at-display="{{ row.played_at|replace('T', ' ')|replace('Z', '') }}"
                 data-result="{{ row.result }}"
-                data-outcome="{{ row.outcome }}"
+                data-white-player="{{ row.white_player_name or '' }}"
+                data-black-player="{{ row.black_player_name or '' }}"
                 data-termination="{{ row.termination }}"
+                data-white-elo="{{ row.get('WhiteElo', 0) or 0 }}"
+                data-black-elo="{{ row.get('BlackElo', 0) or 0 }}"
                 data-turns="{{ row.turns }}"
-                data-final-score="{{ row.final_score }}">
+                data-final-score="{{ row.final_score }}"
+                data-duration-seconds="{{ row.duration_seconds }}"
+                data-evals-per-move="{{ row.evaluations_per_move }}">
               <td data-local-timestamp><a href="/self-play/view/{{ row.run_id }}/{{ row.index }}">{{ row.played_at }}</a></td>
               <td>{% if row.white_player_id %}<a href="/self-play/players/{{ row.white_player_id }}">{{ row.white_player_name or "" }}</a>{% else %}{{ row.white_player_name or "" }}{% endif %}</td>
               <td>{% if row.black_player_id %}<a href="/self-play/players/{{ row.black_player_id }}">{{ row.black_player_name or "" }}</a>{% else %}{{ row.black_player_name or "" }}{% endif %}</td>
@@ -316,6 +385,7 @@
           {% endfor %}
         </tbody>
       </table>
+      </div>
       <p id="filter_empty" class="muted" style="display:none;">No results match the current filters.</p>
   {% else %}
     <p class="muted">No self-play results saved yet.</p>
@@ -553,7 +623,21 @@
         body: new FormData(form),
       });
       if (!response.ok) {
-        progressText.textContent = 'Failed to start self-play.';
+        let detail = 'Failed to start self-play.';
+        try {
+          const text = await response.text();
+          if (text) {
+            try {
+              const payload = JSON.parse(text);
+              detail = payload.detail || payload.error || detail;
+            } catch {
+              detail = text;
+            }
+          }
+        } catch {
+          // Keep the generic fallback.
+        }
+        progressText.textContent = detail;
         submitButton.disabled = false;
         return;
       }
@@ -570,76 +654,119 @@
         return;
       }
 
+      const table = document.getElementById('results_table');
+      const headers = Array.from(table.querySelectorAll('thead tr:first-child th'));
       const resultSelect = document.getElementById('filter_result');
-      const outcomeSelect = document.getElementById('filter_outcome');
-      const terminationSelect = document.getElementById('filter_termination');
-      const scoreCmp = document.getElementById('filter_score_cmp');
-      const scoreValue = document.getElementById('filter_score_value');
-      const playedFrom = document.getElementById('filter_played_from');
-      const playedTo = document.getElementById('filter_played_to');
+      const playedAt = document.getElementById('filter_played_at');
+      const whitePlayer = document.getElementById('filter_white_player');
+      const blackPlayer = document.getElementById('filter_black_player');
+      const whiteElo = document.getElementById('filter_white_elo');
+      const blackElo = document.getElementById('filter_black_elo');
+      const turns = document.getElementById('filter_turns');
+      const termination = document.getElementById('filter_termination');
+      const score = document.getElementById('filter_score');
+      const duration = document.getElementById('filter_duration');
+      const evals = document.getElementById('filter_evals');
       const resetButton = document.getElementById('filter_reset');
       const countEl = document.getElementById('filter_count');
       const emptyEl = document.getElementById('filter_empty');
+      const tbody = table.querySelector('tbody');
+      const sortState = { index: 0, dir: -1, type: 'date' };
 
       function populateSelect(select, key) {
         const values = Array.from(new Set(rows.map((row) => row.dataset[key]).filter(Boolean))).sort();
         values.forEach((value) => {
           const option = document.createElement('option');
           option.value = value;
-          if (key === 'termination' && value === '3-fold-rep') {
-            option.textContent = '3-fold repetition';
-          } else if (key === 'termination' && value === 'perpetual check') {
-            option.textContent = 'Perpetual check';
-          } else {
-            option.textContent = value;
-          }
+          option.textContent = value;
           select.appendChild(option);
         });
       }
       populateSelect(resultSelect, 'result');
-      populateSelect(outcomeSelect, 'outcome');
-      populateSelect(terminationSelect, 'termination');
+      function getCellValue(row, index, type) {
+        const cell = row.children[index];
+        const raw = (cell && cell.dataset && cell.dataset.value) ? cell.dataset.value : (cell ? cell.textContent : '');
+        if (type === 'number') {
+          const num = Number(String(raw).replace(/[^0-9.+\-eE]/g, ''));
+          return Number.isFinite(num) ? num : -Infinity;
+        }
+        if (type === 'date') {
+          const parsed = Date.parse(String(raw));
+          return Number.isFinite(parsed) ? parsed : -Infinity;
+        }
+        return String(raw).trim().toLowerCase();
+      }
 
-      const anyWinOption = document.createElement('option');
-      anyWinOption.value = '__any_win__';
-      anyWinOption.textContent = 'Anyone wins';
-      outcomeSelect.insertBefore(anyWinOption, outcomeSelect.firstChild.nextSibling);
+      function setSortStyles(activeIndex, dir) {
+        headers.forEach((th, idx) => {
+          th.classList.remove('sort-asc', 'sort-desc');
+          if (idx === activeIndex) {
+            th.classList.add(dir === 1 ? 'sort-asc' : 'sort-desc');
+          }
+        });
+      }
+
+      function sortRows(index, type, dir) {
+        const sorted = Array.from(tbody.querySelectorAll('tr'));
+        sorted.sort((a, b) => {
+          const av = getCellValue(a, index, type);
+          const bv = getCellValue(b, index, type);
+          if (av < bv) return -1 * dir;
+          if (av > bv) return 1 * dir;
+          return 0;
+        });
+        sorted.forEach((row) => tbody.appendChild(row));
+        sortState.index = index;
+        sortState.type = type;
+        sortState.dir = dir;
+        setSortStyles(index, dir);
+      }
+
+      headers.forEach((th, index) => {
+        th.addEventListener('click', () => {
+          const type = th.dataset.sort || 'text';
+          const dir = sortState.index === index ? -sortState.dir : 1;
+          sortRows(index, type, dir);
+          applyFilters();
+        });
+      });
+
+      function matchesText(rowValue, filterValue) {
+        return !filterValue || String(rowValue || '').toLowerCase().includes(String(filterValue).toLowerCase());
+      }
 
       function applyFilters() {
-        const result = resultSelect.value;
-        const outcome = outcomeSelect.value;
-        const termination = terminationSelect.value;
-        const scoreThreshold = scoreValue.value === '' ? null : Number(scoreValue.value);
-        const from = playedFrom.value || null;
-        const to = playedTo.value || null;
+        const filters = {
+          playedAt: playedAt.value,
+          whitePlayer: whitePlayer.value,
+          blackPlayer: blackPlayer.value,
+          result: resultSelect.value,
+          whiteElo: whiteElo.value,
+          blackElo: blackElo.value,
+          turns: turns.value,
+          termination: termination.value,
+          score: score.value,
+          duration: duration.value,
+          evals: evals.value,
+        };
 
         let visibleCount = 0;
         rows.forEach((row) => {
-          const detail = row.nextElementSibling;
           let visible = true;
 
-          if (result && row.dataset.result !== result) visible = false;
-          if (outcome === '__any_win__') {
-            if (!/wins$/.test(row.dataset.outcome || '')) visible = false;
-          } else if (outcome && row.dataset.outcome !== outcome) {
-            visible = false;
-          }
-          if (termination && row.dataset.termination !== termination) visible = false;
-
-          if (scoreThreshold !== null) {
-            const absScore = Math.abs(Number(row.dataset.finalScore));
-            if (scoreCmp.value === 'gt' && !(absScore > scoreThreshold)) visible = false;
-            if (scoreCmp.value === 'lt' && !(absScore < scoreThreshold)) visible = false;
-          }
-
-          const playedDate = (row.dataset.playedAt || '').slice(0, 10);
-          if (from && playedDate && playedDate < from) visible = false;
-          if (to && playedDate && playedDate > to) visible = false;
+          if (filters.playedAt && !(row.dataset.playedAt || '').slice(0, 10).startsWith(filters.playedAt)) visible = false;
+          if (filters.whitePlayer && !matchesText(row.dataset.whitePlayer, filters.whitePlayer)) visible = false;
+          if (filters.blackPlayer && !matchesText(row.dataset.blackPlayer, filters.blackPlayer)) visible = false;
+          if (filters.result && row.dataset.result !== filters.result) visible = false;
+          if (filters.whiteElo && !matchesText(row.dataset.whiteElo, filters.whiteElo)) visible = false;
+          if (filters.blackElo && !matchesText(row.dataset.blackElo, filters.blackElo)) visible = false;
+          if (filters.turns && !matchesText(row.dataset.turns, filters.turns)) visible = false;
+          if (filters.termination && !matchesText(row.dataset.termination, filters.termination)) visible = false;
+          if (filters.score && !matchesText(row.dataset.finalScore, filters.score)) visible = false;
+          if (filters.duration && !matchesText(row.dataset.durationSeconds, filters.duration)) visible = false;
+          if (filters.evals && !matchesText(row.dataset.evalsPerMove, filters.evals)) visible = false;
 
           row.style.display = visible ? '' : 'none';
-          if (detail && detail.classList.contains('detail-row')) {
-            detail.style.display = visible ? '' : 'none';
-          }
           if (visible) visibleCount += 1;
         });
 
@@ -647,20 +774,26 @@
         emptyEl.style.display = visibleCount === 0 ? 'block' : 'none';
       }
 
-      [resultSelect, outcomeSelect, terminationSelect, scoreCmp].forEach((el) => el.addEventListener('change', applyFilters));
-      [scoreValue, playedFrom, playedTo].forEach((el) => el.addEventListener('input', applyFilters));
+      [playedAt, whitePlayer, blackPlayer, resultSelect, whiteElo, blackElo, turns, termination, score, duration, evals]
+        .forEach((el) => el.addEventListener('input', applyFilters));
+      [resultSelect].forEach((el) => el.addEventListener('change', applyFilters));
 
       resetButton.addEventListener('click', () => {
+        playedAt.value = '';
+        whitePlayer.value = '';
+        blackPlayer.value = '';
         resultSelect.value = '';
-        outcomeSelect.value = '';
-        terminationSelect.value = '';
-        scoreCmp.value = 'gt';
-        scoreValue.value = '';
-        playedFrom.value = '';
-        playedTo.value = '';
+        whiteElo.value = '';
+        blackElo.value = '';
+        turns.value = '';
+        termination.value = '';
+        score.value = '';
+        duration.value = '';
+        evals.value = '';
         applyFilters();
       });
 
+      sortRows(0, 'date', -1);
       applyFilters();
     }
 

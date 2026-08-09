@@ -34,7 +34,7 @@ from app.games import (
     CHECKMATE_WEIGHT,
     MAX_AUTO_SEARCH_DEPTH,
 )
-from app.parser import parse_pgn_to_dataframe
+    from app.parser import parse_pgn_to_dataframe
 from app.self_play import (
     SelfPlayConfig,
     get_job_hub,
@@ -150,7 +150,7 @@ def _self_play_csv_response(df: pd.DataFrame) -> Response:
 
 
 def _self_play_page_context(request: Request, notice: str | None = None) -> dict:
-    results = load_self_play_results()
+    results = load_self_play_results(limit=1000)
     df = self_play_to_dataframe(results)
     table_df = self_play_export_dataframe(df)
     table_rows = table_df.to_dict(orient="records")
@@ -163,6 +163,7 @@ def _self_play_page_context(request: Request, notice: str | None = None) -> dict
         "recent_games": [],
         "config": None,
         "elo": elo,
+        "lichess_token_available": bool((os.getenv("LICHESS_API_TOKEN") or os.getenv("LICHESS_TOKEN") or "").strip()),
     }
     if notice:
         context["notice"] = notice
@@ -889,6 +890,11 @@ def self_play_start(
     black_legal_moves_weight: str | None = Form(None),
     black_material_score_weight: str | None = Form(None),
     black_forward_score_weight: str | None = Form(None),
+    opponent_mode: str = Form("native"),
+    lichess_ai_level: int = Form(5),
+    lichess_clock_limit: int = Form(180),
+    lichess_clock_increment: int = Form(2),
+    lichess_play_as_white: str | None = Form("random"),
 ):
     fen = fen.strip() if fen and fen.strip() else None
     try:
@@ -905,6 +911,20 @@ def self_play_start(
         max_depth_value = int(max_depth) if max_depth and max_depth.strip() else MAX_AUTO_SEARCH_DEPTH
     except ValueError:
         max_depth_value = MAX_AUTO_SEARCH_DEPTH
+    mode = opponent_mode.strip().lower() if opponent_mode else "native"
+    if mode not in {"native", "lichess"}:
+        raise HTTPException(status_code=400, detail="Unsupported self-play opponent mode.")
+    if mode == "lichess" and not (os.getenv("LICHESS_API_TOKEN") or os.getenv("LICHESS_TOKEN")):
+        raise HTTPException(status_code=400, detail="LICHESS_API_TOKEN is required for Lichess AI self-play.")
+    play_as_white_raw = str(lichess_play_as_white).strip().lower() if lichess_play_as_white is not None else "random"
+    if play_as_white_raw in {"", "random", "auto"}:
+        play_as_white: bool | None = None
+    elif play_as_white_raw in {"1", "true", "yes", "on", "white"}:
+        play_as_white = True
+    elif play_as_white_raw in {"0", "false", "no", "off", "black"}:
+        play_as_white = False
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported Lichess color selection.")
     config = SelfPlayConfig(
         games=max(1, games),
         max_turns=max(2, max_turns),
@@ -926,6 +946,11 @@ def self_play_start(
         black_legal_moves_weight=_parse_optional_float(black_legal_moves_weight),
         black_material_score_weight=_parse_optional_float(black_material_score_weight),
         black_forward_score_weight=_parse_optional_float(black_forward_score_weight),
+        opponent_mode=mode,
+        lichess_ai_level=min(8, max(1, lichess_ai_level)),
+        lichess_clock_limit=max(1, lichess_clock_limit),
+        lichess_clock_increment=max(0, lichess_clock_increment),
+        lichess_play_as_white=play_as_white,
     )
     return JSONResponse(start_self_play_job(config))
 

@@ -21,6 +21,13 @@ From the repo root, into the project's uv venv:
 .venv/Scripts/maturin.exe develop --release -m engine/Cargo.toml
 ```
 
+If PyCharm or another debugger has a Python process attached, use the helper
+wrapper first:
+
+```powershell
+scripts\develop-engine.ps1 -KillLocks
+```
+
 If maturin is not installed in the project venv, build a wheel and install it
 explicitly. The PowerShell variable is required because `uv pip` does not
 expand the `*.whl` wildcard itself:
@@ -41,6 +48,11 @@ Then confirm:
 ```powershell
 .venv/Scripts/python.exe -c "import chess_engine; print('ok')"
 ```
+
+If `maturin develop` fails during the final `uv pip install` step with
+`Access is denied`, the extension is still loaded by a running Python process
+or debugger session. Stop any app, test runner, or PyCharm debug session using
+`.venv\Scripts\python.exe`, then rerun the command.
 
 ### Toolchain note (Windows)
 

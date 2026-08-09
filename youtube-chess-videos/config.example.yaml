@@ -1,0 +1,18 @@
+# Copy to config.yaml and adjust locally. Do not commit credentials.
+project: marcuslion
+workspace: youtube-chess-videos
+
+sources:
+  - youtube
+
+storage:
+  raw_dir: data/raw
+  transcript_dir: data/transcripts
+  processed_dir: data/processed
+  games_dir: data/games
+  analysis_dir: data/analysis
+
+analysis:
+  engine: stockfish
+  depth: 18
+  include_timestamps: true

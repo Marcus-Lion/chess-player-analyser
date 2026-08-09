@@ -1,0 +1,15 @@
+# Local workspace state
+config.yaml
+.env
+.env.*
+
+# Generated or imported data
+data/raw/
+data/transcripts/
+data/processed/
+data/analysis/
+reports/generated/
+
+# Notebook state
+**/.ipynb_checkpoints/
+

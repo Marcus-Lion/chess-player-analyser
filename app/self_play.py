@@ -150,6 +150,7 @@ from app.games import (
     choose_engine_move,
     play_self_game_native,
 )
+from app.lichess import LichessClient
 from app.run_groups import build_run_grouping
 from app.players import PlayerProfile, get_player_roster, pick_two_players
 from app.neo4j_store import Neo4jStore
@@ -239,6 +240,10 @@ class SelfPlayGame:
     black_player_id: str | None = None
     black_player_name: str | None = None
     black_player_description: str | None = None
+    opponent_mode: str = "native"
+    lichess_game_id: str | None = None
+    lichess_ai_level: int | None = None
+    lichess_play_as_white: bool | None = None
     duration_seconds: float = 0.0
     evaluations: int = 0
     evaluations_per_move: float = 0.0
@@ -288,6 +293,11 @@ class SelfPlayConfig:
     black_material_score_weight: float | None = None
     black_forward_score_weight: float | None = None
     mirror_colors: bool = False
+    opponent_mode: str = "native"
+    lichess_ai_level: int = 3
+    lichess_clock_limit: int = 180
+    lichess_clock_increment: int = 2
+    lichess_play_as_white: bool | None = None
 
 
 @dataclass
@@ -443,6 +453,306 @@ def _player_weight_sets(
     )
 
 
+def _lichess_api_token() -> str | None:
+    for name in ("LICHESS_API_TOKEN", "LICHESS_TOKEN"):
+        raw = os.getenv(name)
+        if raw and raw.strip():
+            return raw.strip()
+    return None
+
+
+def _new_game_board(fen: str | None) -> chess.Board:
+    return chess.Board(fen) if fen else chess.Board()
+
+
+def _resolve_lichess_play_as_white(config: SelfPlayConfig, game_index: int) -> bool:
+    if config.lichess_play_as_white is not None:
+        return config.lichess_play_as_white
+    seed = _seed_for_game(config, game_index)
+    color_rng = random.Random(seed)
+    return color_rng.choice((True, False))
+
+
+def _apply_uci_history(board: chess.Board, moves_uci: list[str]) -> None:
+    for uci in moves_uci:
+        board.push(chess.Move.from_uci(uci))
+
+
+def _split_uci_moves(moves: str | None) -> list[str]:
+    if not moves:
+        return []
+    return [move for move in moves.split() if move]
+
+
+def _extract_game_id(payload: dict) -> str | None:
+    game = payload.get("game")
+    if isinstance(game, dict):
+        for key in ("id", "gameId"):
+            value = game.get(key)
+            if value:
+                return str(value)
+    for key in ("gameId", "id"):
+        value = payload.get(key)
+        if value:
+            return str(value)
+    return None
+
+
+def _lichess_result_from_state(state: dict, board: chess.Board) -> str:
+    if board.is_checkmate():
+        return "1-0" if board.turn == chess.BLACK else "0-1"
+    if board.is_stalemate() or board.is_insufficient_material() or board.can_claim_draw():
+        return "1/2-1/2"
+
+    status = str(state.get("status", "")).lower()
+    winner = str(state.get("winner", "")).lower()
+    if status in {"draw", "stalemate"}:
+        return "1/2-1/2"
+    if status in {"mate", "resign", "aborted"}:
+        if winner == "white":
+            return "1-0"
+        if winner == "black":
+            return "0-1"
+    if status == "outoftime":
+        if winner == "white":
+            return "1-0"
+        if winner == "black":
+            return "0-1"
+    return "*"
+
+
+def _lichess_termination_from_state(state: dict, board: chess.Board) -> str:
+    if board.is_checkmate():
+        return "checkmate"
+    if board.is_stalemate():
+        return "stalemate"
+    if board.is_insufficient_material():
+        return "insufficient material"
+    if board.can_claim_threefold_repetition():
+        return "3-fold-rep"
+    if board.can_claim_fifty_moves():
+        return "50-moves"
+
+    status = str(state.get("status", "")).lower()
+    if status:
+        return status
+    return "lichess-ai"
+
+
+def _play_lichess_self_game(
+    config: SelfPlayConfig,
+    game_index: int,
+    run_id: str | None = None,
+    rng: random.Random | None = None,
+) -> SelfPlayGame:
+    token = _lichess_api_token()
+    if not token:
+        raise RuntimeError(
+            "LICHESS_API_TOKEN is required for lichess self-play runs."
+        )
+
+    rng = rng or random.Random(config.seed)
+    board = _new_game_board(config.fen)
+    play_as_white = _resolve_lichess_play_as_white(config, game_index)
+    white_player, white_weights, black_player, black_weights = _player_weight_sets(config, rng)
+
+    if play_as_white:
+        local_player = white_player
+        local_weights = white_weights
+        remote_name = f"Lichess AI (level {config.lichess_ai_level})"
+        white_name = local_player.name if local_player is not None else "Native Engine"
+        black_name = remote_name
+        local_color = chess.WHITE
+    else:
+        local_player = black_player
+        local_weights = black_weights
+        remote_name = f"Lichess AI (level {config.lichess_ai_level})"
+        white_name = remote_name
+        black_name = local_player.name if local_player is not None else "Native Engine"
+        local_color = chess.BLACK
+
+    game = chess.pgn.Game()
+    game.headers["Event"] = "Self-play harness"
+    game.headers["Site"] = "Lichess"
+    game.headers["Round"] = str(game_index)
+    game.headers["White"] = white_name
+    game.headers["Black"] = black_name
+    game.headers["WhiteWeights"] = json.dumps(white_weights if play_as_white else {}, sort_keys=True)
+    game.headers["BlackWeights"] = json.dumps(black_weights if not play_as_white else {}, sort_keys=True)
+    game.headers["OpponentMode"] = "lichess"
+    if local_player is not None:
+        if play_as_white:
+            game.headers["WhitePlayerId"] = local_player.player_id
+            game.headers["WhitePlayerDescription"] = local_player.description
+        else:
+            game.headers["BlackPlayerId"] = local_player.player_id
+            game.headers["BlackPlayerDescription"] = local_player.description
+
+    client = LichessClient(token)
+    played_at = datetime.now(timezone.utc).isoformat()
+    event_stream = client.stream_events()
+    challenge = client.challenge_ai(
+        level=config.lichess_ai_level,
+        color="white" if play_as_white else "black",
+        clock_limit=config.lichess_clock_limit,
+        clock_increment=config.lichess_clock_increment,
+        fen=config.fen,
+    )
+    challenge_id = challenge.id or None
+    game_id: str | None = None
+    for event in event_stream:
+        print(f"_play_lichess_self_game: {event}")
+
+        if challenge_id and event.get("type") == "challenge":
+            challenge_event = event.get("challenge")
+            if isinstance(challenge_event, dict) and str(challenge_event.get("id", "")) == challenge_id:
+                continue
+        if event.get("type") == "gameStart":
+            game_id = _extract_game_id(event)
+            if game_id:
+                break
+
+    if not game_id:
+        raise RuntimeError("Lichess did not emit a gameStart event for the AI challenge.")
+
+    node = game
+    applied_moves: list[str] = []
+    turn = 0
+    evaluations = 0
+    turn_durations_seconds: list[float] = []
+    start_time = time.perf_counter()
+    last_state: dict[str, object] = {}
+    result = ""
+    termination = ""
+
+    def _play_local_move() -> None:
+        nonlocal node, evaluations, turn
+        if board.is_game_over(claim_draw=True):
+            return
+        if board.turn != local_color:
+            return
+
+        local_depth = config.depth if config.depth is not None else _auto_search_depth(board, max_depth=config.max_depth)
+        local_start = time.perf_counter()
+        eval_counter = [0]
+        move, _score = choose_engine_move(
+            board,
+            rng=rng,
+            top_k=config.top_k,
+            legal_moves_weight=local_weights["legal_moves_weight"],
+            material_score_weight=local_weights["material_score_weight"],
+            forward_score_weight=local_weights["forward_score_weight"],
+            forward_material_score_weight=config.forward_material_score_weight,
+            center_control_weight=0.0,
+            checkmate_weight=config.checkmate_weight,
+            depth=local_depth,
+            top_k_score_threshold=config.top_k_score_threshold,
+            eval_counter=eval_counter,
+        )
+        evaluations += int(eval_counter[0])
+        turn_durations_seconds.append(time.perf_counter() - local_start)
+        san = board.san(move)
+        client.make_move(game_id, move.uci())
+        board.push(move)
+        node = node.add_variation(move)
+        node.comment = san
+        applied_moves.append(move.uci())
+        turn += 1
+
+    # If we are the side to move, move immediately instead of waiting for the first
+    # streamed update. Lichess still sends the game state afterward, and the
+    # replay sync below will absorb our move into the PGN/history.
+    _play_local_move()
+
+    try:
+        for event in client.stream_game(game_id):
+            if event.get("type") == "gameFull":
+                state = event.get("state")
+                if isinstance(state, dict):
+                    last_state = state
+                    moves = _split_uci_moves(str(state.get("moves", "")))
+                    if len(moves) > len(applied_moves):
+                        for uci in moves[len(applied_moves):]:
+                            move = chess.Move.from_uci(uci)
+                            san = board.san(move)
+                            board.push(move)
+                            node = node.add_variation(move)
+                            node.comment = san
+                            applied_moves.append(uci)
+                            turn += 1
+                            turn_durations_seconds.append(0.0)
+                    if state.get("status") and str(state.get("status")) != "started":
+                        break
+            elif event.get("type") == "gameState":
+                last_state = event
+                moves = _split_uci_moves(str(event.get("moves", "")))
+                if len(moves) > len(applied_moves):
+                    for uci in moves[len(applied_moves):]:
+                        move = chess.Move.from_uci(uci)
+                        san = board.san(move)
+                        board.push(move)
+                        node = node.add_variation(move)
+                        node.comment = san
+                        applied_moves.append(uci)
+                        turn += 1
+                        turn_durations_seconds.append(0.0)
+                status = str(event.get("status", "started"))
+                if status != "started":
+                    break
+
+            if board.is_game_over(claim_draw=True):
+                break
+
+            _play_local_move()
+
+        result = _lichess_result_from_state(last_state if isinstance(last_state, dict) else {}, board)
+        termination = _lichess_termination_from_state(last_state if isinstance(last_state, dict) else {}, board)
+    except Exception:
+        traceback.print_exc()
+        result, termination = "0-0", "Crash"
+
+    duration_seconds = time.perf_counter() - start_time
+    if not result or result == "*":
+        result = "1/2-1/2"
+    game.headers["Result"] = result
+    game.headers["Termination"] = termination
+    game.headers["LichessGameId"] = game_id
+    game.headers["LichessAiLevel"] = str(config.lichess_ai_level)
+    game.headers["LichessPlayAsWhite"] = "random" if config.lichess_play_as_white is None else ("true" if play_as_white else "false")
+
+    exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=True)
+    pgn_text = game.accept(exporter)
+    summary = {"status": "Crash", "winner": "", "loser": ""} if termination == "Crash" else _result_summary(result, white=white_name, black=black_name)
+    return SelfPlayGame(
+        index=game_index,
+        result=result,
+        termination=termination,
+        turns=turn,
+        pgn=pgn_text,
+        final_fen=board.fen(),
+        final_score=_evaluate_board(board, legal_moves=len(list(board.legal_moves))),
+        outcome=summary["status"],
+        winner=summary["winner"],
+        loser=summary["loser"],
+        white_weights=white_weights if play_as_white else None,
+        black_weights=black_weights if not play_as_white else None,
+        white_player_id=white_player.player_id if play_as_white and white_player is not None else None,
+        white_player_name=white_name,
+        white_player_description=white_player.description if play_as_white and white_player is not None else None,
+        black_player_id=black_player.player_id if (not play_as_white) and black_player is not None else None,
+        black_player_name=black_name,
+        black_player_description=black_player.description if (not play_as_white) and black_player is not None else None,
+        opponent_mode="lichess",
+        lichess_game_id=game_id,
+        lichess_ai_level=config.lichess_ai_level,
+        lichess_play_as_white=config.lichess_play_as_white,
+        duration_seconds=duration_seconds,
+        evaluations=evaluations,
+        evaluations_per_move=(evaluations / turn) if turn else 0.0,
+        turn_durations_seconds=turn_durations_seconds,
+    )
+
+
 def _current_player_skill_levels() -> dict[str, float]:
     """Return the latest per-player Elo estimates from the player nodes."""
     if not _neo4j_enabled():
@@ -505,6 +815,13 @@ def _config_for_game(
         black_material_score_weight=config.black_material_score_weight,
         black_forward_score_weight=config.black_forward_score_weight,
         mirror_colors=mirror_colors,
+        opponent_mode=config.opponent_mode,
+        lichess_ai_level=config.lichess_ai_level,
+        lichess_clock_limit=config.lichess_clock_limit,
+        lichess_clock_increment=config.lichess_clock_increment,
+        lichess_play_as_white=(
+            (not config.lichess_play_as_white) if mirror_colors and config.lichess_play_as_white is not None else config.lichess_play_as_white
+        ),
     )
 
 
@@ -1267,7 +1584,10 @@ def _play_and_save_game(
     """Play one game and return it to the caller for persistence."""
     played_at = datetime.now(timezone.utc).isoformat()
     print(f"Starting self-play game {game_index} in process {os.getpid()}", flush=True)
-    game = play_self_game(config, game_index, run_id=run_id)
+    if config.opponent_mode == "lichess":
+        game = _play_lichess_self_game(config, game_index, run_id=run_id)
+    else:
+        game = play_self_game(config, game_index, run_id=run_id)
     game.run_id = run_id
     grouping = build_run_grouping(
         run_name=config.run_name,
@@ -1283,6 +1603,9 @@ def _play_and_save_game(
     game.top_k_score_threshold = config.top_k_score_threshold
     game.max_turns = config.max_turns
     game.start_fen = config.fen or "startpos"
+    game.opponent_mode = config.opponent_mode
+    game.lichess_ai_level = config.lichess_ai_level if config.opponent_mode == "lichess" else None
+    game.lichess_play_as_white = config.lichess_play_as_white if config.opponent_mode == "lichess" else None
     print(
         f"Finished self-play game {game_index} in process {os.getpid()}: "
         f"{game.result} after {game.turns} turns ({game.termination})",
@@ -1305,6 +1628,16 @@ def run_self_play(
     played_at = datetime.now(timezone.utc).isoformat()
     run_id = run_id or (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8])
     games: list[SelfPlayGame] = []
+
+    if config.opponent_mode == "lichess":
+        for game_index in range(1, config.games + 1):
+            game_config = _config_for_game(config, game_index)
+            game = _play_and_save_game(game_config, game_index, run_id, played_at)
+            save_self_play_results([game], refresh_player_elos=True)
+            games.append(game)
+            if progress_callback is not None:
+                progress_callback(game_index, game, games)
+        return games
 
     if config.games <= 1:
         game_config = _config_for_game(config, 1)
@@ -1917,6 +2250,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=None, help="Random seed for move selection.")
     parser.add_argument("--run-name", type=str, default=None, help="Optional human-readable run name.")
     parser.add_argument("--fen", type=str, default=None, help="Optional starting FEN.")
+    parser.add_argument(
+        "--opponent-mode",
+        choices=("native", "lichess"),
+        default="native",
+        help="Self-play opponent mode: native engine vs native engine, or local engine vs Lichess AI.",
+    )
+    parser.add_argument("--lichess-ai-level", type=int, default=3, help="Lichess AI level for remote games.")
+    parser.add_argument("--lichess-clock-limit", type=int, default=300, help="Initial clock time for Lichess AI games, in seconds.")
+    parser.add_argument("--lichess-clock-increment", type=int, default=0, help="Per-move increment for Lichess AI games, in seconds.")
+    parser.add_argument(
+        "--lichess-play-as-white",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="When using Lichess AI mode, choose whether the local engine plays White or Black; omit for random.",
+    )
     parser.add_argument("--legal-moves-weight", type=float, default=LEGAL_MOVES_WEIGHT, help="Weight for legal move count.")
     parser.add_argument("--material-score-weight", type=float, default=MATERIAL_SCORE_WEIGHT, help="Weight for material balance.")
     parser.add_argument("--forward-score-weight", type=float, default=FORWARD_SCORE_WEIGHT, help="Weight for forward control.")
@@ -1979,6 +2327,11 @@ def main(argv: list[str] | None = None) -> int:
         randomize_player_weights=not args.fixed_player_weights,
         player_weight_min=args.player_weight_min,
         player_weight_max=args.player_weight_max,
+        opponent_mode=args.opponent_mode,
+        lichess_ai_level=min(8, max(1, args.lichess_ai_level)),
+        lichess_clock_limit=max(1, args.lichess_clock_limit),
+        lichess_clock_increment=max(0, args.lichess_clock_increment),
+        lichess_play_as_white=args.lichess_play_as_white,
     )
 
     if args.tune_weights:

@@ -21,7 +21,4 @@ rand = "0.10.2"
 # NB: keep the default unwind panic strategy -- PyO3 converts Rust panics into
 # Python exceptions by unwinding across the FFI boundary; panic="abort" would
 # instead kill the whole interpreter (and any self-play worker) on a panic.
-[profile.release]
-lto = true
-codegen-units = 1
 

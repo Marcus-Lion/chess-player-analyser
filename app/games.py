@@ -25,6 +25,7 @@ try:
             "calculate_auto_search_depth", "calculate_phase_value",
             "legal_moves_and_tree",
             "choose_engine_move_from_history",
+            "play_remote_game_native",
         )
         if not hasattr(chess_engine, name)
     ]
@@ -962,6 +963,73 @@ def play_self_game_native(
     return chess_engine.play_self_game_native(*native_args)
 
 
+def play_remote_game_native(
+    remote,
+    fen: str,
+    max_turns: int,
+    top_k: int,
+    seed: int,
+    *,
+    legal_moves_weight: float = LEGAL_MOVES_WEIGHT,
+    material_score_weight: float = MATERIAL_SCORE_WEIGHT,
+    forward_score_weight: float = FORWARD_SCORE_WEIGHT,
+    forward_material_score_weight: float = FORWARD_MATERIAL_SCORE_WEIGHT,
+    center_control_weight: float = CENTER_CONTROL_WEIGHT,
+    black_legal_moves_weight: float | None = None,
+    black_material_score_weight: float | None = None,
+    black_forward_score_weight: float | None = None,
+    black_forward_material_score_weight: float | None = None,
+    black_center_control_weight: float | None = None,
+    checkmate_weight: float = CHECKMATE_WEIGHT,
+    play_as_white: bool | None = None,
+    ai_level: int = 5,
+    clock_limit: int = 180,
+    clock_increment: int = 2,
+    depth: int | None = None,
+    max_depth: int = MAX_AUTO_SEARCH_DEPTH,
+    top_k_score_threshold: float | None = 3.0,
+) -> tuple[str, str, int, list[str], int, list[float], str, bool]:
+    """Run a remote-opponent game entirely in the native engine."""
+    black_legal_moves_weight = legal_moves_weight if black_legal_moves_weight is None else black_legal_moves_weight
+    black_material_score_weight = material_score_weight if black_material_score_weight is None else black_material_score_weight
+    black_forward_score_weight = forward_score_weight if black_forward_score_weight is None else black_forward_score_weight
+    black_forward_material_score_weight = forward_material_score_weight if black_forward_material_score_weight is None else black_forward_material_score_weight
+    black_center_control_weight = center_control_weight if black_center_control_weight is None else black_center_control_weight
+    native_args = (
+        remote,
+        fen,
+        max_turns,
+        top_k,
+        seed,
+        legal_moves_weight,
+        material_score_weight,
+        forward_score_weight,
+        center_control_weight,
+        black_legal_moves_weight,
+        black_material_score_weight,
+        black_forward_score_weight,
+        black_center_control_weight,
+        checkmate_weight,
+        play_as_white,
+        ai_level,
+        clock_limit,
+        clock_increment,
+        depth,
+        max_depth,
+        top_k_score_threshold,
+    )
+    if forward_material_score_weight != FORWARD_MATERIAL_SCORE_WEIGHT or black_forward_material_score_weight != FORWARD_MATERIAL_SCORE_WEIGHT:
+        try:
+            return chess_engine.play_remote_game_native(
+                *native_args, forward_material_score_weight, black_forward_material_score_weight,
+            )
+        except TypeError as exc:
+            if "positional arguments" not in str(exc):
+                raise
+            return chess_engine.play_remote_game_native(*native_args)
+    return chess_engine.play_remote_game_native(*native_args)
+
+
 def _calculate_total_score(
     mobility_score: int,
     material_score: int,
@@ -1138,6 +1206,28 @@ def _legal_moves_and_tree(board: chess.Board, lastmove: chess.Move | None = None
             total_score, score_breakdown, move_scores, phase, weight_percentages)
 
 
+def _compact_view_data(board: chess.Board, lastmove: chess.Move | None = None) -> tuple:
+    """Render a position for the game viewer without the expensive reply tree.
+
+    The self-play game page only needs the board SVGs, position metrics, and
+    legal-move counts.  The two-ply move tree and per-move scores are used
+    nowhere in the current template, so generating them for every ply just
+    adds latency.
+    """
+    svg, svg_moves = render_board_svgs(board, lastmove=lastmove)
+    (
+        f1, f2, f3, f4, material, center, flank,
+        forward_score, material_score, strategic_control_score,
+        total_score, score_breakdown, phase, weight_percentages,
+    ) = _position_metrics(board)
+    score = len(list(board.legal_moves))
+    return (
+        svg_moves, f1, f2, f3, f4, material, center, flank,
+        forward_score, material_score, strategic_control_score, score,
+        total_score, score_breakdown, phase, weight_percentages, svg,
+    )
+
+
 def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
     """Parse a single game and render every board position as SVG."""
     game = _read_game_at(pgn_text, index)
@@ -1147,7 +1237,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
     headers = game.headers
     board = game.board()
 
-    start_moves_svg, start_legal, start_tree, start_f1, start_f2, start_f3, start_f4, start_material, start_center, start_flank, start_forward_score, start_material_score, start_center_score, start_score, start_total_score, start_score_breakdown, start_scores, start_phase, start_weight_percentages = _legal_moves_and_tree(board)
+    start_moves_svg, start_f1, start_f2, start_f3, start_f4, start_material, start_center, start_flank, start_forward_score, start_material_score, start_center_score, start_score, start_total_score, start_score_breakdown, start_phase, start_weight_percentages, _ = _compact_view_data(board)
     positions: list[GamePosition] = [
         GamePosition(
             ply=0,
@@ -1157,9 +1247,9 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
             fen=board.fen(),
             svg=chess.svg.board(board, size=420),
             svg_moves=start_moves_svg,
-            legal_moves=start_legal,
-            move_tree=start_tree,
-            move_scores=start_scores,
+            legal_moves=[],
+            move_tree={},
+            move_scores={},
             forward_1=start_f1,
             forward_2=start_f2,
             forward_3=start_f3,
@@ -1188,7 +1278,7 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
         san = board.san(move)
         blunder_score = _blunder_score(board, move)
         board.push(move)
-        moves_svg, legal, tree, f1, f2, f3, f4, material, center, flank, forward_score, material_score, center_score, score, total_score, score_breakdown, scores, phase, weight_percentages = _legal_moves_and_tree(board, lastmove=move)
+        moves_svg, f1, f2, f3, f4, material, center, flank, forward_score, material_score, center_score, score, total_score, score_breakdown, phase, weight_percentages, svg = _compact_view_data(board, lastmove=move)
         positions.append(
             GamePosition(
                 ply=ply,
@@ -1196,11 +1286,11 @@ def load_game_detail(pgn_text: str, index: int) -> GameDetail | None:
                 san=san,
                 side=side,
                 fen=board.fen(),
-                svg=chess.svg.board(board, size=420, lastmove=move),
+                svg=svg,
                 svg_moves=moves_svg,
-                legal_moves=legal,
-                move_tree=tree,
-                move_scores=scores,
+                legal_moves=[],
+                move_tree={},
+                move_scores={},
                 forward_1=f1,
                 forward_2=f2,
                 forward_3=f3,

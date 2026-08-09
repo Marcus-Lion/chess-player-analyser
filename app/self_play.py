@@ -148,6 +148,7 @@ from app.games import (
     _piece_square_score,
     _result_summary,
     choose_engine_move,
+    play_remote_game_native,
     play_self_game_native,
 )
 from app.lichess import LichessClient
@@ -553,23 +554,70 @@ def _play_lichess_self_game(
 
     rng = rng or random.Random(config.seed)
     board = _new_game_board(config.fen)
-    play_as_white = _resolve_lichess_play_as_white(config, game_index)
     white_player, white_weights, black_player, black_weights = _player_weight_sets(config, rng)
+    client = LichessClient(token)
+    played_at = datetime.now(timezone.utc).isoformat()
+    start_time = time.perf_counter()
+    try:
+        result, termination, turn, moves, evaluations, turn_durations_seconds, game_id, play_as_white = play_remote_game_native(
+            client,
+            board.fen(),
+            config.max_turns,
+            config.top_k,
+            rng.getrandbits(64),
+            legal_moves_weight=white_weights["legal_moves_weight"],
+            material_score_weight=white_weights["material_score_weight"],
+            forward_score_weight=white_weights["forward_score_weight"],
+            forward_material_score_weight=config.forward_material_score_weight,
+            center_control_weight=0.0,
+            black_legal_moves_weight=black_weights["legal_moves_weight"],
+            black_material_score_weight=black_weights["material_score_weight"],
+            black_forward_score_weight=black_weights["forward_score_weight"],
+            black_forward_material_score_weight=config.forward_material_score_weight,
+            black_center_control_weight=0.0,
+            checkmate_weight=config.checkmate_weight,
+            play_as_white=config.lichess_play_as_white,
+            ai_level=config.lichess_ai_level,
+            clock_limit=config.lichess_clock_limit,
+            clock_increment=config.lichess_clock_increment,
+            depth=config.depth,
+            max_depth=config.max_depth,
+            top_k_score_threshold=config.top_k_score_threshold,
+        )
+    except Exception:
+        traceback.print_exc()
+        result, termination, turn, moves, evaluations, turn_durations_seconds, game_id, play_as_white = (
+            "0-0",
+            "Crash",
+            0,
+            [],
+            0,
+            [],
+            None,
+            config.lichess_play_as_white if config.lichess_play_as_white is not None else True,
+        )
 
+    duration_seconds = time.perf_counter() - start_time
     if play_as_white:
         local_player = white_player
-        local_weights = white_weights
-        remote_name = f"Lichess AI (level {config.lichess_ai_level})"
         white_name = local_player.name if local_player is not None else "Native Engine"
-        black_name = remote_name
-        local_color = chess.WHITE
+        black_name = f"Lichess AI (level {config.lichess_ai_level})"
+        white_weights_header = white_weights
+        black_weights_header = {}
+        white_player_id = local_player.player_id if local_player is not None else None
+        white_player_description = local_player.description if local_player is not None else None
+        black_player_id = None
+        black_player_description = None
     else:
         local_player = black_player
-        local_weights = black_weights
-        remote_name = f"Lichess AI (level {config.lichess_ai_level})"
-        white_name = remote_name
+        white_name = f"Lichess AI (level {config.lichess_ai_level})"
         black_name = local_player.name if local_player is not None else "Native Engine"
-        local_color = chess.BLACK
+        white_weights_header = {}
+        black_weights_header = black_weights
+        white_player_id = None
+        white_player_description = None
+        black_player_id = local_player.player_id if local_player is not None else None
+        black_player_description = local_player.description if local_player is not None else None
 
     game = chess.pgn.Game()
     game.headers["Event"] = "Self-play harness"
@@ -577,148 +625,28 @@ def _play_lichess_self_game(
     game.headers["Round"] = str(game_index)
     game.headers["White"] = white_name
     game.headers["Black"] = black_name
-    game.headers["WhiteWeights"] = json.dumps(white_weights if play_as_white else {}, sort_keys=True)
-    game.headers["BlackWeights"] = json.dumps(black_weights if not play_as_white else {}, sort_keys=True)
+    game.headers["WhiteWeights"] = json.dumps(white_weights_header, sort_keys=True)
+    game.headers["BlackWeights"] = json.dumps(black_weights_header, sort_keys=True)
     game.headers["OpponentMode"] = "lichess"
-    if local_player is not None:
-        if play_as_white:
-            game.headers["WhitePlayerId"] = local_player.player_id
-            game.headers["WhitePlayerDescription"] = local_player.description
-        else:
-            game.headers["BlackPlayerId"] = local_player.player_id
-            game.headers["BlackPlayerDescription"] = local_player.description
-
-    client = LichessClient(token)
-    played_at = datetime.now(timezone.utc).isoformat()
-    event_stream = client.stream_events()
-    challenge = client.challenge_ai(
-        level=config.lichess_ai_level,
-        color="white" if play_as_white else "black",
-        clock_limit=config.lichess_clock_limit,
-        clock_increment=config.lichess_clock_increment,
-        fen=config.fen,
-    )
-    challenge_id = challenge.id or None
-    game_id: str | None = None
-    for event in event_stream:
-        print(f"_play_lichess_self_game: {event}")
-
-        if challenge_id and event.get("type") == "challenge":
-            challenge_event = event.get("challenge")
-            if isinstance(challenge_event, dict) and str(challenge_event.get("id", "")) == challenge_id:
-                continue
-        if event.get("type") == "gameStart":
-            game_id = _extract_game_id(event)
-            if game_id:
-                break
-
-    if not game_id:
-        raise RuntimeError("Lichess did not emit a gameStart event for the AI challenge.")
+    if white_player_id is not None:
+        game.headers["WhitePlayerId"] = white_player_id
+        game.headers["WhitePlayerDescription"] = white_player_description
+    if black_player_id is not None:
+        game.headers["BlackPlayerId"] = black_player_id
+        game.headers["BlackPlayerDescription"] = black_player_description
+    game.headers["Result"] = result if result else "1/2-1/2"
+    game.headers["Termination"] = termination
+    game.headers["LichessGameId"] = game_id or ""
+    game.headers["LichessAiLevel"] = str(config.lichess_ai_level)
+    game.headers["LichessPlayAsWhite"] = "true" if play_as_white else "false"
 
     node = game
-    applied_moves: list[str] = []
-    turn = 0
-    evaluations = 0
-    turn_durations_seconds: list[float] = []
-    start_time = time.perf_counter()
-    last_state: dict[str, object] = {}
-    result = ""
-    termination = ""
-
-    def _play_local_move() -> None:
-        nonlocal node, evaluations, turn
-        if board.is_game_over(claim_draw=True):
-            return
-        if board.turn != local_color:
-            return
-
-        local_depth = config.depth if config.depth is not None else _auto_search_depth(board, max_depth=config.max_depth)
-        local_start = time.perf_counter()
-        eval_counter = [0]
-        move, _score = choose_engine_move(
-            board,
-            rng=rng,
-            top_k=config.top_k,
-            legal_moves_weight=local_weights["legal_moves_weight"],
-            material_score_weight=local_weights["material_score_weight"],
-            forward_score_weight=local_weights["forward_score_weight"],
-            forward_material_score_weight=config.forward_material_score_weight,
-            center_control_weight=0.0,
-            checkmate_weight=config.checkmate_weight,
-            depth=local_depth,
-            top_k_score_threshold=config.top_k_score_threshold,
-            eval_counter=eval_counter,
-        )
-        evaluations += int(eval_counter[0])
-        turn_durations_seconds.append(time.perf_counter() - local_start)
+    for uci in moves:
+        move = chess.Move.from_uci(uci)
         san = board.san(move)
-        client.make_move(game_id, move.uci())
         board.push(move)
         node = node.add_variation(move)
         node.comment = san
-        applied_moves.append(move.uci())
-        turn += 1
-
-    # If we are the side to move, move immediately instead of waiting for the first
-    # streamed update. Lichess still sends the game state afterward, and the
-    # replay sync below will absorb our move into the PGN/history.
-    _play_local_move()
-
-    try:
-        for event in client.stream_game(game_id):
-            if event.get("type") == "gameFull":
-                state = event.get("state")
-                if isinstance(state, dict):
-                    last_state = state
-                    moves = _split_uci_moves(str(state.get("moves", "")))
-                    if len(moves) > len(applied_moves):
-                        for uci in moves[len(applied_moves):]:
-                            move = chess.Move.from_uci(uci)
-                            san = board.san(move)
-                            board.push(move)
-                            node = node.add_variation(move)
-                            node.comment = san
-                            applied_moves.append(uci)
-                            turn += 1
-                            turn_durations_seconds.append(0.0)
-                    if state.get("status") and str(state.get("status")) != "started":
-                        break
-            elif event.get("type") == "gameState":
-                last_state = event
-                moves = _split_uci_moves(str(event.get("moves", "")))
-                if len(moves) > len(applied_moves):
-                    for uci in moves[len(applied_moves):]:
-                        move = chess.Move.from_uci(uci)
-                        san = board.san(move)
-                        board.push(move)
-                        node = node.add_variation(move)
-                        node.comment = san
-                        applied_moves.append(uci)
-                        turn += 1
-                        turn_durations_seconds.append(0.0)
-                status = str(event.get("status", "started"))
-                if status != "started":
-                    break
-
-            if board.is_game_over(claim_draw=True):
-                break
-
-            _play_local_move()
-
-        result = _lichess_result_from_state(last_state if isinstance(last_state, dict) else {}, board)
-        termination = _lichess_termination_from_state(last_state if isinstance(last_state, dict) else {}, board)
-    except Exception:
-        traceback.print_exc()
-        result, termination = "0-0", "Crash"
-
-    duration_seconds = time.perf_counter() - start_time
-    if not result or result == "*":
-        result = "1/2-1/2"
-    game.headers["Result"] = result
-    game.headers["Termination"] = termination
-    game.headers["LichessGameId"] = game_id
-    game.headers["LichessAiLevel"] = str(config.lichess_ai_level)
-    game.headers["LichessPlayAsWhite"] = "random" if config.lichess_play_as_white is None else ("true" if play_as_white else "false")
 
     exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=True)
     pgn_text = game.accept(exporter)
@@ -736,16 +664,16 @@ def _play_lichess_self_game(
         loser=summary["loser"],
         white_weights=white_weights if play_as_white else None,
         black_weights=black_weights if not play_as_white else None,
-        white_player_id=white_player.player_id if play_as_white and white_player is not None else None,
+        white_player_id=white_player_id,
         white_player_name=white_name,
-        white_player_description=white_player.description if play_as_white and white_player is not None else None,
-        black_player_id=black_player.player_id if (not play_as_white) and black_player is not None else None,
+        white_player_description=white_player_description,
+        black_player_id=black_player_id,
         black_player_name=black_name,
-        black_player_description=black_player.description if (not play_as_white) and black_player is not None else None,
+        black_player_description=black_player_description,
         opponent_mode="lichess",
         lichess_game_id=game_id,
         lichess_ai_level=config.lichess_ai_level,
-        lichess_play_as_white=config.lichess_play_as_white,
+        lichess_play_as_white=play_as_white,
         duration_seconds=duration_seconds,
         evaluations=evaluations,
         evaluations_per_move=(evaluations / turn) if turn else 0.0,
@@ -2377,9 +2305,9 @@ def main(argv: list[str] | None = None) -> int:
         white = game.white_weights or {}
         black = game.black_weights or {}
         print(
-            f"Game {game.index}: {game.result} after {game.turns} turns ({game.termination}); "
+            f"Game {game.index}: {game.result} after {game.turns:,} turns ({game.termination}); "
             f"final score {game.final_score}; "
-            f"took {game.duration_seconds:.2f}s, {game.evaluations_per_move:.0f} evals/move; "
+            f"took {game.duration_seconds:.2f}s, {game.evaluations_per_move:,.0f} evals/move; "
             f"W[lm={white.get('legal_moves_weight', 0):.6f}, mat={white.get('material_score_weight', 0):.6f}, fwd={white.get('forward_score_weight', 0):.6f}] "
             f"B[lm={black.get('legal_moves_weight', 0):.6f}, mat={black.get('material_score_weight', 0):.6f}, fwd={black.get('forward_score_weight', 0):.6f}]"
         )

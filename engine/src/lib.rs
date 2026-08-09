@@ -17,6 +17,8 @@ use std::sync::{Mutex, OnceLock};
 use pyo3::exceptions::PyValueError;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+#[cfg(feature = "python")]
+use pyo3::types::PyDict;
 
 #[cfg(feature = "python")]
 use rand::rngs::StdRng;
@@ -111,6 +113,79 @@ fn auto_depth(pos: &Chess, max_depth: i32) -> i32 {
         .round().clamp(min_depth as f64, max_depth as f64) as i32
 }
 
+#[cfg(feature = "python")]
+fn choose_weighted_move(
+    pos: &Chess,
+    rng: &mut StdRng,
+    repetition_counts: &HashMap<u64, u32>,
+    weights: Weights,
+    depth: i32,
+    top_k: i32,
+    top_k_score_threshold: Option<f64>,
+) -> PyResult<(shakmaty::Move, f64, u64)> {
+    let depth = depth.max(1);
+    let mover_advantage = mover_material_advantage(pos);
+    let mut state = SearchState::new(weights);
+    let mut scored: Vec<(f64, shakmaty::Move)> = Vec::new();
+    let mut immediate_stalemates: Vec<shakmaty::Move> = Vec::new();
+
+    for m in root_moves(pos) {
+        let mut child = pos.clone();
+        child.play_unchecked(m);
+        if child.is_stalemate() {
+            immediate_stalemates.push(m);
+        }
+        let mut value = -negamax(
+            &child,
+            depth - 1,
+            f64::NEG_INFINITY,
+            f64::INFINITY,
+            &mut state,
+        );
+        let mut candidate_counts = repetition_counts.clone();
+        let child_hash = zobrist(&child);
+        *candidate_counts.entry(child_hash).or_insert(0) += 1;
+        if candidate_counts.get(&child_hash).copied().unwrap_or(0) >= 3
+            || can_claim_threefold(&child, &candidate_counts)
+        {
+            value -= if mover_advantage > 0 {
+                REPETITION_PENALTY
+            } else if mover_advantage < 0 {
+                -REPETITION_PENALTY
+            } else {
+                0.0
+            };
+        }
+        scored.push((value, m));
+    }
+
+    if scored.is_empty() {
+        return Err(PyValueError::new_err("No legal moves available"));
+    }
+
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    if scored[0].0 < 0.0 && !immediate_stalemates.is_empty() {
+        scored.retain(|(_, m)| immediate_stalemates.contains(m));
+    }
+
+    let top_n = top_k.max(1).min(scored.len() as i32) as usize;
+    let candidate_count = match top_k_score_threshold {
+        Some(threshold) => {
+            let best_score = scored[0].0;
+            scored[..top_n]
+                .iter()
+                .take_while(|(score, _)| best_score - *score <= threshold.max(0.0))
+                .count()
+                .max(1)
+        }
+        None => top_n,
+    };
+
+    let chosen_index = rng.random_range(0..candidate_count);
+    let (score, chosen) = scored[chosen_index];
+    Ok((chosen, score, state.evals))
+}
+
 /// Play an entire self-play game without crossing the Python boundary for
 /// individual plies. The returned move list is UCI; Python only uses it to
 /// build the presentation PGN after the native loop has finished.
@@ -184,33 +259,19 @@ fn play_self_game_native(
                 forward: black_forward_score_weight, forward_material: black_forward_material_score_weight,
                 center: black_center_control_weight, checkmate: checkmate_weight }
         };
-        let mut state = SearchState::new(weights);
-        let mut scored = Vec::new();
-        let mut immediate_stalemates = Vec::new();
-        let mover_advantage = mover_material_advantage(&pos);
-        for m in root_moves(&pos) {
-            let mut child = pos.clone(); child.play_unchecked(m);
-            if child.is_stalemate() { immediate_stalemates.push(m); }
-            let mut value = -negamax(&child, move_depth.max(1) - 1, f64::NEG_INFINITY, f64::INFINITY, &mut state);
-            let mut candidate_counts = repetitions.clone();
-            let child_hash = zobrist(&child);
-            *candidate_counts.entry(child_hash).or_insert(0) += 1;
-            if candidate_counts.get(&child_hash).copied().unwrap_or(0) >= 3 || can_claim_threefold(&child, &candidate_counts) {
-                value -= if mover_advantage > 0 { REPETITION_PENALTY } else if mover_advantage < 0 { -REPETITION_PENALTY } else { 0.0 };
-            }
-            scored.push((value, m));
-        }
-        if scored.is_empty() { break; }
-        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-        if scored[0].0 < 0.0 && !immediate_stalemates.is_empty() { scored.retain(|(_, m)| immediate_stalemates.contains(m)); }
-        let top_n = (top_k.max(1) as usize).min(scored.len());
-        let count = match top_k_score_threshold { Some(t) => scored[..top_n].iter().take_while(|(s, _)| scored[0].0 - *s <= t.max(0.0)).count().max(1), None => top_n };
-        let chosen_index = rng.random_range(0..count);
-        let chosen = scored[chosen_index].1;
+        let (chosen, _score, search_evals) = choose_weighted_move(
+            &pos,
+            &mut rng,
+            &repetitions,
+            weights,
+            move_depth,
+            top_k,
+            top_k_score_threshold,
+        )?;
+        evals += search_evals;
         moves.push(chosen.to_uci(CastlingMode::Standard).to_string());
         pos.play_unchecked(chosen);
         *repetitions.entry(zobrist(&pos)).or_insert(0) += 1;
-        evals += state.evals;
         turn_durations.push(turn_started.elapsed().as_secs_f64());
     }
     if result.is_empty() {
@@ -223,6 +284,244 @@ fn play_self_game_native(
         else { result = "1/2-1/2".into(); termination = "max turns".into(); }
     }
     Ok((result, termination, moves.len() as u32, moves, evals, turn_durations))
+}
+
+/// Play a remote-opponent game in Rust while Python handles only the remote
+/// transport object. The remote adapter must implement:
+/// - `start_ai_game(level=..., color=..., clock_limit=..., clock_increment=..., variant=..., fen=...) -> game_id`
+/// - `stream_game(game_id) -> iterator of JSON-like dicts`
+/// - `make_move(game_id, move_uci) -> response`
+#[pyfunction]
+#[pyo3(signature = (
+    remote,
+    fen,
+    max_turns,
+    top_k,
+    seed,
+    legal_moves_weight,
+    material_score_weight,
+    forward_score_weight,
+    center_control_weight,
+    black_legal_moves_weight,
+    black_material_score_weight,
+    black_forward_score_weight,
+    black_center_control_weight,
+    checkmate_weight,
+    play_as_white=None,
+    ai_level=5,
+    clock_limit=180,
+    clock_increment=2,
+    depth=None,
+    max_depth=2,
+    top_k_score_threshold=Some(3.0),
+    forward_material_score_weight=0.25,
+    black_forward_material_score_weight=0.25,
+))]
+#[allow(clippy::too_many_arguments)]
+#[cfg(feature = "python")]
+fn play_remote_game_native(
+    remote: &Bound<'_, PyAny>,
+    fen: &str,
+    max_turns: i32,
+    top_k: i32,
+    seed: u64,
+    legal_moves_weight: f64,
+    material_score_weight: f64,
+    forward_score_weight: f64,
+    center_control_weight: f64,
+    black_legal_moves_weight: f64,
+    black_material_score_weight: f64,
+    black_forward_score_weight: f64,
+    black_center_control_weight: f64,
+    checkmate_weight: f64,
+    play_as_white: Option<bool>,
+    ai_level: i32,
+    clock_limit: i32,
+    clock_increment: i32,
+    depth: Option<i32>,
+    max_depth: i32,
+    top_k_score_threshold: Option<f64>,
+    forward_material_score_weight: f64,
+    black_forward_material_score_weight: f64,
+) -> PyResult<(String, String, u32, Vec<String>, u64, Vec<f64>, String, bool)> {
+    let mut color_rng = StdRng::seed_from_u64(seed ^ 0xA5A5_A5A5_5A5A_5A5A);
+    let local_plays_white = play_as_white.unwrap_or_else(|| color_rng.random());
+    let color = if local_plays_white { "white" } else { "black" };
+
+    let kwargs = PyDict::new(remote.py());
+    kwargs.set_item("level", ai_level)?;
+    kwargs.set_item("color", color)?;
+    kwargs.set_item("clock_limit", clock_limit)?;
+    kwargs.set_item("clock_increment", clock_increment)?;
+    if !fen.is_empty() {
+        kwargs.set_item("variant", "fromPosition")?;
+    }
+    kwargs.set_item("fen", if fen.is_empty() { None::<&str> } else { Some(fen) })?;
+    let game_id: String = remote
+        .call_method("start_ai_game", (), Some(&kwargs))?
+        .extract()?;
+
+    let mut pos = parse_position(fen)?;
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut repetitions = HashMap::new();
+    repetitions.insert(zobrist(&pos), 1);
+    let mut moves = Vec::new();
+    let mut turn_durations = Vec::new();
+    let mut evals = 0;
+    let mut result = String::new();
+    let mut termination = String::new();
+
+    let stream = remote.call_method1("stream_game", (game_id.as_str(),))?;
+    let iter = stream.try_iter()?;
+
+    for event in iter {
+        let event = event?;
+        let event_dict = event.downcast::<PyDict>()?;
+        let event_type = event_dict
+            .get_item("type")?
+            .and_then(|value| value.extract::<String>().ok())
+            .unwrap_or_default();
+
+        if event_type == "gameFull" {
+            if let Some(state_any) = event_dict.get_item("state")? {
+                let state = state_any.downcast::<PyDict>()?;
+                if let Some(moves_any) = state.get_item("moves")? {
+                    let moves_str = moves_any.extract::<String>().unwrap_or_default();
+                    let remote_moves: Vec<String> = moves_str
+                        .split_whitespace()
+                        .map(str::to_owned)
+                        .collect();
+                    if remote_moves.len() > moves.len() {
+                        for uci in remote_moves[moves.len()..].iter() {
+                            let parsed: shakmaty::uci::UciMove = uci
+                                .parse()
+                                .map_err(|e| PyValueError::new_err(format!("invalid uci {uci:?}: {e}")))?;
+                            let mv = parsed
+                                .to_move(&pos)
+                                .map_err(|e| PyValueError::new_err(format!("illegal move {uci:?}: {e}")))?;
+                            pos.play_unchecked(mv);
+                            moves.push(uci.clone());
+                            *repetitions.entry(zobrist(&pos)).or_insert(0) += 1;
+                            turn_durations.push(0.0);
+                        }
+                    }
+                }
+                if let Some(status_any) = state.get_item("status")? {
+                    let status = status_any.extract::<String>().unwrap_or_default();
+                    if status != "started" {
+                        break;
+                    }
+                }
+            }
+        } else if event_type == "gameState" {
+            if let Some(moves_any) = event_dict.get_item("moves")? {
+                let moves_str = moves_any.extract::<String>().unwrap_or_default();
+                let remote_moves: Vec<String> = moves_str
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect();
+                if remote_moves.len() > moves.len() {
+                    for uci in remote_moves[moves.len()..].iter() {
+                        let parsed: shakmaty::uci::UciMove = uci
+                            .parse()
+                            .map_err(|e| PyValueError::new_err(format!("invalid uci {uci:?}: {e}")))?;
+                        let mv = parsed
+                            .to_move(&pos)
+                            .map_err(|e| PyValueError::new_err(format!("illegal move {uci:?}: {e}")))?;
+                        pos.play_unchecked(mv);
+                        moves.push(uci.clone());
+                        *repetitions.entry(zobrist(&pos)).or_insert(0) += 1;
+                        turn_durations.push(0.0);
+                    }
+                }
+            }
+            if let Some(status_any) = event_dict.get_item("status")? {
+                let status = status_any.extract::<String>().unwrap_or_default();
+                if status != "started" {
+                    break;
+                }
+            }
+        }
+
+        if pos.is_game_over() {
+            break;
+        }
+
+        if moves.len() as i32 >= max_turns.max(0) {
+            break;
+        }
+
+        if pos.turn() != if local_plays_white { shakmaty::Color::White } else { shakmaty::Color::Black } {
+            continue;
+        }
+
+        let move_depth = depth.unwrap_or_else(|| auto_depth(&pos, max_depth));
+        let weights = if pos.turn() == shakmaty::Color::White {
+            Weights {
+                legal_moves: legal_moves_weight,
+                material: material_score_weight,
+                forward: forward_score_weight,
+                forward_material: forward_material_score_weight,
+                center: center_control_weight,
+                checkmate: checkmate_weight,
+            }
+        } else {
+            Weights {
+                legal_moves: black_legal_moves_weight,
+                material: black_material_score_weight,
+                forward: black_forward_score_weight,
+                forward_material: black_forward_material_score_weight,
+                center: black_center_control_weight,
+                checkmate: checkmate_weight,
+            }
+        };
+        let turn_started = Instant::now();
+        let (chosen, _score, search_evals) = choose_weighted_move(
+            &pos,
+            &mut rng,
+            &repetitions,
+            weights,
+            move_depth,
+            top_k,
+            top_k_score_threshold,
+        )?;
+        evals += search_evals;
+        let uci = chosen.to_uci(CastlingMode::Standard).to_string();
+        remote.call_method1("make_move", (game_id.as_str(), uci.as_str()))?;
+        pos.play_unchecked(chosen);
+        moves.push(uci);
+        *repetitions.entry(zobrist(&pos)).or_insert(0) += 1;
+        turn_durations.push(turn_started.elapsed().as_secs_f64());
+    }
+
+    if result.is_empty() {
+        if pos.is_checkmate() {
+            result = if pos.turn() == shakmaty::Color::Black { "1-0" } else { "0-1" }.into();
+            termination = "checkmate".into();
+        } else if pos.is_stalemate() {
+            result = "1/2-1/2".into();
+            termination = "stalemate".into();
+        } else if pos.is_insufficient_material() {
+            result = "1/2-1/2".into();
+            termination = "insufficient material".into();
+        } else if repetitions.get(&zobrist(&pos)).copied().unwrap_or(0) >= 5 {
+            result = "1/2-1/2".into();
+            termination = "fivefold repetition".into();
+        } else if pos.halfmoves() >= 150 {
+            result = "1/2-1/2".into();
+            termination = "75-move rule".into();
+        } else if repetitions.get(&zobrist(&pos)).copied().unwrap_or(0) >= 3
+            || can_claim_threefold(&pos, &repetitions)
+        {
+            result = "1/2-1/2".into();
+            termination = "3-fold-rep".into();
+        } else {
+            result = "1/2-1/2".into();
+            termination = "max turns".into();
+        }
+    }
+
+    Ok((result, termination, moves.len() as u32, moves, evals, turn_durations, game_id, local_plays_white))
 }
 
 /// Pick a move via negamax search -- the Rust equivalent of
@@ -536,6 +835,7 @@ fn chess_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(choose_engine_move, m)?)?;
     m.add_function(wrap_pyfunction!(choose_engine_move_from_history, m)?)?;
     m.add_function(wrap_pyfunction!(play_self_game_native, m)?)?;
+    m.add_function(wrap_pyfunction!(play_remote_game_native, m)?)?;
     m.add_function(wrap_pyfunction!(zobrist_fen, m)?)?;
     m.add_function(wrap_pyfunction!(evaluate_position, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_forward_4, m)?)?;

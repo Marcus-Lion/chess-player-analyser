@@ -80,12 +80,12 @@
           {% for player in players %}
             <tr>
               <td data-value="{{ player.name|e }}"><a href="/self-play/players/{{ player.player_id }}">{{ player.name }}</a></td>
-              <td data-value="{{ player.games }}">{{ player.games }}</td>
-              <td data-value="{{ player.wins }}">{{ player.wins }}</td>
-              <td data-value="{{ player.draws }}">{{ player.draws }}</td>
-              <td data-value="{{ player.losses }}">{{ player.losses }}</td>
+              <td data-value="{{ player.games }}">{{ "{:,}".format(player.games) }}</td>
+              <td data-value="{{ player.wins }}">{{ "{:,}".format(player.wins) }}</td>
+              <td data-value="{{ player.draws }}">{{ "{:,}".format(player.draws) }}</td>
+              <td data-value="{{ player.losses }}">{{ "{:,}".format(player.losses) }}</td>
               <td data-value="{{ player.score_pct }}">{{ "%.1f"|format(player.score_pct * 100) }}%</td>
-              <td data-value="{{ player.elo }}">{{ "%.0f"|format(player.elo) }}</td>
+              <td data-value="{{ player.elo }}">{{ "{:,.0f}".format(player.elo) }}</td>
             <td class="weights" data-value="lm={{ "%.2f"|format(player.legal_moves_weight) }}, mat={{ "%.2f"|format(player.material_score_weight) }}, fwd={{ "%.2f"|format(player.forward_score_weight) }}">
                 lm={{ "%.2f"|format(player.legal_moves_weight) }},
                 mat={{ "%.2f"|format(player.material_score_weight) }},

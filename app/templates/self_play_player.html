@@ -26,14 +26,14 @@
 
   <div class="card">
     <div class="grid">
-      <div class="metric">Games <b>{{ overview.games }}</b></div>
-      <div class="metric">Wins <b>{{ overview.wins }}</b></div>
-      <div class="metric">Draws <b>{{ overview.draws }}</b></div>
-      <div class="metric">Losses <b>{{ overview.losses }}</b></div>
+      <div class="metric">Games <b>{{ "{:,}".format(overview.games) }}</b></div>
+      <div class="metric">Wins <b>{{ "{:,}".format(overview.wins) }}</b></div>
+      <div class="metric">Draws <b>{{ "{:,}".format(overview.draws) }}</b></div>
+      <div class="metric">Losses <b>{{ "{:,}".format(overview.losses) }}</b></div>
       <div class="metric">Score <b>{{ "%.1f"|format(overview.score_pct * 100) }}%</b></div>
-      <div class="metric">Elo <b>{{ "%.0f"|format(overview.elo) }}</b></div>
-      <div class="metric">White games <b>{{ overview.white_games }}</b></div>
-      <div class="metric">Black games <b>{{ overview.black_games }}</b></div>
+      <div class="metric">Elo <b>{{ "{:,.0f}".format(overview.elo) }}</b></div>
+      <div class="metric">White games <b>{{ "{:,}".format(overview.white_games) }}</b></div>
+      <div class="metric">Black games <b>{{ "{:,}".format(overview.black_games) }}</b></div>
     </div>
   </div>
 
@@ -81,7 +81,7 @@
                 <td>{{ game.outcome }}</td>
                 <td>{{ "%.1f"|format(game.score * 100) }}%</td>
                 <td>{{ game.termination }}</td>
-                <td>{{ game.turns }}</td>
+                <td>{{ "{:,}".format(game.turns) }}</td>
                 <td>{{ "%.2f"|format(game.final_score) }}</td>
                 <td><a href="/self-play/view/{{ game.run_id }}/{{ game.index }}">Open</a></td>
               </tr>

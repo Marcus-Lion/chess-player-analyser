@@ -259,7 +259,7 @@
       <h2>Most recent run</h2>
       {% for game in recent_games %}
         <div class="metric">
-          <b><a href="/self-play/view/{{ game.run_id }}/{{ game.index }}">Game {{ game.index }} · {{ game.result }} · {{ game.turns }} turns</a></b>
+          <b><a href="/self-play/view/{{ game.run_id }}/{{ game.index }}">Game {{ game.index }} · {{ game.result }} · {{ "{:,}".format(game.turns) }} turns</a></b>
           <div>Outcome: {{ game.outcome }}{% if game.winner %} · Winner: {{ game.winner }}{% endif %}{% if game.loser %} · Loser: {{ game.loser }}{% endif %}</div>
           <div>Players: {% if game.white_player_id %}<a href="/self-play/players/{{ game.white_player_id }}">{{ game.white_player_name }}</a>{% else %}{{ game.white_player_name }}{% endif %} vs {% if game.black_player_id %}<a href="/self-play/players/{{ game.black_player_id }}">{{ game.black_player_name }}</a>{% else %}{{ game.black_player_name }}{% endif %}</div>
           {% if game.opponent_mode and game.opponent_mode != 'native' %}
@@ -267,7 +267,7 @@
           {% endif %}
           <div>Termination: {{ game.termination_display or game.termination }}</div>
           <div>Final score: {{ "%.2f"|format(game.final_score) }}</div>
-          <div>Time to play: {{ "%.2f"|format(game.duration_seconds) }}s · Evaluations: {{ game.evaluations }} total, {{ "%.0f"|format(game.evaluations_per_move) }} per move</div>
+          <div>Time to play: {{ "%.2f"|format(game.duration_seconds) }}s · Evaluations: {{ "{:,}".format(game.evaluations) }} total, {{ "{:,.0f}".format(game.evaluations_per_move) }} per move</div>
           {% if game.white_weights and game.black_weights %}
             <table class="weights-table">
               <thead>
@@ -308,7 +308,7 @@
       <div class="notice">{{ notice }}</div>
     {% endif %}
     {% if elo %}
-      <p class="muted" style="margin-top: 0;">Estimated Elo from all saved results: White {{ "%.0f"|format(elo.white_elo) }}, Black {{ "%.0f"|format(elo.black_elo) }}, gap {{ "%.0f"|format(elo.elo_diff) }}.</p>
+      <p class="muted" style="margin-top: 0;">Estimated Elo from all saved results: White {{ "{:,.0f}".format(elo.white_elo) }}, Black {{ "{:,.0f}".format(elo.black_elo) }}, gap {{ "{:,.0f}".format(elo.elo_diff) }}.</p>
     {% endif %}
     <p><a href="/self-play/analysis">Analyse results →</a></p>
     <p><a href="/self-play/terminations">View terminations →</a></p>
@@ -374,13 +374,13 @@
               <td>{% if row.white_player_id %}<a href="/self-play/players/{{ row.white_player_id }}">{{ row.white_player_name or "" }}</a>{% else %}{{ row.white_player_name or "" }}{% endif %}</td>
               <td>{% if row.black_player_id %}<a href="/self-play/players/{{ row.black_player_id }}">{{ row.black_player_name or "" }}</a>{% else %}{{ row.black_player_name or "" }}{% endif %}</td>
               <td><a href="/self-play/view/{{ row.run_id }}/{{ row.index }}">{{ row.result }}</a></td>
-              <td>{{ "%.0f"|format(row.get('WhiteElo', 0) or 0) }}</td>
-              <td>{{ "%.0f"|format(row.get('BlackElo', 0) or 0) }}</td>
-              <td>{{ row.turns }}</td>
+              <td>{{ "{:,.0f}".format(row.get('WhiteElo', 0) or 0) }}</td>
+              <td>{{ "{:,.0f}".format(row.get('BlackElo', 0) or 0) }}</td>
+              <td>{{ "{:,}".format(row.turns) }}</td>
               <td><a href="/self-play/terminations/{{ row.termination|urlencode }}">{{ row.termination_display or row.termination }}</a></td>
               <td>{{ "%.2f"|format(row.final_score) }}</td>
               <td>{{ "%.2f"|format(row.duration_seconds) }}s</td>
-              <td>{{ "%.0f"|format(row.evaluations_per_move) }}</td>
+              <td>{{ "{:,.0f}".format(row.evaluations_per_move) }}</td>
             </tr>
           {% endfor %}
         </tbody>

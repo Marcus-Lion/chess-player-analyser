@@ -21,10 +21,10 @@
   <p><a href="/games?username={{ username }}">Browse all games and step through positions →</a></p>
 
   <div class="grid">
-    <div class="metric">Games <b>{{ summary.games }}</b></div>
+    <div class="metric">Games <b>{{ "{:,}".format(summary.games) }}</b></div>
     <div class="metric">Score <b>{{ "%.1f"|format(summary.score_pct * 100) }}%</b></div>
-    <div class="metric">Avg opponent <b>{{ "%.0f"|format(summary.avg_opponent) }}</b></div>
-    <div class="metric">Performance <b>{{ "%.0f"|format(summary.performance_rating) }}</b></div>
+    <div class="metric">Avg opponent <b>{{ "{:,.0f}".format(summary.avg_opponent) }}</b></div>
+    <div class="metric">Performance <b>{{ "{:,.0f}".format(summary.performance_rating) }}</b></div>
   </div>
 
   {% if prepost_rows %}
@@ -34,10 +34,10 @@
     {% for row in prepost_rows %}
       <tr>
         <td>{{ row.period }}</td>
-        <td>{{ row.games }}</td>
+        <td>{{ "{:,}".format(row.games) }}</td>
         <td>{{ "%.1f"|format(row.score_pct * 100) }}%</td>
-        <td>{{ "%.0f"|format(row.avg_opponent) }}</td>
-        <td>{{ "%.0f"|format(row.performance_rating) }}</td>
+        <td>{{ "{:,.0f}".format(row.avg_opponent) }}</td>
+        <td>{{ "{:,.0f}".format(row.performance_rating) }}</td>
       </tr>
     {% endfor %}
   </table>

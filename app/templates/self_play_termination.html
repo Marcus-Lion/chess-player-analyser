@@ -24,8 +24,8 @@
 
   <div class="card">
     <div class="grid">
-      <div class="metric">Games <b>{{ overview.games }}</b></div>
-      <div class="metric">Avg turns <b>{{ "%.0f"|format(overview.avg_turns) }}</b></div>
+      <div class="metric">Games <b>{{ "{:,}".format(overview.games) }}</b></div>
+      <div class="metric">Avg turns <b>{{ "{:,.0f}".format(overview.avg_turns) }}</b></div>
       <div class="metric">White wins <b>{{ "%.1f"|format(overview.white_win_pct * 100) }}%</b></div>
       <div class="metric">Draws <b>{{ "%.1f"|format(overview.draw_pct * 100) }}%</b></div>
       <div class="metric">Black wins <b>{{ "%.1f"|format(overview.black_win_pct * 100) }}%</b></div>
@@ -56,7 +56,7 @@
                 <td>{% if game.white_player_id %}<a href="/self-play/players/{{ game.white_player_id }}">{{ game.white_player_name }}</a>{% else %}{{ game.white_player_name }}{% endif %}</td>
                 <td>{% if game.black_player_id %}<a href="/self-play/players/{{ game.black_player_id }}">{{ game.black_player_name }}</a>{% else %}{{ game.black_player_name }}{% endif %}</td>
                 <td><a href="/self-play/view/{{ game.run_id }}/{{ game.index }}">{{ game.result }}</a></td>
-                <td>{{ game.turns }}</td>
+                <td>{{ "{:,}".format(game.turns) }}</td>
                 <td>{{ "%.2f"|format(game.final_score) }}</td>
                 <td>{{ game.outcome }}</td>
                 <td><a href="/self-play/view/{{ game.run_id }}/{{ game.index }}">Open</a></td>

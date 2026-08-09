@@ -895,6 +895,7 @@ def self_play_start(
     lichess_clock_limit: int = Form(180),
     lichess_clock_increment: int = Form(2),
     lichess_play_as_white: str | None = Form("random"),
+    lichess_api_token: str | None = Form(None),
 ):
     fen = fen.strip() if fen and fen.strip() else None
     try:
@@ -914,7 +915,8 @@ def self_play_start(
     mode = opponent_mode.strip().lower() if opponent_mode else "native"
     if mode not in {"native", "lichess"}:
         raise HTTPException(status_code=400, detail="Unsupported self-play opponent mode.")
-    if mode == "lichess" and not (os.getenv("LICHESS_API_TOKEN") or os.getenv("LICHESS_TOKEN")):
+    submitted_token = lichess_api_token.strip() if lichess_api_token and lichess_api_token.strip() else None
+    if mode == "lichess" and not (os.getenv("LICHESS_API_TOKEN") or os.getenv("LICHESS_TOKEN") or submitted_token):
         raise HTTPException(status_code=400, detail="LICHESS_API_TOKEN is required for Lichess AI self-play.")
     play_as_white_raw = str(lichess_play_as_white).strip().lower() if lichess_play_as_white is not None else "random"
     if play_as_white_raw in {"", "random", "auto"}:
@@ -951,6 +953,7 @@ def self_play_start(
         lichess_clock_limit=max(1, lichess_clock_limit),
         lichess_clock_increment=max(0, lichess_clock_increment),
         lichess_play_as_white=play_as_white,
+        lichess_api_token=submitted_token,
     )
     return JSONResponse(start_self_play_job(config))
 

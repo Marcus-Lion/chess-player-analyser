@@ -138,6 +138,42 @@
       color: #065f46;
       margin: 0 0 1rem 0;
     }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(15, 23, 42, 0.48);
+      z-index: 1000;
+      padding: 1rem;
+    }
+    .modal {
+      width: min(32rem, 100%);
+      background: #fff;
+      border-radius: 14px;
+      border: 1px solid #cbd5e1;
+      box-shadow: 0 20px 60px rgba(15, 23, 42, 0.22);
+      padding: 1rem 1.1rem;
+    }
+    .modal h2 {
+      margin: 0 0 .5rem 0;
+      font-size: 1.1rem;
+    }
+    .modal p {
+      margin: .25rem 0 .75rem 0;
+    }
+    .modal input {
+      width: 100%;
+      box-sizing: border-box;
+      margin: 0 0 .75rem 0;
+    }
+    .modal-actions {
+      display: flex;
+      gap: .5rem;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
     .card > form > .grid input,
     .card > form > .grid select {
       width: 9.5rem;
@@ -163,6 +199,7 @@
 
   <div class="card">
     <form method="post" action="/self-play">
+      <input type="hidden" name="lichess_api_token" value="" />
       <div class="grid">
         <div>
           <label>Games <span class="help-icon" title="How many self-play games to run in this request.">?</span></label>
@@ -208,6 +245,7 @@
           </select>
           {% if not lichess_token_available %}
             <p class="muted" style="margin: .35rem 0 0 0;">Lichess AI is unavailable until <code>LICHESS_API_TOKEN</code> or <code>LICHESS_TOKEN</code> is set.</p>
+            <p class="muted" style="margin: .25rem 0 0 0;">You can also save a token in this browser.</p>
           {% endif %}
         </div>
         <div>
@@ -411,7 +449,19 @@
     <p class="muted">No self-play results saved yet.</p>
   {% endif %}
   </div>
-  
+
+  <div id="lichess_token_modal" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="lichess_token_title">
+      <h2 id="lichess_token_title">Enter Lichess API token</h2>
+      <p class="muted">This server does not have <code>LICHESS_API_TOKEN</code> set. Enter a token for this browser and it will be saved in local storage.</p>
+      <input id="lichess_token_input" type="password" autocomplete="off" spellcheck="false" placeholder="Paste token here" />
+      <div class="modal-actions">
+        <button type="button" id="lichess_token_save">Save token</button>
+        <button type="button" id="lichess_token_skip">Use native only</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const form = document.querySelector('form[action="/self-play"]');
     const progressWrap = document.getElementById('progress_wrap');
@@ -420,6 +470,14 @@
     const progressLogLink = document.getElementById('progress_log_link');
     const submitButton = form.querySelector('button[type="submit"]');
     const gamesInput = form.querySelector('input[name="games"]');
+    const lichessTokenAvailable = {{ 'true' if lichess_token_available else 'false' }};
+    const lichessTokenKey = 'selfPlayLichessApiToken';
+    const lichessTokenInput = form.querySelector('input[name="lichess_api_token"]');
+    const opponentModeSelect = form.querySelector('select[name="opponent_mode"]');
+    const lichessTokenModal = document.getElementById('lichess_token_modal');
+    const lichessTokenModalInput = document.getElementById('lichess_token_input');
+    const lichessTokenSave = document.getElementById('lichess_token_save');
+    const lichessTokenSkip = document.getElementById('lichess_token_skip');
     const activeJobKey = 'selfPlayActiveJobId';
     const formStateKey = 'selfPlayHarnessFormState';
     // If a job we're tracking makes no forward progress for this long it's an
@@ -455,12 +513,73 @@
     function saveFormState() {
       const state = {};
       Array.from(form.elements).forEach((el) => {
-        if (!el.name || el.disabled || el.type === 'submit' || el.type === 'button' || el.type === 'fieldset') {
+        if (!el.name || el.disabled || el.type === 'hidden' || el.type === 'submit' || el.type === 'button' || el.type === 'fieldset') {
           return;
         }
         state[el.name] = el.value;
       });
       localStorage.setItem(formStateKey, JSON.stringify(state));
+    }
+
+    function readStoredLichessToken() {
+      try {
+        const raw = localStorage.getItem(lichessTokenKey);
+        return raw && raw.trim() ? raw.trim() : '';
+      } catch {
+        return '';
+      }
+    }
+
+    function writeStoredLichessToken(token) {
+      try {
+        const trimmed = token.trim();
+        if (trimmed) {
+          localStorage.setItem(lichessTokenKey, trimmed);
+        } else {
+          localStorage.removeItem(lichessTokenKey);
+        }
+      } catch {
+        // Ignore storage failures and fall back to the current page state.
+      }
+    }
+
+    function updateHiddenLichessToken() {
+      if (lichessTokenAvailable) {
+        lichessTokenInput.value = '';
+        return;
+      }
+      lichessTokenInput.value = readStoredLichessToken();
+    }
+
+    let awaitingLichessToken = false;
+
+    function showLichessTokenModal() {
+      if (lichessTokenAvailable) {
+        return;
+      }
+      lichessTokenModal.style.display = 'flex';
+      lichessTokenModal.setAttribute('aria-hidden', 'false');
+      lichessTokenModalInput.value = readStoredLichessToken();
+      window.setTimeout(() => lichessTokenModalInput.focus(), 0);
+    }
+
+    function hideLichessTokenModal() {
+      lichessTokenModal.style.display = 'none';
+      lichessTokenModal.setAttribute('aria-hidden', 'true');
+    }
+
+    function ensureLichessToken() {
+      if (lichessTokenAvailable) {
+        return true;
+      }
+      const token = readStoredLichessToken();
+      if (token) {
+        lichessTokenInput.value = token;
+        return true;
+      }
+      awaitingLichessToken = true;
+      showLichessTokenModal();
+      return false;
     }
 
     function restoreFormState() {
@@ -469,7 +588,7 @@
         return;
       }
       Array.from(form.elements).forEach((el) => {
-        if (!el.name || !(el.name in saved)) {
+        if (!el.name || el.type === 'hidden' || !(el.name in saved)) {
           return;
         }
         el.value = saved[el.name];
@@ -477,6 +596,41 @@
     }
 
     applyLocalTimestamps();
+    updateHiddenLichessToken();
+
+    if (!lichessTokenAvailable && !readStoredLichessToken()) {
+      showLichessTokenModal();
+    }
+
+    lichessTokenSave.addEventListener('click', () => {
+      const token = lichessTokenModalInput.value.trim();
+      writeStoredLichessToken(token);
+      updateHiddenLichessToken();
+      hideLichessTokenModal();
+      if (awaitingLichessToken && token) {
+        awaitingLichessToken = false;
+        form.requestSubmit(submitButton);
+      }
+    });
+
+    lichessTokenSkip.addEventListener('click', () => {
+      awaitingLichessToken = false;
+      hideLichessTokenModal();
+    });
+
+    lichessTokenModal.addEventListener('click', (event) => {
+      if (event.target === lichessTokenModal) {
+        awaitingLichessToken = false;
+        hideLichessTokenModal();
+      }
+    });
+
+    lichessTokenModalInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        lichessTokenSave.click();
+      }
+    });
 
     function releaseJob() {
       // Stop tracking whatever job was active and re-enable the form so the
@@ -627,6 +781,11 @@
     form.addEventListener('change', saveFormState);
 
     form.addEventListener('submit', async (event) => {
+      if (opponentModeSelect.value === 'lichess' && !ensureLichessToken()) {
+        event.preventDefault();
+        return;
+      }
+
       const games = Number(gamesInput.value || '1');
       if (!(games > 1)) {
         saveFormState();

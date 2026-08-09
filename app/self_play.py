@@ -299,6 +299,7 @@ class SelfPlayConfig:
     lichess_clock_limit: int = 180
     lichess_clock_increment: int = 2
     lichess_play_as_white: bool | None = None
+    lichess_api_token: str | None = None
 
 
 @dataclass
@@ -454,7 +455,9 @@ def _player_weight_sets(
     )
 
 
-def _lichess_api_token() -> str | None:
+def _lichess_api_token(config: SelfPlayConfig | None = None) -> str | None:
+    if config and config.lichess_api_token and config.lichess_api_token.strip():
+        return config.lichess_api_token.strip()
     for name in ("LICHESS_API_TOKEN", "LICHESS_TOKEN"):
         raw = os.getenv(name)
         if raw and raw.strip():
@@ -546,7 +549,7 @@ def _play_lichess_self_game(
     run_id: str | None = None,
     rng: random.Random | None = None,
 ) -> SelfPlayGame:
-    token = _lichess_api_token()
+    token = _lichess_api_token(config)
     if not token:
         raise RuntimeError(
             "LICHESS_API_TOKEN is required for lichess self-play runs."
@@ -2260,6 +2263,7 @@ def main(argv: list[str] | None = None) -> int:
         lichess_clock_limit=max(1, args.lichess_clock_limit),
         lichess_clock_increment=max(0, args.lichess_clock_increment),
         lichess_play_as_white=args.lichess_play_as_white,
+        lichess_api_token=None,
     )
 
     if args.tune_weights:

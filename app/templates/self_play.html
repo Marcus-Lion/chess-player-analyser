@@ -14,10 +14,15 @@
     pre { white-space: pre-wrap; word-break: break-word; background: #fafafa; padding: .75rem; border-radius: 8px; }
     .muted { color: #666; }
     .grid { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: .75rem; }
-    .weights-table { margin-top: .5rem; table-layout: fixed; }
+    .weights-table { margin-top: .5rem; table-layout: auto; width: auto; }
     .weights-table th:first-child, .weights-table td:first-child { width: 42%; }
     .weights-table th:not(:first-child), .weights-table td:not(:first-child) { text-align: center; }
-    .weights-table input { width: 100%; box-sizing: border-box; margin: 0; }
+    .weights-table input {
+      width: 7.5rem;
+      max-width: 100%;
+      box-sizing: border-box;
+      margin: 0;
+    }
     .help-icon {
       display: inline-flex;
       align-items: center;
@@ -133,6 +138,21 @@
       color: #065f46;
       margin: 0 0 1rem 0;
     }
+    .card > form > .grid input,
+    .card > form > .grid select {
+      width: 9.5rem;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+    .card > form > .grid > div {
+      width: fit-content;
+    }
+    .card > form > .grid > div:last-child {
+      width: max-content;
+    }
+    .card > form > .grid input[name="run_name"] {
+      width: 11rem;
+    }
   </style>
 </head>
 <body>
@@ -154,11 +174,11 @@
         </div>
         <div>
           <label>Top K <span class="help-icon" title="How many of the best evaluated moves are considered when selecting a move.">?</span></label>
-          <input name="top_k" type="number" min="1" value="{{ config.top_k if config else 1 }}" required />
+          <input name="top_k" type="number" maxlength="3" min="1" value="{{ config.top_k if config else 1 }}" required />
         </div>
         <div>
           <label>Top K score threshold <span class="help-icon" title="Optional maximum score drop from the best move. Candidates outside this distance are excluded even when they fall within Top K.">?</span></label>
-          <input name="top_k_score_threshold" type="number" min="0" step="any" placeholder="3" value="{{ config.top_k_score_threshold if config and config.top_k_score_threshold is not none else 3 }}" />
+          <input name="top_k_score_threshold" maxlength="3" type="number" min="0" step="any" placeholder="3" value="{{ config.top_k_score_threshold if config and config.top_k_score_threshold is not none else 3 }}" />
         </div>
         <div>
           <label>Forward material weight <span class="help-icon" title="Weight for material occupying the side's forward zone. Default: 1.0.">?</span></label>
@@ -200,7 +220,7 @@
         </div>
         <div>
           <label>Lichess increment <span class="help-icon" title="Per-move increment for the Lichess AI game, in seconds.">?</span></label>
-          <input name="lichess_clock_increment" type="number" min="0" value="2" />
+          <input name="lichess_clock_increment" type="number" min="0" value="2"/>
         </div>
         <div>
           <label>Local color <span class="help-icon" title="When using Lichess AI, choose whether the local engine plays White, Black, or a random side per game.">?</span></label>

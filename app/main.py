@@ -34,7 +34,7 @@ from app.games import (
     CHECKMATE_WEIGHT,
     MAX_AUTO_SEARCH_DEPTH,
 )
-    from app.parser import parse_pgn_to_dataframe
+from app.parser import parse_pgn_to_dataframe
 from app.self_play import (
     SelfPlayConfig,
     get_job_hub,

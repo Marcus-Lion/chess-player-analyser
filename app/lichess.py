@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Any, Iterator
 
@@ -20,6 +21,8 @@ class LichessChallenge:
 
 
 class LichessClient:
+    _MOVE_MAX_ATTEMPTS = 3
+
     def __init__(self, token: str, user_agent: str = "MarcusLionChessAnalyser/0.1") -> None:
         self.session = requests.Session()
         self.session.headers.update(
@@ -29,6 +32,10 @@ class LichessClient:
                 "Accept": "application/x-ndjson, application/json",
             }
         )
+
+    @staticmethod
+    def _is_retryable_response(response: requests.Response) -> bool:
+        return response.status_code == 429 or 500 <= response.status_code < 600
 
     def challenge_ai(
         self,
@@ -133,9 +140,30 @@ class LichessClient:
             yield json.loads(line)
 
     def make_move(self, game_id: str, move: str) -> dict[str, Any]:
-        response = self.session.post(
-            f"{LICHESS_API_BASE}/api/board/game/{game_id}/move/{move}",
-            timeout=30,
-        )
-        response.raise_for_status()
-        return response.json() if response.content else {}
+        url = f"{LICHESS_API_BASE}/api/board/game/{game_id}/move/{move}"
+        last_error: Exception | None = None
+        for attempt in range(1, self._MOVE_MAX_ATTEMPTS + 1):
+            try:
+                response = self.session.post(url, timeout=30)
+                if self._is_retryable_response(response):
+                    body = response.text.strip()
+                    raise requests.HTTPError(
+                        f"Lichess move attempt {attempt} returned {response.status_code}"
+                        + (f": {body}" if body else ""),
+                        response=response,
+                    )
+                response.raise_for_status()
+                return response.json() if response.content else {}
+            except (requests.ConnectionError, requests.Timeout, requests.HTTPError) as exc:
+                last_error = exc
+                if attempt >= self._MOVE_MAX_ATTEMPTS:
+                    break
+                delay_seconds = 0.5 * attempt
+                print(
+                    f"Lichess move {move} for game {game_id} failed on attempt {attempt}/"
+                    f"{self._MOVE_MAX_ATTEMPTS}: {exc}. Retrying in {delay_seconds:.1f}s",
+                    flush=True,
+                )
+                time.sleep(delay_seconds)
+        assert last_error is not None
+        raise last_error

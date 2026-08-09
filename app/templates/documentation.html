@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="/static/favicon.png" type="image/png" />
+  <title>{{ document.title if document else "Documentation" }}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 1200px; }
+    .layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 2rem; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 1.25rem; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+    .muted { color: #666; }
+    @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <p><a href="/">← Back home</a></p>
+  <h1>Documentation</h1>
+  <div class="layout">
+    <nav class="card">
+      <strong>Markdown files</strong>
+      <ul>
+        {% for item in documents %}
+          <li><a href="/documentation/{{ item.path }}">{{ item.title }}</a></li>
+        {% endfor %}
+      </ul>
+    </nav>
+    <main class="card">
+      {% if document %}
+        <p class="muted">{{ document.path }}</p>
+        <h2>{{ document.title }}</h2>
+        <pre>{{ document.content }}</pre>
+      {% else %}
+        <p>Select a Markdown file from the list.</p>
+      {% endif %}
+    </main>
+  </div>
+</body>
+</html>

@@ -9,6 +9,8 @@ mod search;
 #[cfg(feature = "python")]
 use std::collections::HashMap;
 #[cfg(feature = "python")]
+use std::io::Write;
+#[cfg(feature = "python")]
 use std::time::Instant;
 #[cfg(feature = "python")]
 use std::sync::{Mutex, OnceLock};
@@ -269,6 +271,13 @@ fn play_self_game_native(
             top_k_score_threshold,
         )?;
         evals += search_evals;
+        let move_number = moves.len() + 1;
+        let side = if pos.turn() == shakmaty::Color::White { "White" } else { "Black" };
+        println!(
+            "[self-play] move {move_number}: {side} played {} at depth {move_depth} ({search_evals} evals)",
+            chosen.to_uci(CastlingMode::Standard)
+        );
+        let _ = std::io::stdout().flush();
         moves.push(chosen.to_uci(CastlingMode::Standard).to_string());
         pos.play_unchecked(chosen);
         *repetitions.entry(zobrist(&pos)).or_insert(0) += 1;

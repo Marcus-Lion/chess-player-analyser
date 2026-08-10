@@ -13,6 +13,7 @@
 #   APP_PORT     Local port uvicorn listens on            (default: 8000)
 #   REPO_URL     Git repository to clone                  (default: project's GitHub repo)
 #   APP_DIR      Where to install the app                 (default: /home/$APP_USER/chess-player-analyser)
+#   LICHESS_API_TOKEN  Token used by the app for Lichess AI mode
 #
 set -euo pipefail
 
@@ -26,6 +27,8 @@ APP_DIR="${APP_DIR:-/home/${APP_USER}/chess-player-analyser}"
 SERVICE_NAME="chess-analyser"
 DOMAIN="${DOMAIN:-}"
 EMAIL="${EMAIL:-}"
+LICHESS_API_TOKEN="${LICHESS_API_TOKEN:-}"
+ENV_FILE="/etc/${SERVICE_NAME}.env"
 
 log() { printf '\n\033[1;32m==> %s\033[0m\n' "$1"; }
 
@@ -77,6 +80,14 @@ sudo -u "$APP_USER" bash -c "cd '$APP_DIR' && '$UV_BIN' sync"
 # ---------------------------------------------------------------------------
 # 5. systemd service
 # ---------------------------------------------------------------------------
+if [[ -n "$LICHESS_API_TOKEN" ]]; then
+  log "Writing environment file ${ENV_FILE}"
+  umask 077
+  cat >"${ENV_FILE}" <<EOF
+LICHESS_API_TOKEN=${LICHESS_API_TOKEN}
+EOF
+fi
+
 log "Writing systemd unit /etc/systemd/system/${SERVICE_NAME}.service"
 cat >"/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
 [Unit]
@@ -87,6 +98,7 @@ After=network.target
 User=${APP_USER}
 WorkingDirectory=${APP_DIR}
 Environment="PATH=${APP_DIR}/.venv/bin"
+$( [[ -n "$LICHESS_API_TOKEN" ]] && printf 'EnvironmentFile=%s\n' "$ENV_FILE" )
 ExecStart=${APP_DIR}/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port ${APP_PORT}
 Restart=always
 

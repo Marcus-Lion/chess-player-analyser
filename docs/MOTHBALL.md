@@ -89,3 +89,5 @@ If the project is revived later, the minimum recovery path is likely:
 This project is open source under the MIT License. The mothball state should
 not remove the code or documentation; it should make the project easier to
 understand, preserve, and restart without guessing at old deployment details.
+
+Thanks to Marc Deveaux for developing this project.

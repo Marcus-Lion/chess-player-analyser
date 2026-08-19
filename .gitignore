@@ -12,6 +12,7 @@ cache/*
 /cache/
 
 # Rust engine build artifacts
+/target/
 /engine/target/
 /engine/dist/
 

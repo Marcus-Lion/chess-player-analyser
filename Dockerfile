@@ -39,6 +39,9 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY --from=engine-builder /wheels /wheels
 RUN uv pip install --python /app/.venv/bin/python /wheels/*.whl
 
+COPY README.md ./README.md
+COPY engine/README.md ./engine/README.md
+COPY docs ./docs
 COPY app ./app
 
 ENV PATH="/app/.venv/bin:${PATH}"

@@ -4,6 +4,7 @@ import math
 import re
 import random
 from dataclasses import dataclass
+from datetime import datetime
 from io import StringIO
 
 import chess
@@ -183,7 +184,14 @@ def load_game_summaries(pgn_text: str, username: str | None = None) -> list[Game
             )
         )
 
-    return summaries
+    def _summary_sort_key(summary: GameSummary) -> tuple[datetime, int]:
+        try:
+            parsed = datetime.strptime(summary.date, "%Y.%m.%d")
+        except Exception:
+            parsed = datetime.min
+        return (parsed, summary.index)
+
+    return sorted(summaries, key=_summary_sort_key, reverse=True)
 
 
 def _read_game_at(pgn_text: str, index: int) -> chess.pgn.Game | None:

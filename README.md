@@ -1,6 +1,6 @@
 # Marcus Lion Chess Player Analyser
 
-Thanks to Marc Deveaux for developing this project.
+See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for project credit.
 
 A Python/FastAPI web app that fetches public Chess.com games for any username and generates chess analytics.
 
